@@ -946,6 +946,7 @@ final class AppCoordinator {
             sourceApp: item.sourceApplicationName,
             isPinned: item.isPinned,
             isCompleted: item.isCompleted,
+            completedAt: item.completedAt,
             isArchived: item.isArchived,
             isTrashed: item.isTrashed,
             attachments: attachments

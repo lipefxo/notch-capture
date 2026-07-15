@@ -38,6 +38,55 @@ final class PanelStateTests: XCTestCase {
     }
 }
 
+@MainActor
+final class ApplicationMenuTests: XCTestCase {
+    func testEditMenuProvidesStandardPasteResponderCommand() throws {
+        let menu = ApplicationMenuFactory.makeMainMenu()
+        let editMenu = try XCTUnwrap(menu.items.first(where: { $0.submenu?.title == "Edit" })?.submenu)
+        let paste = try XCTUnwrap(editMenu.items.first(where: { $0.title == "Paste" }))
+
+        XCTAssertEqual(paste.action, #selector(NSText.paste(_:)))
+        XCTAssertEqual(paste.keyEquivalent, "v")
+        XCTAssertTrue(paste.keyEquivalentModifierMask.contains(.command))
+        XCTAssertNil(paste.target, "A nil target routes Paste through the active field editor responder chain")
+    }
+
+    func testNotchPanelRoutesCommandVDirectlyToPasteResponder() throws {
+        let commandV = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: .command,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "v",
+            charactersIgnoringModifiers: "v",
+            isARepeat: false,
+            keyCode: 9
+        ))
+
+        XCTAssertEqual(NotchPanel.editingAction(for: commandV), #selector(NSText.paste(_:)))
+    }
+}
+
+@MainActor
+final class LedgerScrollAppearanceTests: XCTestCase {
+    func testLedgerScrollIndicatorsAreFullyHidden() {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = true
+        scrollView.autohidesScrollers = false
+        scrollView.scrollerStyle = .legacy
+
+        LedgerScrollAppearance.hideIndicators(in: scrollView)
+
+        XCTAssertFalse(scrollView.hasVerticalScroller)
+        XCTAssertFalse(scrollView.hasHorizontalScroller)
+        XCTAssertTrue(scrollView.autohidesScrollers)
+        XCTAssertEqual(scrollView.scrollerStyle, .overlay)
+    }
+}
+
 final class NotchGeometryTests: XCTestCase {
     func testPanelHugsTopEdgeAndCentersOnHardwareNotch() {
         let geometry = makeGeometry(

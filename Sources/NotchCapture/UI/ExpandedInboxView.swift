@@ -5,18 +5,28 @@ import UniformTypeIdentifiers
 
 struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @FocusState private var focusedField: Field?
+
+    private let floatingComposerMargin: CGFloat = 18
+    private let floatingComposerHeight: CGFloat = 60
+    private let floatingGlassHeight: CGFloat = 134
+    private let ledgerBottomClearance: CGFloat = 96
 
     private enum Field {
         case unifiedInput
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            captureField
-            filterBar
-            ledgerBody
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                header
+                filterBar
+                ledgerBody
+            }
+
+            floatingComposer
         }
         .frame(width: NotchTheme.width, height: NotchTheme.maxHeight)
         .background(NotchSurfaceBackground())
@@ -35,11 +45,68 @@ struct ExpandedInboxView: View {
         .accessibilityLabel("Notch Capture inbox")
     }
 
+    private var floatingComposer: some View {
+        ZStack(alignment: .bottom) {
+            floatingGlassFade
+
+            captureField
+                .padding(.horizontal, floatingComposerMargin)
+                .padding(.bottom, floatingComposerMargin)
+        }
+        .frame(maxWidth: .infinity)
+        .zIndex(1)
+    }
+
+    @ViewBuilder
+    private var floatingGlassFade: some View {
+        ZStack {
+            if reduceTransparency {
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: NotchTheme.graphite.opacity(0.72), location: 0.42),
+                        .init(color: NotchTheme.ink, location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            } else {
+                Rectangle()
+                    .fill(.ultraThinMaterial)
+                    .mask {
+                        LinearGradient(
+                            stops: [
+                                .init(color: .clear, location: 0),
+                                .init(color: .black.opacity(0.22), location: 0.28),
+                                .init(color: .black.opacity(0.78), location: 0.64),
+                                .init(color: .black, location: 1),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                    }
+
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: NotchTheme.graphite.opacity(0.38), location: 0.44),
+                        .init(color: NotchTheme.ink.opacity(0.92), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            }
+        }
+        .frame(height: floatingGlassHeight)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
     private var header: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 Text("Inbox")
-                    .font(.system(size: 19, weight: .medium))
+                    .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(NotchTheme.primaryText)
 
                 Spacer()
@@ -48,9 +115,10 @@ struct ExpandedInboxView: View {
                     viewModel.beginScreenshot()
                 } label: {
                     Image(systemName: "viewfinder")
-                        .font(.system(size: 14, weight: .regular))
+                        .font(.system(size: 13, weight: .regular))
                 }
                 .buttonStyle(PressableIconButtonStyle())
+                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .help("Capture screen region · ⌃⇧S")
                 .accessibilityLabel("Capture a screen region")
 
@@ -58,9 +126,10 @@ struct ExpandedInboxView: View {
                     viewModel.surfaceState = .settings
                 } label: {
                     Image(systemName: "gearshape")
-                        .font(.system(size: 14, weight: .regular))
+                        .font(.system(size: 13, weight: .regular))
                 }
                 .buttonStyle(PressableIconButtonStyle())
+                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .help("Settings")
                 .accessibilityLabel("Open settings")
             }
@@ -74,13 +143,13 @@ struct ExpandedInboxView: View {
     private var captureField: some View {
         HStack(spacing: 13) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 16, weight: .light))
+                .font(.system(size: 15, weight: .light))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .frame(width: 24, height: 24)
 
             TextField("Search or add a thought", text: $viewModel.composerText, axis: .vertical)
                 .textFieldStyle(.plain)
-                .font(.system(size: 14, weight: .regular))
+                .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
@@ -94,17 +163,19 @@ struct ExpandedInboxView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Text("Add")
-                            .font(.system(size: 11.5, weight: .medium))
+                            .font(.system(size: 11, weight: .medium))
                         Image(systemName: "return")
-                            .font(.system(size: 12, weight: .regular))
+                            .font(.system(size: 11, weight: .regular))
                     }
                     .foregroundStyle(NotchTheme.mint)
                     .padding(.horizontal, 8)
                     .frame(height: 28)
                     .background(NotchTheme.mint.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
                 .buttonStyle(.plain)
+                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("Add this thought to Inbox")
                 .accessibilityLabel("Add thought to Inbox")
@@ -116,16 +187,29 @@ struct ExpandedInboxView: View {
             }
         }
         .padding(.horizontal, 16)
-        .frame(height: 60)
-        .background(NotchTheme.field)
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+        .frame(height: floatingComposerHeight)
+        .background {
+            ZStack {
+                if !reduceTransparency {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                        .fill(.ultraThinMaterial)
+                }
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(NotchTheme.field.opacity(reduceTransparency ? 1 : 0.72))
+            }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(.horizontal, 18)
-        .padding(.bottom, 10)
-        .background(NotchTheme.ink)
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    colorSchemeContrast == .increased
+                        ? Color.white.opacity(0.18)
+                        : NotchTheme.controlStroke,
+                    lineWidth: colorSchemeContrast == .increased ? 1.5 : 1
+                )
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .shadow(color: .black.opacity(0.42), radius: 14, y: 8)
     }
 
     private var unifiedInputHint: String {
@@ -163,18 +247,20 @@ struct ExpandedInboxView: View {
                     }
                 } label: {
                     Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 13, weight: .regular))
+                        .font(.system(size: 12, weight: .regular))
                         .frame(width: 64, height: 34)
                         .foregroundStyle(
                             [.all, .tasks].contains(viewModel.filter)
                                 ? NotchTheme.secondaryText
                                 : NotchTheme.primaryText
                         )
-                }
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .accessibilityLabel("More inbox filters")
+                        .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .accessibilityLabel("More inbox filters")
             }
             .frame(width: 64, height: 34)
 
@@ -199,7 +285,7 @@ struct ExpandedInboxView: View {
             viewModel.filter = filter
         }
         .buttonStyle(.plain)
-        .font(.system(size: 13, weight: .regular))
+        .font(.system(size: 12, weight: .regular))
         .foregroundStyle(viewModel.filter == filter ? NotchTheme.primaryText : NotchTheme.secondaryText)
         .frame(width: width, height: 34)
         .background(viewModel.filter == filter ? NotchTheme.selectedControl : NotchTheme.control)
@@ -208,6 +294,7 @@ struct ExpandedInboxView: View {
                 .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityAddTraits(viewModel.filter == filter ? .isSelected : [])
     }
 
@@ -228,6 +315,7 @@ struct ExpandedInboxView: View {
                     query: viewModel.composerText,
                     onCompose: { focusedField = .unifiedInput }
                 )
+                .padding(.bottom, ledgerBottomClearance)
             } else {
                 itemFeed
             }
@@ -240,7 +328,12 @@ struct ExpandedInboxView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
                 feedContent
+
+                Color.clear
+                    .frame(height: ledgerBottomClearance)
+                    .accessibilityHidden(true)
             }
+            .background(HiddenScrollIndicatorConfigurator())
         }
         .scrollIndicators(.hidden)
     }
@@ -283,6 +376,53 @@ struct ExpandedInboxView: View {
     }
 }
 
+@MainActor
+enum LedgerScrollAppearance {
+    static func hideIndicators(in scrollView: NSScrollView) {
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = true
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScroller?.alphaValue = 0
+        scrollView.horizontalScroller?.alphaValue = 0
+    }
+}
+
+private struct HiddenScrollIndicatorConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> MarkerView {
+        MarkerView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: MarkerView, context: Context) {
+        nsView.configureContainingScrollView()
+    }
+
+    final class MarkerView: NSView {
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            configureContainingScrollView()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configureContainingScrollView()
+        }
+
+        func configureContainingScrollView() {
+            DispatchQueue.main.async { [weak self] in
+                var ancestor: NSView? = self
+                while let current = ancestor {
+                    if let scrollView = current as? NSScrollView {
+                        LedgerScrollAppearance.hideIndicators(in: scrollView)
+                        return
+                    }
+                    ancestor = current.superview
+                }
+            }
+        }
+    }
+}
+
 private struct LedgerRowView: View {
     let item: AppViewModel.LedgerItem
     @ObservedObject var viewModel: AppViewModel
@@ -304,11 +444,8 @@ private struct LedgerRowView: View {
         }
         .background(isSelected ? NotchTheme.selectedLedger : (isHovered ? NotchTheme.hoveredLedger : Color.clear))
         .contentShape(Rectangle())
-        .onTapGesture {
-            viewModel.selectedItemID = isSelected ? nil : item.id
-        }
         .onHover { isHovered = $0 }
-        .contextMenu { itemContextMenu }
+        .contextMenu { rowActions }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -318,44 +455,15 @@ private struct LedgerRowView: View {
         HStack(spacing: 11) {
             leadingControl
 
-            Image(systemName: "note.text")
-                .font(.system(size: 13, weight: .regular))
-                .foregroundStyle(NotchTheme.secondaryText)
-                .frame(width: 32, height: 32)
-                .background(NotchTheme.control)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.title)
-                    .font(.system(size: 13.5, weight: .regular))
-                    .foregroundStyle(item.isCompleted ? NotchTheme.secondaryText : NotchTheme.primaryText)
-                    .strikethrough(item.isCompleted, color: NotchTheme.secondaryText)
-                    .lineLimit(2)
-
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 11.5, weight: .regular))
-                        .foregroundStyle(item.dueDate != nil && item.detail.isEmpty ? NotchTheme.dueAccent : NotchTheme.secondaryText)
-                        .lineLimit(2)
-                }
-            }
-
-            Spacer(minLength: 8)
+            selectionContent
 
             if showsActions {
                 inlineActions
-            } else {
-                Text(CaptureTimestampFormatter.string(from: item.createdAt))
-                    .font(.system(size: 10.5, weight: .regular))
-                    .foregroundStyle(NotchTheme.tertiaryText)
+                    .layoutPriority(1)
             }
         }
         .padding(.horizontal, 20)
-        .frame(minHeight: item.detail.isEmpty ? 66 : 78)
+        .frame(minHeight: item.detail.isEmpty ? 56 : 66)
         .overlay(alignment: .bottom) {
             Rectangle()
                 .fill(NotchTheme.hairline)
@@ -364,11 +472,60 @@ private struct LedgerRowView: View {
         }
     }
 
+    private var selectionContent: some View {
+        HStack(spacing: 11) {
+            if item.displaysAttachmentPrefix {
+                prefixIcon
+            }
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(item.isCompleted ? NotchTheme.secondaryText : NotchTheme.primaryText)
+                    .strikethrough(item.isCompleted, color: NotchTheme.secondaryText)
+                    .lineLimit(2)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 10.5, weight: .regular))
+                        .foregroundStyle(item.dueDate != nil && item.detail.isEmpty ? NotchTheme.dueAccent : NotchTheme.secondaryText)
+                    .lineLimit(2)
+                }
+            }
+
+            Spacer(minLength: 8)
+
+            if !showsActions {
+                Text(CaptureTimestampFormatter.string(from: item.createdAt))
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundStyle(NotchTheme.tertiaryText)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            viewModel.selectedItemID = isSelected ? nil : item.id
+        }
+    }
+
+    private var prefixIcon: some View {
+        Image(systemName: "note.text")
+            .font(.system(size: 12, weight: .regular))
+            .foregroundStyle(NotchTheme.secondaryText)
+            .frame(width: 32, height: 32)
+            .background(NotchTheme.control)
+            .overlay {
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
     @ViewBuilder
     private var leadingControl: some View {
         if item.isPinned && !showsActions {
             Image(systemName: "pin")
-                .font(.system(size: 13, weight: .regular))
+                .font(.system(size: 12, weight: .regular))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .frame(width: 20, height: 28)
                 .accessibilityLabel("Pinned")
@@ -377,11 +534,13 @@ private struct LedgerRowView: View {
                 viewModel.toggleComplete(item)
             } label: {
                 Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 17, weight: .light))
+                    .font(.system(size: 16, weight: .light))
                     .foregroundStyle(item.isCompleted ? NotchTheme.mint : NotchTheme.secondaryText)
                     .frame(width: 20, height: 28)
+                    .notchHitTarget(Rectangle())
             }
             .buttonStyle(.plain)
+            .notchHitTarget(Rectangle())
             .help(item.isCompleted ? "Mark incomplete" : "Complete")
             .accessibilityLabel(item.isCompleted ? "Mark incomplete" : "Complete item")
         }
@@ -399,63 +558,41 @@ private struct LedgerRowView: View {
     }
 
     private var inlineActions: some View {
-        HStack(spacing: 0) {
-            Button { viewModel.toggleComplete(item) } label: {
-                actionLabel("checkmark", highlighted: true)
-            }
-            .help(item.isCompleted ? "Mark incomplete" : "Complete")
-            .accessibilityLabel(item.isCompleted ? "Mark incomplete" : "Complete item")
-
-            Button { viewModel.togglePin(item) } label: {
-                actionLabel(item.isPinned ? "pin.slash" : "pin")
-            }
-            .help(item.isPinned ? "Unpin" : "Pin")
-            .accessibilityLabel(item.isPinned ? "Unpin item" : "Pin item")
-
-            Menu {
-                ForEach(viewModel.lists, id: \.self) { list in
-                    Button(list) { viewModel.move(item, to: list) }
-                }
-            } label: {
-                actionLabel("tag")
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .help("Move")
-            .accessibilityLabel("Move item")
-
-            if viewModel.filter == .trash {
-                Button { viewModel.restore(item) } label: { actionLabel("arrow.uturn.backward") }
-                    .help("Restore")
-                    .accessibilityLabel("Restore item")
-                Button { viewModel.deletePermanently(item) } label: { actionLabel("trash.slash") }
-                    .help("Delete permanently")
-                    .accessibilityLabel("Delete item permanently")
-            } else {
-                Button { viewModel.trash(item) } label: { actionLabel("trash") }
-                    .help("Move to Trash")
-                    .accessibilityLabel("Move item to Trash")
-            }
+        Menu {
+            rowActions
+        } label: {
+            Text("⋮")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(NotchTheme.secondaryText)
+                .frame(width: 36, height: 38)
+                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
         }
-        .buttonStyle(LedgerActionButtonStyle())
-    }
-
-    private func actionLabel(_ systemName: String, highlighted: Bool = false) -> some View {
-        Image(systemName: systemName)
-            .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(highlighted ? NotchTheme.mint : NotchTheme.secondaryText)
-            .frame(width: 36, height: 38)
-            .background(highlighted ? NotchTheme.mint.opacity(0.08) : Color.clear)
-            .overlay(alignment: .leading) {
-                Rectangle().fill(NotchTheme.hairline).frame(width: 1)
-            }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 36, height: 38)
+        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .help("More actions")
+        .accessibilityLabel("More actions for \(item.title)")
     }
 
     @ViewBuilder
-    private var itemContextMenu: some View {
-        Button(item.isPinned ? "Unpin" : "Pin") { viewModel.togglePin(item) }
-        Menu("Due date") {
+    private var rowActions: some View {
+        Button {
+            viewModel.toggleComplete(item)
+        } label: {
+            Label(
+                item.isCompleted ? "Mark incomplete" : "Complete",
+                systemImage: item.isCompleted ? "arrow.uturn.backward" : "checkmark"
+            )
+        }
+
+        Button {
+            viewModel.togglePin(item)
+        } label: {
+            Label(item.isPinned ? "Unpin" : "Pin", systemImage: item.isPinned ? "pin.slash" : "pin")
+        }
+
+        Menu {
             Button("Today") {
                 viewModel.setDueDate(Calendar.current.startOfDay(for: .now), for: item)
             }
@@ -466,23 +603,54 @@ private struct LedgerRowView: View {
                 Divider()
                 Button("Clear due date") { viewModel.setDueDate(nil, for: item) }
             }
+        } label: {
+            Label("Due date", systemImage: "calendar")
         }
-        if viewModel.filter == .archive {
-            Button("Restore to Inbox") { viewModel.restore(item) }
-        } else if viewModel.filter != .trash {
-            Button("Archive") { viewModel.archive(item) }
+
+        if !viewModel.lists.isEmpty {
+            Menu {
+                ForEach(viewModel.lists, id: \.self) { list in
+                    Button(list) { viewModel.move(item, to: list) }
+                }
+            } label: {
+                Label("Move", systemImage: "tag")
+            }
         }
-    }
-}
 
-private struct LedgerActionButtonStyle: ButtonStyle {
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+        Divider()
 
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .opacity(configuration.isPressed ? 0.72 : 1)
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+        if item.isTrashed {
+            Button {
+                viewModel.restore(item)
+            } label: {
+                Label("Restore", systemImage: "arrow.uturn.backward")
+            }
+            Button(role: .destructive) {
+                viewModel.deletePermanently(item)
+            } label: {
+                Label("Delete permanently", systemImage: "trash.slash")
+            }
+        } else {
+            if item.isArchived {
+                Button {
+                    viewModel.restore(item)
+                } label: {
+                    Label("Restore to Inbox", systemImage: "arrow.uturn.backward")
+                }
+            } else {
+                Button {
+                    viewModel.archive(item)
+                } label: {
+                    Label("Archive", systemImage: "archivebox")
+                }
+            }
+
+            Button(role: .destructive) {
+                viewModel.trash(item)
+            } label: {
+                Label("Move to Trash", systemImage: "trash")
+            }
+        }
     }
 }
 
@@ -498,7 +666,7 @@ private struct AttachmentLedgerRow: View {
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: symbol)
-                    .font(.system(size: 14, weight: .regular))
+                    .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(NotchTheme.secondaryText)
                     .frame(width: 20)
 
@@ -517,36 +685,38 @@ private struct AttachmentLedgerRow: View {
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(attachment.name)
-                        .font(.system(size: 13, weight: .regular))
+                        .font(.system(size: 12, weight: .regular))
                         .foregroundStyle(NotchTheme.primaryText)
                         .lineLimit(1)
                     if let detail = attachment.subtitle {
                         Text(detail)
-                            .font(.system(size: 10.5, weight: .regular))
+                            .font(.system(size: 10, weight: .regular))
                             .foregroundStyle(NotchTheme.secondaryText)
                             .lineLimit(1)
                     }
                     Text(CaptureTimestampFormatter.string(from: item.createdAt))
-                        .font(.system(size: 10, weight: .regular))
+                        .font(.system(size: 9.5, weight: .regular))
                         .foregroundStyle(NotchTheme.tertiaryText)
                 }
 
                 Spacer()
 
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 11, weight: .regular))
+                    .font(.system(size: 10, weight: .regular))
                     .foregroundStyle(NotchTheme.secondaryText)
             }
             .padding(.horizontal, 20)
-            .frame(minHeight: attachment.kind == .image || attachment.kind == .screenshot ? 72 : 62)
+            .frame(minHeight: attachment.kind == .image || attachment.kind == .screenshot ? 64 : 56)
             .overlay(alignment: .bottom) {
                 Rectangle()
                     .fill(NotchTheme.hairline)
                     .frame(height: 1)
                     .padding(.leading, 20)
             }
+            .notchHitTarget(Rectangle())
         }
         .buttonStyle(.plain)
+        .notchHitTarget(Rectangle())
         .disabled(attachment.previewURL == nil)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Attachment: \(attachment.name)")
@@ -615,10 +785,10 @@ private struct EmptyInboxView: View {
                 .font(.system(size: 22, weight: .ultraLight))
                 .foregroundStyle(NotchTheme.secondaryText)
             Text(isSearching ? "No matches" : emptyTitle)
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(NotchTheme.primaryText)
             Text(isSearching ? "Press Return to add “\(query)” to Inbox." : emptyDetail)
-                .font(.system(size: 10.5, weight: .regular))
+                .font(.system(size: 10, weight: .regular))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 230)
@@ -626,6 +796,7 @@ private struct EmptyInboxView: View {
             if !isSearching && filter == .all {
                 Button("Capture something") { onCompose() }
                     .buttonStyle(QuietButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
             Spacer()
         }
@@ -654,12 +825,13 @@ private struct QuietButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11.5, weight: .medium))
+            .font(.system(size: 11, weight: .medium))
             .foregroundStyle(NotchTheme.primaryText)
             .padding(.horizontal, 12)
             .frame(height: 30)
             .background(configuration.isPressed ? NotchTheme.selectedControl : NotchTheme.control)
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .notchHitTarget(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -677,7 +849,8 @@ private struct InlineErrorView: View {
                 .font(.system(size: 10.5, weight: .medium))
             Spacer()
             Button("Dismiss", action: onDismiss)
-                .buttonStyle(.plain)
+                .buttonStyle(CompactTextButtonStyle())
+                .notchHitTarget(Rectangle())
                 .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(NotchTheme.primaryText)
         }

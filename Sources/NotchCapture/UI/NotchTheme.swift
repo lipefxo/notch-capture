@@ -72,6 +72,14 @@ struct NotchSurfaceBackground: View {
     }
 }
 
+extension View {
+    /// Keeps a control's entire rendered frame interactive, including transparent padding.
+    func notchHitTarget<S: Shape>(_ shape: S) -> some View {
+        background(shape.fill(Color.black.opacity(0.001)))
+            .contentShape(shape)
+    }
+}
+
 struct PressableIconButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -81,6 +89,7 @@ struct PressableIconButtonStyle: ButtonStyle {
             .frame(width: 28, height: 28)
             .background(configuration.isPressed ? Color.white.opacity(0.07) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
@@ -91,13 +100,27 @@ struct MintButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 12, weight: .semibold))
+            .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(Color.black.opacity(0.82))
             .padding(.horizontal, 12)
             .frame(height: 30)
             .background(NotchTheme.mint.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
+struct CompactTextButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .notchHitTarget(Rectangle())
+            .opacity(configuration.isPressed ? 0.7 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
@@ -109,12 +132,12 @@ struct LedgerSectionHeader: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(.system(size: 11, weight: .regular))
+                .font(.system(size: 10, weight: .regular))
             Spacer()
         }
         .foregroundStyle(NotchTheme.secondaryText)
         .padding(.horizontal, 20)
-        .frame(height: 45)
+        .frame(height: 30)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(count) items")
     }
@@ -125,7 +148,7 @@ struct ShortcutKeycap: View {
 
     var body: some View {
         Text(value)
-            .font(.system(size: 11, weight: .medium, design: .rounded))
+            .font(.system(size: 10, weight: .medium, design: .rounded))
             .foregroundStyle(Color.white.opacity(0.74))
             .padding(.horizontal, 8)
             .frame(height: 23)

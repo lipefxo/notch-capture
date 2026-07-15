@@ -20,9 +20,27 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(try repository.fetch(scope: .tasks).map(\.id), [note.id])
         XCTAssertEqual(try repository.fetch(scope: .due).map(\.id), [note.id])
 
-        try repository.setCompleted(true, for: note)
-        XCTAssertTrue(try repository.fetch(scope: .inbox).isEmpty)
+        let completedAt = Date(timeIntervalSince1970: 1_700_100_000)
+        try repository.setCompleted(true, for: note, at: completedAt)
+        XCTAssertEqual(note.completedAt, completedAt)
+        XCTAssertEqual(
+            try repository.fetch(
+                scope: .inbox,
+                now: completedAt.addingTimeInterval(CompletionVisibility.mainPageRetention - 1)
+            ).map(\.id),
+            [note.id]
+        )
+        XCTAssertTrue(
+            try repository.fetch(
+                scope: .inbox,
+                now: completedAt.addingTimeInterval(CompletionVisibility.mainPageRetention)
+            ).isEmpty
+        )
         XCTAssertEqual(try repository.fetch(scope: .completed).map(\.id), [note.id])
+
+        try repository.setCompleted(false, for: note)
+        XCTAssertNil(note.completedAt)
+        try repository.setCompleted(true, for: note, at: completedAt)
 
         try repository.trash(note)
         XCTAssertEqual(try repository.fetch(scope: .trash).map(\.id), [note.id])
@@ -100,6 +118,9 @@ final class CaptureDataTests: XCTestCase {
             attachments: [attachment]
         )
         try repository.move(original, to: list)
+        let completedAt = Date(timeIntervalSince1970: 1_700_200_000)
+        try repository.setKind(.task, for: original)
+        try repository.setCompleted(true, for: original, at: completedAt)
 
         let package = temporary.appendingPathComponent("Export.notchcapture", isDirectory: true)
         let exporter = CapturePackageService(modelContext: sourceContainer.mainContext, attachmentStore: sourceStore)
@@ -118,6 +139,7 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(imported[0].text, original.text)
         XCTAssertEqual(imported[0].origin, .selection)
         XCTAssertEqual(imported[0].list?.name, "Research")
+        XCTAssertEqual(imported[0].completedAt, completedAt)
         XCTAssertEqual(imported[0].attachments.count, 1)
         let importedPath = try XCTUnwrap(imported[0].attachments[0].relativePath)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try targetStore.resolve(relativePath: importedPath).path))

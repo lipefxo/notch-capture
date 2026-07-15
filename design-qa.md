@@ -1,22 +1,35 @@
-# Design QA — Hugged Ledger
+# Design QA — Floating Glass Composer
 
 ## Comparison
 
-- Selected source: `Design/selected-hugged-ledger.png` (1487 × 1058)
-- User-supplied crop: `.context/attachments/8oYXJS/CleanShot 2026-07-15 at 16.55.02@2x.jpg`
-- Expanded implementation: `Design/qa/implementation-expanded-v3.png` (420 × 560 points at 2×)
-- Confirmation implementation: `Design/qa/implementation-confirmation-v3.png` (280 × 56 points at 2× inside a 300 × 72 panel)
-- Same-input comparison: `Design/qa/source-and-implementation-v3.png`
+- Source visual truth: `.context/attachments/eRQXEY/CleanShot 2026-07-15 at 17.33.57@2x.jpg` (1030 × 1166 crop)
+- Final implementation: `Design/qa/implementation-floating-glass-v2.png` (420 × 560 points at 2×)
+- Full-view comparison: `Design/qa/source-and-implementation-floating-glass-v2.png`
+- Focused bottom-region comparison: `Design/qa/focused-floating-glass-v2.png`
+- State: expanded Inbox, All filter, populated ledger, empty focused unified input
 - Environment: native AppKit `NSPanel` hosting SwiftUI, macOS 26.5.2, 2560 × 1440 display
 
-## QA history
+## Findings
 
-1. The original implementation drifted into a card-heavy, mint-accented dashboard treatment. Rebuilt it as the source's flat graphite ledger with a black header, restrained gray controls, section separators, and edge-to-edge rows.
-2. Matched the source hierarchy and copy: “Inbox,” the 60-point Quick capture field, neutral All/Tasks/filter controls, Pinned and Today sections, reference task data, an image attachment, and a link row.
-3. Preserved the selected direction's centered notch-hug connector and exposed the requested inline completion, pin, tag, and trash controls only on the selected task row.
-4. A second comparison exposed an unbounded filter icon, locale-dependent timestamps, an under-emphasized completion action, and an oversized confirmation. Fixed all four before the final render.
-5. Compared the selected direction and final native surfaces in one image. Typography, spacing, graphite colors, imagery, copy, SF Symbols, row geometry, and the mint interaction accent now match the reference closely at the intended panel size.
-6. Verified all body text and controls remain inside the 420 × 560 surface without clipping or horizontal overflow. Keyboard focus, accessible labels and hints, Reduce Motion behavior, and increased-contrast hierarchy remain implemented.
+- No actionable P0/P1/P2 findings remain.
+- Typography uses the existing native system hierarchy and matches the reference's weight, density, and truncation behavior.
+- Spacing matches the intended structure: fixed header and filters, full-height ledger, 18-point composer margins, 60-point height, and 16-point radius.
+- The graphite/ink palette, restrained border, shadow, native material, and 110-point masked fade preserve the established tokens while adding the requested balanced glass treatment.
+- The source contains dynamic user notes while the preview contains reference fixture notes and one image attachment; this is an intentional content-state difference, not an image-quality substitution.
+- Copy and SF Symbols remain consistent with the functional app. The input, filters, attachment row, and screenshot/settings affordances remain interactive and accessible.
+
+## Comparison history
+
+1. The first floating render (`implementation-floating-glass-v1.png`) matched the bottom geometry and showed the ledger underlap clearly, but the new surface did not explicitly strengthen its edge under Increased Contrast.
+2. The final render added a 1.5-point higher-contrast border fallback without changing the default appearance. The full and focused comparisons confirm the composer remains visually detached while the bottom link progressively softens and darkens beneath it.
+3. The source crop omits the hardware-notch connector and uses different live content, so comparison judgment was limited to the shared header, filters, ledger rhythm, bottom margins, composer shape, and underlap treatment.
+
+## Interaction and accessibility checks
+
+- The ledger scroll region continues behind the overlay and includes a 96-point terminal spacer, allowing the final row to clear the composer.
+- Search matches, unmatched-text Add, Return submission, paste responder routing, repeated additions, Escape, and outside-click behavior remain connected to the unchanged view model and panel controller.
+- The glass layer ignores hit testing and accessibility. Reduce Transparency receives an opaque graphite-to-ink fallback; Increased Contrast strengthens the field border; the static effect introduces no Reduce Motion dependency.
+- Empty, error, filtered, attachment, and drop-target branches retain their existing controls; the drop target remains the topmost full-panel overlay.
 
 ## Coexistence evidence
 
@@ -26,6 +39,6 @@
 
 ## Result
 
-The native implementation now faithfully carries the selected hugged-ledger direction while retaining functional capture controls, real data states, inline task actions, and notch ownership behavior.
+The native implementation faithfully matches the requested floating-bottom layout and adds a balanced glass fade that preserves both ledger continuity and composer prominence.
 
 final result: passed

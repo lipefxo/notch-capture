@@ -158,7 +158,8 @@ struct OnboardingView: View {
         HStack {
             if viewModel.onboardingPage > 0 {
                 Button("Back") { move(to: viewModel.onboardingPage - 1) }
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompactTextButtonStyle())
+                    .notchHitTarget(Rectangle())
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(NotchTheme.secondaryText)
             } else {
@@ -187,6 +188,7 @@ struct OnboardingView: View {
                 }
             }
             .buttonStyle(MintButtonStyle())
+            .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
         .padding(.horizontal, 16)
         .frame(height: 58)
@@ -256,6 +258,7 @@ private struct OnboardingPermissionRow: View {
             } else {
                 Button("Allow", action: action)
                     .buttonStyle(MintButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
         }
         .padding(10)

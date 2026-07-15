@@ -107,7 +107,7 @@ final class ItemRepository {
         return list
     }
 
-    func fetch(scope: CaptureScope, search: String = "") throws -> [CaptureItem] {
+    func fetch(scope: CaptureScope, search: String = "", now: Date = .now) throws -> [CaptureItem] {
         let descriptor = FetchDescriptor<CaptureItem>(
             sortBy: [SortDescriptor(\CaptureItem.updatedAt, order: .reverse)]
         )
@@ -116,7 +116,11 @@ final class ItemRepository {
             let belongs: Bool
             switch scope {
             case .inbox:
-                belongs = !item.isArchived && !item.isTrashed && !item.isCompleted
+                belongs = !item.isArchived && !item.isTrashed && (
+                    !item.isCompleted || item.completedAt.map {
+                        CompletionVisibility.remainsOnMainPage(completedAt: $0, now: now)
+                    } == true
+                )
             case .tasks:
                 belongs = item.kind == .task && !item.isCompleted && !item.isArchived && !item.isTrashed
             case .due:
@@ -152,10 +156,11 @@ final class ItemRepository {
         try modelContext.save()
     }
 
-    func setCompleted(_ completed: Bool, for item: CaptureItem) throws {
+    func setCompleted(_ completed: Bool, for item: CaptureItem, at date: Date = .now) throws {
         guard item.kind == .task else { throw ItemRepositoryError.notATask }
         item.isCompleted = completed
-        item.touch()
+        item.completedAt = completed ? date : nil
+        item.touch(at: date)
         try modelContext.save()
     }
 

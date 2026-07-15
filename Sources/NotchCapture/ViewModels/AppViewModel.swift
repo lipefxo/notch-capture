@@ -101,6 +101,7 @@ final class AppViewModel: ObservableObject {
         var sourceApp: String?
         var isPinned: Bool
         var isCompleted: Bool
+        var completedAt: Date?
         var isArchived: Bool
         var isTrashed: Bool
         var attachments: [LedgerAttachment]
@@ -116,6 +117,7 @@ final class AppViewModel: ObservableObject {
             sourceApp: String? = nil,
             isPinned: Bool = false,
             isCompleted: Bool = false,
+            completedAt: Date? = nil,
             isArchived: Bool = false,
             isTrashed: Bool = false,
             attachments: [LedgerAttachment] = []
@@ -130,9 +132,14 @@ final class AppViewModel: ObservableObject {
             self.sourceApp = sourceApp
             self.isPinned = isPinned
             self.isCompleted = isCompleted
+            self.completedAt = completedAt
             self.isArchived = isArchived
             self.isTrashed = isTrashed
             self.attachments = attachments
+        }
+
+        var displaysAttachmentPrefix: Bool {
+            !attachments.isEmpty
         }
     }
 
@@ -262,7 +269,7 @@ final class AppViewModel: ObservableObject {
             }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return lhs.createdAt > rhs.createdAt
+                return activityDate(for: lhs) > activityDate(for: rhs)
             }
     }
 
@@ -274,11 +281,11 @@ final class AppViewModel: ObservableObject {
     var canAddComposerText: Bool { composerHasQuery && visibleItems.isEmpty }
 
     var todayItems: [LedgerItem] {
-        unpinnedItems.filter { Calendar.current.isDateInToday($0.createdAt) }
+        unpinnedItems.filter { Calendar.current.isDateInToday(activityDate(for: $0)) }
     }
 
     var earlierItems: [LedgerItem] {
-        unpinnedItems.filter { !Calendar.current.isDateInToday($0.createdAt) }
+        unpinnedItems.filter { !Calendar.current.isDateInToday(activityDate(for: $0)) }
     }
 
     func openExpanded() {
@@ -336,7 +343,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleComplete(_ item: LedgerItem) {
-        mutateItem(item.id) { $0.isCompleted.toggle() }
+        mutateItem(item.id) {
+            $0.isCompleted.toggle()
+            $0.completedAt = $0.isCompleted ? .now : nil
+        }
         hooks.onToggleComplete(item.id)
     }
 
@@ -431,7 +441,11 @@ final class AppViewModel: ObservableObject {
     private func matchesFilter(_ item: LedgerItem) -> Bool {
         switch filter {
         case .all:
-            !item.isArchived && !item.isTrashed && !item.isCompleted
+            !item.isArchived && !item.isTrashed && (
+                !item.isCompleted || item.completedAt.map {
+                    CompletionVisibility.remainsOnMainPage(completedAt: $0)
+                } == true
+            )
         case .tasks:
             item.kind == .task && !item.isArchived && !item.isTrashed && !item.isCompleted
         case .due:
@@ -443,6 +457,10 @@ final class AppViewModel: ObservableObject {
         case .trash:
             item.isTrashed
         }
+    }
+
+    private func activityDate(for item: LedgerItem) -> Date {
+        item.completedAt ?? item.createdAt
     }
 
     private func mutateItem(_ id: UUID, mutation: (inout LedgerItem) -> Void) {

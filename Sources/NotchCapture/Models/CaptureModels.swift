@@ -32,6 +32,14 @@ enum CaptureScope: Hashable, Sendable {
     case list(UUID)
 }
 
+enum CompletionVisibility {
+    static let mainPageRetention: TimeInterval = 24 * 60 * 60
+
+    static func remainsOnMainPage(completedAt: Date, now: Date = .now) -> Bool {
+        completedAt.addingTimeInterval(mainPageRetention) > now
+    }
+}
+
 enum CaptureRequest: Sendable {
     case selection
     case manual(String)
@@ -87,6 +95,7 @@ final class CaptureItem {
     var text: String
     var kindRawValue: String
     var isCompleted: Bool
+    var completedAt: Date?
     var dueDate: Date?
     var isPinned: Bool
     var archivedAt: Date?
@@ -106,6 +115,7 @@ final class CaptureItem {
         text: String = "",
         kind: CaptureItemKind = .note,
         isCompleted: Bool = false,
+        completedAt: Date? = nil,
         dueDate: Date? = nil,
         isPinned: Bool = false,
         archivedAt: Date? = nil,
@@ -121,6 +131,7 @@ final class CaptureItem {
         self.text = text
         self.kindRawValue = kind.rawValue
         self.isCompleted = isCompleted
+        self.completedAt = completedAt
         self.dueDate = dueDate
         self.isPinned = isPinned
         self.archivedAt = archivedAt
@@ -144,6 +155,7 @@ final class CaptureItem {
             kindRawValue = newValue.rawValue
             if newValue == .note {
                 isCompleted = false
+                completedAt = nil
             }
             touch()
         }

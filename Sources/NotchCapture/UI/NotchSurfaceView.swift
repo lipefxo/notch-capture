@@ -58,6 +58,7 @@ struct CollapsedPillView: View {
             .shadow(color: .black.opacity(0.36), radius: 16, y: 8)
         }
         .buttonStyle(.plain)
+        .notchHitTarget(NotchHugShape(bottomRadius: 16))
         .onHover { isHovered = $0 }
         .help("Open Notch Capture")
         .accessibilityLabel("Open Notch Capture")
@@ -82,7 +83,8 @@ struct ScreenshotStateView: View {
             }
             Spacer()
             Button("Cancel") { viewModel.dismiss() }
-                .buttonStyle(.plain)
+                .buttonStyle(CompactTextButtonStyle())
+                .notchHitTarget(Rectangle())
                 .foregroundStyle(NotchTheme.secondaryText)
                 .keyboardShortcut(.cancelAction)
         }

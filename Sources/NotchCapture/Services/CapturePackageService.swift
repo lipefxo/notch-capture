@@ -22,6 +22,7 @@ struct CapturePackageManifest: Codable, Sendable {
         let text: String
         let kind: CaptureItemKind
         let isCompleted: Bool
+        let completedAt: Date?
         let dueDate: Date?
         let isPinned: Bool
         let archivedAt: Date?
@@ -125,6 +126,7 @@ final class CapturePackageService {
                 text: item.text,
                 kind: item.kind,
                 isCompleted: item.isCompleted,
+                completedAt: item.completedAt,
                 dueDate: item.dueDate,
                 isPinned: item.isPinned,
                 archivedAt: item.archivedAt,
@@ -267,6 +269,7 @@ final class CapturePackageService {
                     text: record.text,
                     kind: record.kind,
                     isCompleted: record.isCompleted,
+                    completedAt: record.completedAt,
                     dueDate: record.dueDate,
                     isPinned: record.isPinned,
                     archivedAt: record.archivedAt,
@@ -311,6 +314,7 @@ final class CapturePackageService {
         return record.text == item.text &&
             record.kind == item.kind &&
             record.isCompleted == item.isCompleted &&
+            record.completedAt == item.completedAt &&
             record.dueDate == item.dueDate &&
             record.isPinned == item.isPinned &&
             record.archivedAt == item.archivedAt &&

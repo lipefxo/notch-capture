@@ -35,7 +35,8 @@ struct ConfirmationView: View {
                 }
                 .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(NotchTheme.mint)
-                .buttonStyle(.plain)
+                .buttonStyle(CompactTextButtonStyle())
+                .notchHitTarget(Rectangle())
                 .keyboardShortcut("z", modifiers: .command)
                 .accessibilityHint("Removes the item that was just captured")
             }

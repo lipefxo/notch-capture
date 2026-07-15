@@ -37,6 +37,7 @@ struct SettingsView: View {
                     .font(.system(size: 11, weight: .semibold))
             }
             .buttonStyle(PressableIconButtonStyle())
+            .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .keyboardShortcut(.cancelAction)
             .accessibilityLabel("Back to inbox")
 
@@ -104,10 +105,11 @@ struct SettingsView: View {
                             Spacer()
                             ShortcutKeycap(value: shortcut.displayValue)
                         }
-                        .contentShape(Rectangle())
                         .padding(.vertical, 8)
+                        .notchHitTarget(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .notchHitTarget(Rectangle())
                     .accessibilityLabel("\(shortcut.title), \(shortcut.displayValue)")
                     .accessibilityHint("Change this shortcut")
 
@@ -161,6 +163,7 @@ struct SettingsView: View {
                     .onSubmit { viewModel.createList() }
                 Button("Add") { viewModel.createList() }
                     .buttonStyle(MintButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
             .padding(.leading, 9)
             .background(Color.black.opacity(0.18))
@@ -186,11 +189,14 @@ struct SettingsView: View {
             HStack(spacing: 8) {
                 Button("Import…", action: viewModel.hooks.onImport)
                     .buttonStyle(SettingsButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 Button("Export…", action: viewModel.hooks.onExport)
                     .buttonStyle(SettingsButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 Spacer()
                 Button("Quit", action: viewModel.hooks.onQuit)
-                    .buttonStyle(.plain)
+                    .buttonStyle(CompactTextButtonStyle())
+                    .notchHitTarget(Rectangle())
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Color.red.opacity(0.78))
             }
@@ -307,6 +313,7 @@ private struct PermissionRow: View {
             } else {
                 Button("Allow", action: request)
                     .buttonStyle(MintButtonStyle())
+                    .contentShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
         }
         .accessibilityElement(children: .contain)
@@ -323,5 +330,6 @@ private struct SettingsButtonStyle: ButtonStyle {
             .frame(height: 27)
             .background(Color.white.opacity(configuration.isPressed ? 0.09 : 0.05))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
     }
 }

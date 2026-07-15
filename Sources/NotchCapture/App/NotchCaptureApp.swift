@@ -5,9 +5,53 @@ import AppKit
 enum NotchCaptureApplication {
     static func main() {
         let application = NSApplication.shared
+        application.mainMenu = ApplicationMenuFactory.makeMainMenu()
         let delegate = NotchCaptureAppDelegate()
         application.delegate = delegate
         application.run()
+    }
+}
+
+@MainActor
+enum ApplicationMenuFactory {
+    static func makeMainMenu() -> NSMenu {
+        let mainMenu = NSMenu(title: "Main Menu")
+
+        let applicationItem = NSMenuItem()
+        let applicationMenu = NSMenu(title: "Notch Capture")
+        applicationMenu.addItem(
+            NSMenuItem(
+                title: "Quit Notch Capture",
+                action: #selector(NSApplication.terminate(_:)),
+                keyEquivalent: "q"
+            )
+        )
+        applicationItem.submenu = applicationMenu
+        mainMenu.addItem(applicationItem)
+
+        let editItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(command("Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(command("Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(command("Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(command("Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(command("Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(command("Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+
+        return mainMenu
+    }
+
+    private static func command(
+        _ title: String,
+        action: Selector,
+        keyEquivalent: String
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        item.target = nil
+        return item
     }
 }
 

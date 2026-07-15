@@ -73,6 +73,55 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.surfaceState, .expanded)
     }
 
+    func testCompletedTasksRemainOnAllForTwentyFourHours() {
+        let now = Date.now
+        let openTask = AppViewModel.LedgerItem(kind: .task, title: "Open task")
+        let recentlyCompleted = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Recently completed",
+            createdAt: now.addingTimeInterval(-7 * 24 * 60 * 60),
+            isCompleted: true,
+            completedAt: now.addingTimeInterval(-(23 * 60 * 60))
+        )
+        let expiredCompletion = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Completed yesterday",
+            isCompleted: true,
+            completedAt: now.addingTimeInterval(-(24 * 60 * 60))
+        )
+        let legacyCompletion = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Completion time unknown",
+            isCompleted: true
+        )
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [openTask, recentlyCompleted, expiredCompletion, legacyCompletion]
+        )
+
+        XCTAssertEqual(Set(viewModel.visibleItems.map(\.id)), Set([openTask.id, recentlyCompleted.id]))
+
+        viewModel.filter = .completed
+
+        XCTAssertEqual(
+            Set(viewModel.visibleItems.map(\.id)),
+            Set([recentlyCompleted.id, expiredCompletion.id, legacyCompletion.id])
+        )
+    }
+
+    func testOnlyAttachmentItemsDisplayAPrefixIcon() {
+        let textNote = AppViewModel.LedgerItem(title: "Text note")
+        let textTask = AppViewModel.LedgerItem(kind: .task, title: "Text task")
+        let attachment = AppViewModel.LedgerItem(
+            title: "Reference",
+            attachments: [.init(kind: .file, name: "brief.pdf")]
+        )
+
+        XCTAssertFalse(textNote.displaysAttachmentPrefix)
+        XCTAssertFalse(textTask.displaysAttachmentPrefix)
+        XCTAssertTrue(attachment.displaysAttachmentPrefix)
+    }
+
     func testManualCaptureFeedbackKeepsExpandedSessionOpenUntilDismissed() {
         let item = AppViewModel.LedgerItem(title: "A thought worth keeping")
         let viewModel = AppViewModel(surfaceState: .expanded)
