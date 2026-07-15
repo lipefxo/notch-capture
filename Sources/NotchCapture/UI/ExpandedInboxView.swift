@@ -105,6 +105,31 @@ private struct LedgerDragPreview: View {
     }
 }
 
+private struct IridescentTagLabel: View {
+    let name: String
+    let count: Int?
+    let colorSeed: Double
+    var compact = false
+
+    private var gradient: LinearGradient {
+        NotchTheme.tagIridescence(seed: colorSeed)
+    }
+
+    var body: some View {
+        HStack(spacing: compact ? 4 : 5) {
+            Text("@\(name)")
+            if let count {
+                Text("\(count)")
+                    .opacity(0.62)
+            }
+        }
+        .font(.system(size: compact ? 9.5 : 10.5, weight: .medium))
+        .foregroundStyle(gradient)
+        .frame(height: compact ? 20 : 28)
+        .notchHitTarget(Rectangle())
+    }
+}
+
 enum LedgerDragRegion: Hashable {
     case feed
     case row(UUID)
@@ -200,6 +225,9 @@ struct ExpandedInboxView: View {
     @State private var folderBeingRenamed: AppViewModel.FolderSummary?
     @State private var renameFolderName = ""
     @State private var folderPendingDeletion: AppViewModel.FolderSummary?
+    @State private var tagBeingRenamed: AppViewModel.TagSummary?
+    @State private var renameTagName = ""
+    @State private var tagPendingDeletion: AppViewModel.TagSummary?
 
     private let floatingComposerMargin: CGFloat = 18
     private let floatingComposerHeight: CGFloat = 52
@@ -257,6 +285,10 @@ struct ExpandedInboxView: View {
             viewModel.acceptDrop(providers)
         }
         .onExitCommand {
+            if !viewModel.tagSuggestions.isEmpty {
+                viewModel.dismissTagAutocomplete()
+                return
+            }
             if reorderSession != nil {
                 resetReorderState()
                 return
@@ -285,6 +317,9 @@ struct ExpandedInboxView: View {
             if focus == .selectedRow {
                 focusedField = nil
             }
+        }
+        .onChange(of: viewModel.composerText) { oldValue, newValue in
+            viewModel.composerTextDidChange(from: oldValue, to: newValue)
         }
         .onChange(of: isReorderGestureActive) { wasActive, isActive in
             if wasActive, !isActive, reorderSession != nil, dragLocation != nil {
@@ -324,6 +359,34 @@ struct ExpandedInboxView: View {
             let count = folderPendingDeletion.map { viewModel.totalItemCount(in: $0.id) } ?? 0
             Text("\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.")
         }
+        .alert("Rename Tag", isPresented: renameTagAlertBinding) {
+            TextField("Tag name", text: $renameTagName)
+            Button("Cancel", role: .cancel) { tagBeingRenamed = nil }
+            Button("Rename") {
+                if let tagBeingRenamed {
+                    viewModel.renameTag(tagBeingRenamed, to: renameTagName)
+                }
+                tagBeingRenamed = nil
+            }
+        } message: {
+            Text("Spaces become hyphens. Renaming to an existing tag merges both groups.")
+        }
+        .confirmationDialog(
+            "Delete @\(tagPendingDeletion?.name ?? "tag")?",
+            isPresented: deleteTagConfirmationBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Tag", role: .destructive) {
+                if let tagPendingDeletion {
+                    viewModel.deleteTag(tagPendingDeletion)
+                }
+                tagPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { tagPendingDeletion = nil }
+        } message: {
+            let count = tagPendingDeletion.map { viewModel.totalItemCount(for: $0.id) } ?? 0
+            Text("The tag will be removed from \(count) \(count == 1 ? "item" : "items"). No items will be deleted.")
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture inbox")
     }
@@ -342,13 +405,32 @@ struct ExpandedInboxView: View {
         )
     }
 
+    private var renameTagAlertBinding: Binding<Bool> {
+        Binding(
+            get: { tagBeingRenamed != nil },
+            set: { if !$0 { tagBeingRenamed = nil } }
+        )
+    }
+
+    private var deleteTagConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { tagPendingDeletion != nil },
+            set: { if !$0 { tagPendingDeletion = nil } }
+        )
+    }
+
     private var floatingComposer: some View {
         ZStack(alignment: .bottom) {
             floatingGlassFade
 
-            captureField
-                .padding(.horizontal, floatingComposerMargin)
-                .padding(.bottom, floatingComposerMargin)
+            VStack(spacing: 6) {
+                if !viewModel.tagSuggestions.isEmpty {
+                    tagAutocomplete
+                }
+                captureField
+            }
+            .padding(.horizontal, floatingComposerMargin)
+            .padding(.bottom, floatingComposerMargin)
         }
         .frame(maxWidth: .infinity)
         .zIndex(1)
@@ -536,16 +618,33 @@ struct ExpandedInboxView: View {
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
-                .onSubmit { viewModel.submitComposer() }
+                .onSubmit {
+                    if !viewModel.acceptSelectedTagSuggestion() {
+                        viewModel.submitComposer()
+                    }
+                }
+                .onKeyPress(.tab) {
+                    viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
+                }
+                .onKeyPress(.upArrow) {
+                    guard !viewModel.tagSuggestions.isEmpty else { return .ignored }
+                    viewModel.moveTagSuggestionSelection(by: -1)
+                    return .handled
+                }
+                .onKeyPress(.downArrow) {
+                    guard !viewModel.tagSuggestions.isEmpty else { return .ignored }
+                    viewModel.moveTagSuggestionSelection(by: 1)
+                    return .handled
+                }
                 .accessibilityLabel("Search or add to \(viewModel.captureDestinationName)")
                 .accessibilityHint(unifiedInputHint)
 
-            if viewModel.canAddComposerText {
+            if viewModel.canAddComposerText || viewModel.canCreateStandaloneTag {
                 Button {
                     viewModel.submitComposer()
                 } label: {
                     HStack(spacing: 5) {
-                        Text("Add")
+                        Text(viewModel.canCreateStandaloneTag ? "Create tag" : "Add")
                             .font(.system(size: 11, weight: .medium))
                         Image(systemName: "return")
                             .font(.system(size: 11, weight: .regular))
@@ -560,8 +659,16 @@ struct ExpandedInboxView: View {
                 .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Add this thought to \(viewModel.captureDestinationName)")
-                .accessibilityLabel("Add thought to \(viewModel.captureDestinationName)")
+                .help(
+                    viewModel.canCreateStandaloneTag
+                        ? "Create this tag group"
+                        : "Add this thought to \(viewModel.captureDestinationName)"
+                )
+                .accessibilityLabel(
+                    viewModel.canCreateStandaloneTag
+                        ? "Create tag group"
+                        : "Add thought to \(viewModel.captureDestinationName)"
+                )
             } else if viewModel.composerHasMatches {
                 Text("\(viewModel.searchMatchCount) \(viewModel.searchMatchCount == 1 ? "match" : "matches")")
                     .font(.system(size: 10.5, weight: .regular))
@@ -571,6 +678,75 @@ struct ExpandedInboxView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: floatingComposerHeight)
+    }
+
+    private var tagAutocomplete: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(viewModel.tagSuggestions.enumerated()), id: \.element.id) { index, suggestion in
+                Button {
+                    viewModel.acceptTagSuggestion(suggestion)
+                    focusComposer()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: suggestionIcon(suggestion))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(suggestionGradient(suggestion))
+                            .frame(width: 16)
+                        Text(suggestionLabel(suggestion))
+                            .font(.system(size: 11.5, weight: .medium))
+                            .foregroundStyle(suggestionGradient(suggestion))
+                            .lineLimit(1)
+                        Spacer()
+                        if case let .existing(group) = suggestion {
+                            Text("\(group.count)")
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundStyle(NotchTheme.tertiaryText)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 34)
+                    .background(
+                        index == viewModel.selectedTagSuggestionIndex
+                            ? NotchTheme.selectedLedger
+                            : Color.clear
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(NotchTheme.raisedGraphite.opacity(0.98))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: .black.opacity(0.32), radius: 10, y: 5)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Tag suggestions")
+    }
+
+    private func suggestionIcon(_ suggestion: AppViewModel.TagSuggestion) -> String {
+        switch suggestion {
+        case .existing: "at"
+        case .create: "plus"
+        }
+    }
+
+    private func suggestionLabel(_ suggestion: AppViewModel.TagSuggestion) -> String {
+        switch suggestion {
+        case let .existing(group): "@\(group.name)"
+        case let .create(name): "Create @\(name)"
+        }
+    }
+
+    private func suggestionGradient(_ suggestion: AppViewModel.TagSuggestion) -> LinearGradient {
+        switch suggestion {
+        case let .existing(group):
+            NotchTheme.tagIridescence(seed: group.tag.colorSeed)
+        case .create:
+            NotchTheme.tagIridescence(seed: 0)
+        }
     }
 
     private var composerShape: Capsule {
@@ -647,6 +823,12 @@ struct ExpandedInboxView: View {
     }
 
     private var unifiedInputHint: String {
+        if viewModel.canCreateStandaloneTag {
+            return "Press Return to create this tag group."
+        }
+        if viewModel.composerIsTagOnly && viewModel.exactComposerTagExists && !viewModel.composerHasMatches {
+            return "This tag exists, but no items in the current filter use it."
+        }
         if viewModel.canAddComposerText {
             return "No matching items. Press Return to add this thought to \(viewModel.captureDestinationName)."
         }
@@ -826,6 +1008,10 @@ struct ExpandedInboxView: View {
 
     @ViewBuilder
     private var feedContent: some View {
+        if !viewModel.visibleTagGroups.isEmpty {
+            tagShelf
+        }
+
         if !viewModel.visibleFolders.isEmpty {
             ForEach(viewModel.visibleFolders) { folder in
                 folderRow(folder)
@@ -853,6 +1039,57 @@ struct ExpandedInboxView: View {
 
         if draggedItemID != nil, reorderTarget != nil, previewUnpinnedItems.isEmpty {
             emptyGroupDropTarget(title: "Drop to unpin", isPinned: false)
+        }
+    }
+
+    private var tagShelf: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tags")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(NotchTheme.tertiaryText)
+                .textCase(.uppercase)
+                .tracking(0.7)
+                .padding(.horizontal, 20)
+
+            ScrollView(.horizontal) {
+                HStack(spacing: 18) {
+                    ForEach(viewModel.visibleTagGroups) { group in
+                        Button {
+                            viewModel.search(for: group.tag)
+                            focusComposer()
+                        } label: {
+                            IridescentTagLabel(
+                                name: group.name,
+                                count: group.count,
+                                colorSeed: group.tag.colorSeed
+                            )
+                        }
+                        .buttonStyle(NotchPressButtonStyle())
+                        .contextMenu {
+                            Button("Search @\(group.name)") {
+                                viewModel.search(for: group.tag)
+                                focusComposer()
+                            }
+                            Button("Rename Tag") {
+                                renameTagName = group.name
+                                tagBeingRenamed = group.tag
+                            }
+                            Divider()
+                            Button("Delete Tag", role: .destructive) {
+                                tagPendingDeletion = group.tag
+                            }
+                        }
+                        .accessibilityLabel("Tag \(group.name), \(group.count) \(group.count == 1 ? "item" : "items")")
+                        .accessibilityHint("Searches for this tag")
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.vertical, 12)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(NotchTheme.hairline).frame(height: 1).padding(.leading, 20)
         }
     }
 
@@ -1261,7 +1498,7 @@ private struct LedgerRowView: View {
     private var isSelected: Bool { viewModel.selectedItemID == item.id }
     private var showsActions: Bool { isHovered || isSelected }
     private var isAttachmentOnly: Bool {
-        item.attachments.count == 1 && item.detail.isEmpty && item.kind == .note
+        item.attachments.count == 1 && item.detail.isEmpty && item.kind == .note && item.tags.isEmpty
     }
 
     var body: some View {
@@ -1325,6 +1562,29 @@ private struct LedgerRowView: View {
                         .font(.system(size: 10.5, weight: .regular))
                         .foregroundStyle(item.dueDate != nil && item.detail.isEmpty ? NotchTheme.dueAccent : NotchTheme.secondaryText)
                     .lineLimit(2)
+                }
+
+                if !item.tags.isEmpty {
+                    ScrollView(.horizontal) {
+                        HStack(spacing: 10) {
+                            ForEach(item.tags) { tag in
+                                Button {
+                                    viewModel.search(for: tag)
+                                } label: {
+                                    IridescentTagLabel(
+                                        name: tag.name,
+                                        count: nil,
+                                        colorSeed: tag.colorSeed,
+                                        compact: true
+                                    )
+                                }
+                                .buttonStyle(.plain)
+                                .help("Search @\(tag.name)")
+                                .accessibilityLabel("Search tag \(tag.name)")
+                            }
+                        }
+                    }
+                    .scrollIndicators(.hidden)
                 }
             }
 

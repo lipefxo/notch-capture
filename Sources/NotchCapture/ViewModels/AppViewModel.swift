@@ -96,6 +96,45 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    struct TagSummary: Identifiable, Hashable {
+        var id: UUID
+        var name: String
+        var colorSeed: Double
+
+        init(id: UUID = UUID(), name: String, colorSeed: Double? = nil) {
+            self.id = id
+            self.name = name
+            self.colorSeed = colorSeed ?? TagColorSeed.stable(for: id)
+        }
+    }
+
+    struct TagGroup: Identifiable, Hashable {
+        var tag: TagSummary
+        var count: Int
+
+        var id: UUID { tag.id }
+        var name: String { tag.name }
+    }
+
+    enum TagSuggestion: Identifiable, Hashable {
+        case existing(TagGroup)
+        case create(String)
+
+        var id: String {
+            switch self {
+            case let .existing(group): "tag-\(group.id.uuidString)"
+            case let .create(name): "create-\(CaptureTagParser.normalize(name))"
+            }
+        }
+
+        var name: String {
+            switch self {
+            case let .existing(group): group.name
+            case let .create(name): name
+            }
+        }
+    }
+
     struct LedgerAttachment: Identifiable, Hashable {
         enum Kind: String, Hashable {
             case file
@@ -141,6 +180,7 @@ final class AppViewModel: ObservableObject {
         var isArchived: Bool
         var isTrashed: Bool
         var sortOrder: Int?
+        var tags: [TagSummary]
         var attachments: [LedgerAttachment]
 
         init(
@@ -159,6 +199,7 @@ final class AppViewModel: ObservableObject {
             isArchived: Bool = false,
             isTrashed: Bool = false,
             sortOrder: Int? = nil,
+            tags: [TagSummary] = [],
             attachments: [LedgerAttachment] = []
         ) {
             self.id = id
@@ -176,6 +217,7 @@ final class AppViewModel: ObservableObject {
             self.isArchived = isArchived
             self.isTrashed = isTrashed
             self.sortOrder = sortOrder
+            self.tags = tags
             self.attachments = attachments
         }
 
@@ -253,6 +295,9 @@ final class AppViewModel: ObservableObject {
         var onCreateFolder: (String) -> Void = { _ in }
         var onRenameFolder: (UUID, String) -> Void = { _, _ in }
         var onDeleteFolder: (UUID) -> Void = { _ in }
+        var onCreateTag: (String) -> Void = { _ in }
+        var onRenameTag: (UUID, String) -> Void = { _, _ in }
+        var onDeleteTag: (UUID) -> Void = { _ in }
         var onTrash: (UUID) -> Void = { _ in }
         var onRestore: (UUID) -> Void = { _ in }
         var onDeletePermanently: (UUID) -> Void = { _ in }
@@ -279,7 +324,10 @@ final class AppViewModel: ObservableObject {
     @Published var confirmation: Confirmation?
     @Published var errorMessage: String?
     @Published var folders: [FolderSummary]
+    @Published var tags: [TagSummary]
     @Published var newFolderName = ""
+    @Published private(set) var selectedTagSuggestionIndex = 0
+    @Published private(set) var isTagAutocompleteDismissed = false
     @Published var ownership: NotchOwnership {
         didSet { hooks.onSetOwnership(ownership) }
     }
@@ -303,6 +351,7 @@ final class AppViewModel: ObservableObject {
         surfaceState: SurfaceState = .collapsed,
         items: [LedgerItem] = [],
         folders: [FolderSummary] = [],
+        tags: [TagSummary] = [],
         ownership: NotchOwnership = .automatic,
         autoHideExternalPill: Bool = false,
         launchAtLogin: Bool = false,
@@ -320,6 +369,7 @@ final class AppViewModel: ObservableObject {
         self.surfaceState = surfaceState
         self.items = items
         self.folders = folders
+        self.tags = tags
         self.ownership = ownership
         self.autoHideExternalPill = autoHideExternalPill
         self.launchAtLogin = launchAtLogin
@@ -332,14 +382,12 @@ final class AppViewModel: ObservableObject {
     }
 
     var visibleItems: [LedgerItem] {
-        let query = normalizedComposerText
+        let query = parsedComposerQuery
         return items
             .filter(matchesFilter)
             .filter(matchesBrowseLocation)
             .filter { item in
-                query.isEmpty || item.title.localizedCaseInsensitiveContains(query)
-                    || item.detail.localizedCaseInsensitiveContains(query)
-                    || item.attachments.contains { $0.name.localizedCaseInsensitiveContains(query) }
+                matchesQuery(item, query: query)
             }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
@@ -352,13 +400,14 @@ final class AppViewModel: ObservableObject {
 
     var visibleFolders: [FolderSummary] {
         guard browseLocation == .root else { return [] }
-        let query = normalizedComposerText
+        let query = parsedComposerQuery
+        guard query.tagNames.isEmpty else { return [] }
         return folders
             .filter { folder in
                 filter == .all || matchingItemCount(in: folder.id) > 0
             }
             .filter { folder in
-                query.isEmpty || folder.name.localizedCaseInsensitiveContains(query)
+                query.text.isEmpty || folder.name.localizedCaseInsensitiveContains(query.text)
             }
             .sorted {
                 if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
@@ -377,13 +426,63 @@ final class AppViewModel: ObservableObject {
     var isAtRoot: Bool { browseLocation == .root }
     var isShowingGlobalSearchResults: Bool { isAtRoot && composerHasQuery }
     var canReorderVisibleItems: Bool { !isShowingGlobalSearchResults }
-    var hasVisibleContent: Bool { !visibleFolders.isEmpty || !visibleItems.isEmpty }
+    var hasVisibleContent: Bool {
+        !visibleTagGroups.isEmpty || !visibleFolders.isEmpty || !visibleItems.isEmpty
+    }
     var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
 
     var composerHasQuery: Bool { !normalizedComposerText.isEmpty }
     var searchMatchCount: Int { visibleFolders.count + visibleItems.count }
     var composerHasMatches: Bool { composerHasQuery && searchMatchCount > 0 }
-    var canAddComposerText: Bool { composerHasQuery && searchMatchCount == 0 }
+    var canCreateStandaloneTag: Bool {
+        let query = parsedComposerQuery
+        guard query.isTagOnly, query.tagNames.count == 1 else { return false }
+        let normalized = CaptureTagParser.normalize(query.tagNames[0])
+        return !tags.contains { CaptureTagParser.normalize($0.name) == normalized }
+    }
+    var composerIsTagOnly: Bool { parsedComposerQuery.isTagOnly }
+    var exactComposerTagExists: Bool {
+        let query = parsedComposerQuery
+        guard query.isTagOnly, query.tagNames.count == 1 else { return false }
+        let normalized = CaptureTagParser.normalize(query.tagNames[0])
+        return tags.contains { CaptureTagParser.normalize($0.name) == normalized }
+    }
+    var canAddComposerText: Bool {
+        composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
+    }
+
+    var visibleTagGroups: [TagGroup] {
+        guard isAtRoot, !composerHasQuery else { return [] }
+        return tags.compactMap { tag in
+            let count = filteredItemCount(for: tag.id)
+            guard filter == .all || count > 0 else { return nil }
+            return TagGroup(tag: tag, count: count)
+        }.sorted {
+            if $0.count != $1.count { return $0.count > $1.count }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    var tagSuggestions: [TagSuggestion] {
+        guard !isTagAutocompleteDismissed,
+              let fragment = CaptureTagParser.activeTagFragment(in: composerText) else { return [] }
+        let normalized = CaptureTagParser.normalize(fragment)
+        let matches = tags
+            .filter { normalized.isEmpty || CaptureTagParser.normalize($0.name).hasPrefix(normalized) }
+            .map { TagGroup(tag: $0, count: filteredItemCount(for: $0.id)) }
+            .sorted {
+                if $0.count != $1.count { return $0.count > $1.count }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        let canCreate = !fragment.isEmpty &&
+            !tags.contains(where: { CaptureTagParser.normalize($0.name) == normalized })
+        let existingLimit = canCreate ? 4 : 5
+        var suggestions = matches.prefix(existingLimit).map(TagSuggestion.existing)
+        if canCreate {
+            suggestions.append(.create(fragment))
+        }
+        return Array(suggestions.prefix(5))
+    }
 
     func openExpanded() {
         errorMessage = nil
@@ -404,6 +503,13 @@ final class AppViewModel: ObservableObject {
         guard !text.isEmpty else {
             return
         }
+        if canCreateStandaloneTag {
+            let name = parsedComposerQuery.tagNames[0]
+            errorMessage = nil
+            hooks.onCreateTag(name)
+            composerText = ""
+            return
+        }
         guard canAddComposerText else {
             if let folder = visibleFolders.first {
                 openFolder(folder)
@@ -416,6 +522,65 @@ final class AppViewModel: ObservableObject {
         filter = .all
         hooks.onCaptureText(text, captureDestinationID)
         composerText = ""
+    }
+
+    func composerTextDidChange(from oldValue: String, to newValue: String) {
+        selectedTagSuggestionIndex = 0
+        isTagAutocompleteDismissed = false
+        if newValue == oldValue + " ", CaptureTagParser.activeTagFragment(in: oldValue) != nil {
+            composerText = oldValue + "-"
+        }
+    }
+
+    @discardableResult
+    func acceptSelectedTagSuggestion() -> Bool {
+        let suggestions = tagSuggestions
+        guard !suggestions.isEmpty else { return false }
+        let index = min(selectedTagSuggestionIndex, suggestions.count - 1)
+        acceptTagSuggestion(suggestions[index])
+        return true
+    }
+
+    func acceptTagSuggestion(_ suggestion: TagSuggestion) {
+        guard let at = composerText.lastIndex(of: "@") else { return }
+        composerText.replaceSubrange(at..., with: "@\(suggestion.name) ")
+        selectedTagSuggestionIndex = 0
+        isTagAutocompleteDismissed = true
+    }
+
+    func moveTagSuggestionSelection(by offset: Int) {
+        let count = tagSuggestions.count
+        guard count > 0 else { return }
+        selectedTagSuggestionIndex = (selectedTagSuggestionIndex + offset + count) % count
+    }
+
+    func dismissTagAutocomplete() {
+        isTagAutocompleteDismissed = true
+    }
+
+    func search(for tag: TagSummary) {
+        clearSelection()
+        browseLocation = .root
+        composerText = "@\(tag.name) "
+        isTagAutocompleteDismissed = true
+        keyboardFocus = .composer
+    }
+
+    func renameTag(_ tag: TagSummary, to proposedName: String) {
+        let name = CaptureTagParser.normalizedDisplayName(proposedName)
+        guard !name.isEmpty else {
+            errorMessage = "Give the tag a name."
+            return
+        }
+        hooks.onRenameTag(tag.id, name)
+    }
+
+    func deleteTag(_ tag: TagSummary) {
+        hooks.onDeleteTag(tag.id)
+    }
+
+    func totalItemCount(for tagID: UUID) -> Int {
+        items.count { item in item.tags.contains { $0.id == tagID } }
     }
 
     func openFolder(_ folder: FolderSummary) {
@@ -794,6 +959,27 @@ final class AppViewModel: ObservableObject {
         composerText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    private var parsedComposerQuery: ParsedTagText {
+        CaptureTagParser.parse(normalizedComposerText)
+    }
+
+    private func matchesQuery(_ item: LedgerItem, query: ParsedTagText) -> Bool {
+        let textMatches = query.text.isEmpty ||
+            item.title.localizedCaseInsensitiveContains(query.text) ||
+            item.detail.localizedCaseInsensitiveContains(query.text) ||
+            item.attachments.contains { $0.name.localizedCaseInsensitiveContains(query.text) }
+        guard textMatches else { return false }
+        guard !query.tagNames.isEmpty else { return true }
+        let requested = Set(query.tagNames.map(CaptureTagParser.normalize))
+        return item.tags.contains { requested.contains(CaptureTagParser.normalize($0.name)) }
+    }
+
+    private func filteredItemCount(for tagID: UUID) -> Int {
+        items.count { item in
+            matchesFilter(item) && item.tags.contains { $0.id == tagID }
+        }
+    }
+
     private func matchesBrowseLocation(_ item: LedgerItem) -> Bool {
         switch browseLocation {
         case .root:
@@ -862,17 +1048,22 @@ extension AppViewModel {
         let thumbnailURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Design/reference-thumbnail.png")
         let projectsFolder = FolderSummary(name: "Projects", sortOrder: 0)
+        let lipeTag = TagSummary(name: "Lipe", colorSeed: 0.02)
+        let launchTag = TagSummary(name: "Launch", colorSeed: 0.34)
+        let ideasTag = TagSummary(name: "Ideas", colorSeed: 0.70)
         let pinned = LedgerItem(
             title: "Review launch notes",
             detail: "Selected from Safari",
             createdAt: calendar.date(bySettingHour: 10, minute: 32, second: 0, of: today) ?? today,
-            isPinned: true
+            isPinned: true,
+            tags: [lipeTag, launchTag]
         )
         let selectedTask = LedgerItem(
             kind: .task,
             title: "Book studio time",
             createdAt: calendar.date(bySettingHour: 9, minute: 42, second: 0, of: today) ?? today,
-            dueDate: today
+            dueDate: today,
+            tags: [lipeTag]
         )
         let model = AppViewModel(
             surfaceState: .expanded,
@@ -911,6 +1102,7 @@ extension AppViewModel {
                 selectedTask
             ],
             folders: [projectsFolder],
+            tags: [lipeTag, launchTag, ideasTag],
             accessibilityGranted: true
         )
         model.selectedItemID = selectedTask.id

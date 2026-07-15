@@ -19,15 +19,27 @@ enum NotchTheme {
     static let secondaryText = Color.white.opacity(0.55)
     static let tertiaryText = Color.white.opacity(0.39)
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
-    static let composerIridescence = Gradient(colors: [
+    static let iridescenceColors = [
         Color(red: 0.31, green: 0.89, blue: 1.00),
         Color(red: 0.46, green: 0.42, blue: 1.00),
         Color(red: 0.93, green: 0.34, blue: 0.94),
         Color(red: 1.00, green: 0.42, blue: 0.55),
         Color(red: 1.00, green: 0.78, blue: 0.30),
         Color(red: 0.28, green: 0.94, blue: 0.65),
-        Color(red: 0.31, green: 0.89, blue: 1.00),
-    ])
+    ]
+    static let composerIridescence = Gradient(colors: iridescenceColors + [iridescenceColors[0]])
+
+    static func tagIridescence(seed: Double) -> LinearGradient {
+        let normalized = seed - floor(seed)
+        let startIndex = Int(normalized * Double(iridescenceColors.count)) % iridescenceColors.count
+        let colors = (0..<3).map { iridescenceColors[(startIndex + $0) % iridescenceColors.count] }
+        let reversesDirection = normalized >= 0.5
+        return LinearGradient(
+            colors: colors,
+            startPoint: reversesDirection ? .bottomLeading : .topLeading,
+            endPoint: reversesDirection ? .topTrailing : .bottomTrailing
+        )
+    }
 }
 
 enum NotchMotion {

@@ -18,25 +18,33 @@ final class ItemRepository {
         origin: CaptureOrigin,
         source: CaptureSource = CaptureSource(),
         list: ItemList? = nil,
+        tagNames: [String] = [],
         attachments: [Attachment] = [],
         now: Date = .now
     ) throws -> CaptureItem {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty else {
             throw ItemRepositoryError.emptyCapture
         }
-        let item = CaptureItem(
-            text: text,
-            sortOrder: try nextTopSortOrder(isPinned: false, list: list),
-            origin: origin,
-            source: source,
-            list: list,
-            attachments: attachments,
-            createdAt: now,
-            updatedAt: now
-        )
-        modelContext.insert(item)
-        try modelContext.save()
-        return item
+        do {
+            let tags = try resolveTags(named: tagNames, now: now)
+            let item = CaptureItem(
+                text: text,
+                sortOrder: try nextTopSortOrder(isPinned: false, list: list),
+                origin: origin,
+                source: source,
+                list: list,
+                tags: tags,
+                attachments: attachments,
+                createdAt: now,
+                updatedAt: now
+            )
+            modelContext.insert(item)
+            try modelContext.save()
+            return item
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
     }
 
     @discardableResult
@@ -45,6 +53,7 @@ final class ItemRepository {
         origin: CaptureOrigin,
         source: CaptureSource = CaptureSource(),
         list: ItemList? = nil,
+        tagNames: [String] = [],
         now: Date = .now
     ) throws -> CaptureItem {
         guard !payload.isEmpty else { throw ItemRepositoryError.emptyCapture }
@@ -86,6 +95,7 @@ final class ItemRepository {
                 origin: origin,
                 source: source,
                 list: list,
+                tagNames: tagNames,
                 attachments: attachments,
                 now: now
             )
@@ -98,6 +108,77 @@ final class ItemRepository {
     @discardableResult
     func createItem(from selection: SelectionCaptureResult, now: Date = .now) throws -> CaptureItem {
         try createItem(from: selection.payload, origin: .selection, source: selection.source, now: now)
+    }
+
+    func fetchTags() throws -> [CaptureTag] {
+        try modelContext.fetch(FetchDescriptor<CaptureTag>()).sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    @discardableResult
+    func backfillMissingTagColorSeeds() throws -> Bool {
+        let tags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
+        let missing = tags.filter { $0.colorSeed == nil }
+        guard !missing.isEmpty else { return false }
+        for tag in missing {
+            tag.colorSeed = TagColorSeed.random()
+            tag.updatedAt = .now
+        }
+        try modelContext.save()
+        return true
+    }
+
+    @discardableResult
+    func createTag(name proposedName: String, now: Date = .now) throws -> CaptureTag {
+        let name = CaptureTagParser.normalizedDisplayName(proposedName)
+        let normalized = CaptureTagParser.normalize(name)
+        guard !name.isEmpty, name.allSatisfy(CaptureTagParser.isTagCharacter) else {
+            throw ItemRepositoryError.invalidTagName
+        }
+        if let existing = try fetchTags().first(where: { $0.normalizedName == normalized }) {
+            return existing
+        }
+        let tag = CaptureTag(name: name, normalizedName: normalized, createdAt: now, updatedAt: now)
+        modelContext.insert(tag)
+        try modelContext.save()
+        return tag
+    }
+
+    /// Renames a tag, merging it into an existing tag when normalized names collide.
+    @discardableResult
+    func renameTag(_ tag: CaptureTag, to proposedName: String, now: Date = .now) throws -> CaptureTag {
+        let name = CaptureTagParser.normalizedDisplayName(proposedName)
+        let normalized = CaptureTagParser.normalize(name)
+        guard !name.isEmpty, name.allSatisfy(CaptureTagParser.isTagCharacter) else {
+            throw ItemRepositoryError.invalidTagName
+        }
+        if let destination = try fetchTags().first(where: {
+            $0.id != tag.id && $0.normalizedName == normalized
+        }) {
+            for item in tag.items where !item.tags.contains(where: { $0.id == destination.id }) {
+                item.tags.append(destination)
+                item.touch(at: now)
+            }
+            modelContext.delete(tag)
+            destination.updatedAt = now
+            try modelContext.save()
+            return destination
+        }
+        tag.name = name
+        tag.normalizedName = normalized
+        tag.updatedAt = now
+        try modelContext.save()
+        return tag
+    }
+
+    func deleteTag(_ tag: CaptureTag, now: Date = .now) throws {
+        for item in tag.items {
+            item.tags.removeAll { $0.id == tag.id }
+            item.touch(at: now)
+        }
+        modelContext.delete(tag)
+        try modelContext.save()
     }
 
     @discardableResult
@@ -158,7 +239,7 @@ final class ItemRepository {
         let descriptor = FetchDescriptor<CaptureItem>(
             sortBy: [SortDescriptor(\CaptureItem.updatedAt, order: .reverse)]
         )
-        let query = search.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = CaptureTagParser.parse(search.trimmingCharacters(in: .whitespacesAndNewlines))
         let matching = try modelContext.fetch(descriptor).filter { item in
             let belongs: Bool
             switch scope {
@@ -181,7 +262,17 @@ final class ItemRepository {
             case let .list(id):
                 belongs = item.list?.id == id && !item.isArchived && !item.isTrashed
             }
-            return belongs && (query.isEmpty || item.text.localizedCaseInsensitiveContains(query) || item.displayTitle.localizedCaseInsensitiveContains(query))
+            let textMatches = query.text.isEmpty ||
+                item.text.localizedCaseInsensitiveContains(query.text) ||
+                item.displayTitle.localizedCaseInsensitiveContains(query.text) ||
+                item.attachments.contains {
+                    $0.originalFilename.localizedCaseInsensitiveContains(query.text)
+                }
+            let requestedTags = Set(query.tagNames.map(CaptureTagParser.normalize))
+            let tagMatches = requestedTags.isEmpty || item.tags.contains {
+                requestedTags.contains($0.normalizedName)
+            }
+            return belongs && textMatches && tagMatches
         }
         return matching.sorted {
             if $0.isPinned != $1.isPinned { return $0.isPinned }
@@ -343,6 +434,37 @@ final class ItemRepository {
         }.compactMap(\.sortOrder).min() ?? 0) - 1
     }
 
+    private func resolveTags(named proposedNames: [String], now: Date) throws -> [CaptureTag] {
+        let existing = try modelContext.fetch(FetchDescriptor<CaptureTag>())
+        var byName = Dictionary(uniqueKeysWithValues: existing.map { ($0.normalizedName, $0) })
+        var result: [CaptureTag] = []
+        for proposedName in proposedNames {
+            let name = CaptureTagParser.normalizedDisplayName(proposedName)
+            let normalized = CaptureTagParser.normalize(name)
+            guard !name.isEmpty, name.allSatisfy(CaptureTagParser.isTagCharacter) else {
+                throw ItemRepositoryError.invalidTagName
+            }
+            let tag: CaptureTag
+            if let found = byName[normalized] {
+                tag = found
+            } else {
+                let created = CaptureTag(
+                    name: name,
+                    normalizedName: normalized,
+                    createdAt: now,
+                    updatedAt: now
+                )
+                modelContext.insert(created)
+                byName[normalized] = created
+                tag = created
+            }
+            if !result.contains(where: { $0.normalizedName == normalized }) {
+                result.append(tag)
+            }
+        }
+        return result
+    }
+
     private func comesBefore(_ lhs: CaptureItem, _ rhs: CaptureItem) -> Bool {
         switch (lhs.sortOrder, rhs.sortOrder) {
         case let (left?, right?) where left != right:
@@ -389,6 +511,8 @@ enum ItemRepositoryError: LocalizedError {
     case attachmentStoreRequired
     case itemNotFound(UUID)
     case listNotFound(UUID)
+    case tagNotFound(UUID)
+    case invalidTagName
 
     var errorDescription: String? {
         switch self {
@@ -399,6 +523,8 @@ enum ItemRepositoryError: LocalizedError {
         case .attachmentStoreRequired: "An attachment store is required for file and image captures."
         case let .itemNotFound(id): "The item \(id.uuidString) no longer exists."
         case let .listNotFound(id): "The folder \(id.uuidString) no longer exists."
+        case let .tagNotFound(id): "The tag \(id.uuidString) no longer exists."
+        case .invalidTagName: "Tag names can contain letters, numbers, hyphens, and underscores."
         }
     }
 }

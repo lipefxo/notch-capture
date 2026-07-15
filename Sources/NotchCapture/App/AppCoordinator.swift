@@ -46,7 +46,7 @@ final class AppCoordinator {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
 
-        let schema = Schema([CaptureItem.self, ItemList.self, Attachment.self])
+        let schema = Schema([CaptureItem.self, CaptureTag.self, ItemList.self, Attachment.self])
         let configuration: ModelConfiguration
         if previewMode {
             configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -250,6 +250,15 @@ final class AppCoordinator {
         hooks.onDeleteFolder = { [weak self] id in
             self?.deleteFolder(id: id)
         }
+        hooks.onCreateTag = { [weak self] name in
+            self?.createTag(named: name)
+        }
+        hooks.onRenameTag = { [weak self] id, name in
+            self?.renameTag(id: id, to: name)
+        }
+        hooks.onDeleteTag = { [weak self] id in
+            self?.deleteTag(id: id)
+        }
         hooks.onTrash = { [weak self] id in
             self?.trash(id: id)
         }
@@ -412,13 +421,24 @@ final class AppCoordinator {
 
     private func captureManualText(_ text: String, folderID: UUID?) {
         do {
+            let parsed = CaptureTagParser.parse(text)
+            if parsed.isTagOnly, let name = parsed.tagNames.first {
+                _ = try repository.createTag(name: name)
+                reloadFromStore()
+                return
+            }
             let list = try folderID.map(findList)
-            let payload: CapturePayload = if let url = CaptureURLParser.url(from: text) {
+            let payload: CapturePayload = if let url = CaptureURLParser.url(from: parsed.text) {
                 .url(url)
             } else {
-                .text(text)
+                .text(parsed.text)
             }
-            let item = try repository.createItem(from: payload, origin: .manual, list: list)
+            let item = try repository.createItem(
+                from: payload,
+                origin: .manual,
+                list: list,
+                tagNames: parsed.tagNames
+            )
             presentCaptureFeedback(for: item, feedback: .stayExpanded)
         } catch {
             show(error)
@@ -584,6 +604,33 @@ final class AppCoordinator {
         }
     }
 
+    private func createTag(named name: String) {
+        do {
+            _ = try repository.createTag(name: name)
+            reloadFromStore()
+        } catch { show(error) }
+    }
+
+    private func renameTag(id: UUID, to name: String) {
+        do {
+            _ = try repository.renameTag(try findTag(id), to: name)
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
+    }
+
+    private func deleteTag(id: UUID) {
+        do {
+            try repository.deleteTag(try findTag(id))
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
+    }
+
     private func trash(id: UUID) {
         guard let item = findItem(id) else { return }
         do {
@@ -618,6 +665,14 @@ final class AppCoordinator {
             throw ItemRepositoryError.listNotFound(id)
         }
         return list
+    }
+
+    private func findTag(_ id: UUID) throws -> CaptureTag {
+        let tags = try modelContainer.mainContext.fetch(FetchDescriptor<CaptureTag>())
+        guard let tag = tags.first(where: { $0.id == id }) else {
+            throw ItemRepositoryError.tagNotFound(id)
+        }
+        return tag
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) {
@@ -962,6 +1017,7 @@ final class AppCoordinator {
         guard !previewMode else { return }
         do {
             try repository.backfillMissingSortOrders()
+            try repository.backfillMissingTagColorSeeds()
             let descriptor = FetchDescriptor<CaptureItem>(
                 sortBy: [SortDescriptor(\CaptureItem.createdAt, order: .reverse)]
             )
@@ -969,9 +1025,17 @@ final class AppCoordinator {
             let lists = try modelContainer.mainContext.fetch(
                 FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
             )
+            let tags = try modelContainer.mainContext.fetch(FetchDescriptor<CaptureTag>())
             viewModel.items = items.map(makeLedgerItem)
             viewModel.folders = lists.map {
                 AppViewModel.FolderSummary(id: $0.id, name: $0.name, sortOrder: $0.sortOrder)
+            }
+            viewModel.tags = tags.map {
+                AppViewModel.TagSummary(
+                    id: $0.id,
+                    name: $0.name,
+                    colorSeed: $0.colorSeed ?? TagColorSeed.stable(for: $0.id)
+                )
             }
             viewModel.reconcileBrowsingLocation()
         } catch {
@@ -1016,6 +1080,15 @@ final class AppCoordinator {
             isArchived: item.isArchived,
             isTrashed: item.isTrashed,
             sortOrder: item.sortOrder,
+            tags: item.tags
+                .map {
+                    AppViewModel.TagSummary(
+                        id: $0.id,
+                        name: $0.name,
+                        colorSeed: $0.colorSeed ?? TagColorSeed.stable(for: $0.id)
+                    )
+                }
+                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
             attachments: attachments
         )
     }

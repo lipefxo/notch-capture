@@ -6,6 +6,65 @@ import XCTest
 
 @MainActor
 final class CaptureDataTests: XCTestCase {
+    func testTagParserExtractsIntentionalTokensAndPreservesReadableText() {
+        let parsed = CaptureTagParser.parse("Review draft @Lipe @Product-Launch\nEmail lipe@example.com @2026")
+
+        XCTAssertEqual(parsed.text, "Review draft\nEmail lipe@example.com")
+        XCTAssertEqual(parsed.tagNames, ["Lipe", "Product-Launch", "2026"])
+        XCTAssertEqual(CaptureTagParser.parse("@Lipe @lipe").tagNames, ["Lipe"])
+        XCTAssertEqual(CaptureTagParser.parse("@João @project_one,").tagNames, ["João", "project_one"])
+        XCTAssertEqual(CaptureTagParser.parse("Bare @").tagNames, [])
+        XCTAssertEqual(CaptureTagParser.activeTagFragment(in: "Plan @Product"), "Product")
+        XCTAssertNil(CaptureTagParser.activeTagFragment(in: "lipe@example"))
+
+        let taggedURL = CaptureTagParser.parse("www.example.com @Reading")
+        XCTAssertEqual(taggedURL.text, "www.example.com")
+        XCTAssertEqual(CaptureURLParser.url(from: taggedURL.text)?.absoluteString, "https://www.example.com")
+    }
+
+    func testTagRepositoryCreatesMergesAndDetachesTags() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let item = try repository.createItem(
+            text: "Review draft",
+            origin: .manual,
+            tagNames: ["Lipe", "lipe"]
+        )
+        let work = try repository.createTag(name: "Work")
+
+        XCTAssertEqual(item.tags.map(\.name), ["Lipe"])
+        XCTAssertTrue(try XCTUnwrap(item.tags.first?.colorSeed) >= 0)
+        XCTAssertTrue(try XCTUnwrap(item.tags.first?.colorSeed) < 1)
+        XCTAssertEqual(Set(try repository.fetchTags().map(\.name)), Set(["Lipe", "Work"]))
+        XCTAssertEqual(try repository.fetch(scope: .inbox, search: "@lipe").map(\.id), [item.id])
+        XCTAssertEqual(try repository.fetch(scope: .inbox, search: "Review @work").map(\.id), [])
+        XCTAssertEqual(try repository.fetch(scope: .inbox, search: "Lipe").map(\.id), [])
+
+        let lipe = try XCTUnwrap(item.tags.first)
+        let merged = try repository.renameTag(lipe, to: "work")
+        XCTAssertEqual(merged.id, work.id)
+        XCTAssertEqual(item.tags.map(\.id), [work.id])
+        XCTAssertEqual(try repository.fetchTags().count, 1)
+
+        try repository.deleteTag(work)
+        XCTAssertTrue(item.tags.isEmpty)
+        XCTAssertTrue(try repository.fetchTags().isEmpty)
+    }
+
+    func testLegacyTagsReceivePersistentColorSeeds() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let legacy = CaptureTag(name: "Legacy", colorSeed: nil)
+        container.mainContext.insert(legacy)
+        try container.mainContext.save()
+
+        XCTAssertTrue(try repository.backfillMissingTagColorSeeds())
+        let assigned = try XCTUnwrap(legacy.colorSeed)
+        XCTAssertTrue((0..<1).contains(assigned))
+        XCTAssertFalse(try repository.backfillMissingTagColorSeeds())
+        XCTAssertEqual(legacy.colorSeed, assigned)
+    }
+
     func testItemSemanticsAndRepositoryScopes() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)
@@ -348,6 +407,78 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(second.skippedDuplicateCount, 1)
     }
 
+    func testPackageRoundTripIncludesSharedAndStandaloneTags() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let sourceContainer = try makeContainer()
+        let sourceStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("source", isDirectory: true))
+        let sourceRepository = ItemRepository(modelContext: sourceContainer.mainContext)
+        let original = try sourceRepository.createItem(
+            text: "Tagged thought",
+            origin: .manual,
+            tagNames: ["Lipe"]
+        )
+        _ = try sourceRepository.createTag(name: "Standalone")
+
+        let package = temporary.appendingPathComponent("Tags.notchcapture", isDirectory: true)
+        try CapturePackageService(modelContext: sourceContainer.mainContext, attachmentStore: sourceStore)
+            .export(to: package)
+
+        let targetContainer = try makeContainer()
+        let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
+        let importer = CapturePackageService(modelContext: targetContainer.mainContext, attachmentStore: targetStore)
+        let result = try importer.importPackage(at: package)
+
+        XCTAssertEqual(result.importedItemCount, 1)
+        let imported = try XCTUnwrap(
+            targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first { $0.id == original.id }
+        )
+        XCTAssertEqual(imported.tags.map(\.name), ["Lipe"])
+        XCTAssertEqual(imported.tags.first?.colorSeed, original.tags.first?.colorSeed)
+        XCTAssertEqual(
+            Set(try targetContainer.mainContext.fetch(FetchDescriptor<CaptureTag>()).map(\.name)),
+            Set(["Lipe", "Standalone"])
+        )
+        XCTAssertEqual(try importer.importPackage(at: package).skippedDuplicateCount, 1)
+    }
+
+    func testVersionOnePackageImportsWithoutTags() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let sourceContainer = try makeContainer()
+        let sourceStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("source", isDirectory: true))
+        let repository = ItemRepository(modelContext: sourceContainer.mainContext)
+        _ = try repository.createItem(text: "Legacy", origin: .manual, tagNames: ["Ignored"])
+        let package = temporary.appendingPathComponent("Legacy-v1.notchcapture", isDirectory: true)
+        try CapturePackageService(modelContext: sourceContainer.mainContext, attachmentStore: sourceStore)
+            .export(to: package)
+
+        let manifestURL = package.appendingPathComponent("manifest.json")
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        manifest["schemaVersion"] = 1
+        manifest.removeValue(forKey: "tags")
+        var records = try XCTUnwrap(manifest["items"] as? [[String: Any]])
+        for index in records.indices { records[index].removeValue(forKey: "tagIDs") }
+        manifest["items"] = records
+        try JSONSerialization.data(withJSONObject: manifest).write(to: manifestURL, options: .atomic)
+
+        let targetContainer = try makeContainer()
+        let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
+        _ = try CapturePackageService(modelContext: targetContainer.mainContext, attachmentStore: targetStore)
+            .importPackage(at: package)
+
+        XCTAssertTrue(try targetContainer.mainContext.fetch(FetchDescriptor<CaptureTag>()).isEmpty)
+        XCTAssertTrue(try XCTUnwrap(
+            targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first
+        ).tags.isEmpty)
+    }
+
     private var utcCalendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(secondsFromGMT: 0)!
@@ -355,7 +486,7 @@ final class CaptureDataTests: XCTestCase {
     }
 
     private func makeContainer() throws -> ModelContainer {
-        let schema = Schema([CaptureItem.self, ItemList.self, Attachment.self])
+        let schema = Schema([CaptureItem.self, CaptureTag.self, ItemList.self, Attachment.self])
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [configuration])
     }

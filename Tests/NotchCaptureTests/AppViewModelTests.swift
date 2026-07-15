@@ -3,6 +3,78 @@ import XCTest
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testTagSearchUsesPlainTextAndAnyExactTag() {
+        let lipe = AppViewModel.TagSummary(name: "Lipe")
+        let work = AppViewModel.TagSummary(name: "Work")
+        let ideas = AppViewModel.TagSummary(name: "Ideas")
+        let lipeItem = AppViewModel.LedgerItem(title: "Launch plan", tags: [lipe])
+        let workItem = AppViewModel.LedgerItem(title: "Launch checklist", tags: [work])
+        let wrongText = AppViewModel.LedgerItem(title: "Dinner", tags: [lipe])
+        let wrongTag = AppViewModel.LedgerItem(title: "Launch notes", tags: [ideas])
+        let viewModel = AppViewModel(
+            items: [lipeItem, workItem, wrongText, wrongTag],
+            tags: [lipe, work, ideas]
+        )
+
+        viewModel.composerText = "launch @Lipe @Work"
+
+        XCTAssertEqual(Set(viewModel.visibleItems.map(\.id)), Set([lipeItem.id, workItem.id]))
+        XCTAssertTrue(viewModel.visibleFolders.isEmpty)
+
+        viewModel.composerText = "Lipe"
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+    }
+
+    func testTagShelfCountsFollowFiltersAndKeepsStandaloneUnderAll() {
+        let lipe = AppViewModel.TagSummary(name: "Lipe")
+        let standalone = AppViewModel.TagSummary(name: "Standalone")
+        let note = AppViewModel.LedgerItem(title: "Note", tags: [lipe])
+        let task = AppViewModel.LedgerItem(kind: .task, title: "Task", tags: [lipe])
+        let viewModel = AppViewModel(items: [note, task], tags: [standalone, lipe])
+
+        XCTAssertEqual(viewModel.visibleTagGroups.map(\.name), ["Lipe", "Standalone"])
+        XCTAssertEqual(viewModel.visibleTagGroups.map(\.count), [2, 0])
+
+        viewModel.filter = .tasks
+        XCTAssertEqual(viewModel.visibleTagGroups.map(\.name), ["Lipe"])
+        XCTAssertEqual(viewModel.visibleTagGroups.map(\.count), [1])
+
+        viewModel.composerText = "query"
+        XCTAssertTrue(viewModel.visibleTagGroups.isEmpty)
+    }
+
+    func testTagAutocompleteConvertsSpaceAndCommitsWithTrailingSpace() {
+        let product = AppViewModel.TagSummary(name: "Product-Launch")
+        let viewModel = AppViewModel(tags: [product])
+        viewModel.composerText = "Review @Product"
+
+        XCTAssertEqual(viewModel.tagSuggestions.first?.name, "Product-Launch")
+
+        viewModel.composerTextDidChange(from: "Review @Product", to: "Review @Product ")
+        XCTAssertEqual(viewModel.composerText, "Review @Product-")
+
+        viewModel.composerText = "Review @Prod"
+        XCTAssertTrue(viewModel.acceptSelectedTagSuggestion())
+        XCTAssertEqual(viewModel.composerText, "Review @Product-Launch ")
+    }
+
+    func testStandaloneTagSubmissionUsesTagHookInsteadOfItemCapture() {
+        var createdTag: String?
+        var capturedItem: String?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCreateTag = { createdTag = $0 }
+        hooks.onCaptureText = { text, _ in capturedItem = text }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.composerText = "@Lipe"
+
+        XCTAssertTrue(viewModel.canCreateStandaloneTag)
+        viewModel.submitComposer()
+
+        XCTAssertEqual(createdTag, "Lipe")
+        XCTAssertNil(capturedItem)
+        XCTAssertEqual(viewModel.composerText, "")
+    }
+
     func testCreationTimestampIsAbsoluteAndOmitsElapsedUnits() throws {
         var components = DateComponents()
         components.calendar = Calendar(identifier: .gregorian)

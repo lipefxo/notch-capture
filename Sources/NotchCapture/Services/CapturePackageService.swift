@@ -2,17 +2,26 @@ import Foundation
 import SwiftData
 
 struct CapturePackageManifest: Codable, Sendable {
-    static let currentVersion = 1
+    static let currentVersion = 2
 
     let schemaVersion: Int
     let exportedAt: Date
     let lists: [ListRecord]
+    let tags: [TagRecord]?
     let items: [ItemRecord]
 
     struct ListRecord: Codable, Sendable {
         let id: UUID
         let name: String
         let sortOrder: Int
+        let createdAt: Date
+        let updatedAt: Date
+    }
+
+    struct TagRecord: Codable, Sendable {
+        let id: UUID
+        let name: String
+        let colorSeed: Double?
         let createdAt: Date
         let updatedAt: Date
     }
@@ -33,6 +42,7 @@ struct CapturePackageManifest: Codable, Sendable {
         let origin: CaptureOrigin
         let source: CaptureSource
         let listID: UUID?
+        let tagIDs: [UUID]?
         let attachments: [AttachmentRecord]
     }
 
@@ -81,6 +91,7 @@ final class CapturePackageService {
 
         let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        let tags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
         let parent = destination.deletingLastPathComponent()
         let temporary = parent.appendingPathComponent(".\(UUID().uuidString).notchcapture", isDirectory: true)
         let attachmentsDirectory = temporary.appendingPathComponent("attachments", isDirectory: true)
@@ -93,6 +104,16 @@ final class CapturePackageService {
                 id: $0.id,
                 name: $0.name,
                 sortOrder: $0.sortOrder,
+                createdAt: $0.createdAt,
+                updatedAt: $0.updatedAt
+            )
+        }
+
+        let tagRecords = tags.map {
+            CapturePackageManifest.TagRecord(
+                id: $0.id,
+                name: $0.name,
+                colorSeed: $0.colorSeed,
                 createdAt: $0.createdAt,
                 updatedAt: $0.updatedAt
             )
@@ -138,6 +159,7 @@ final class CapturePackageService {
                 origin: item.origin,
                 source: item.source,
                 listID: item.list?.id,
+                tagIDs: item.tags.map(\.id).sorted { $0.uuidString < $1.uuidString },
                 attachments: attachmentRecords
             )
         }
@@ -146,6 +168,7 @@ final class CapturePackageService {
             schemaVersion: CapturePackageManifest.currentVersion,
             exportedAt: .now,
             lists: listRecords,
+            tags: tagRecords,
             items: itemRecords
         )
         let encoder = JSONEncoder()
@@ -173,17 +196,21 @@ final class CapturePackageService {
         } catch {
             throw CapturePackageError.invalidManifest(error)
         }
-        guard manifest.schemaVersion == CapturePackageManifest.currentVersion else {
+        guard (1...CapturePackageManifest.currentVersion).contains(manifest.schemaVersion) else {
             throw CapturePackageError.unsupportedSchema(manifest.schemaVersion)
         }
 
         let existingItems = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let existingLists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        let existingTags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
         let existingAttachments = try modelContext.fetch(FetchDescriptor<Attachment>())
         var itemsByID = Dictionary(uniqueKeysWithValues: existingItems.map { ($0.id, $0) })
         var listsByID = Dictionary(uniqueKeysWithValues: existingLists.map { ($0.id, $0) })
+        var tagsByID = Dictionary(uniqueKeysWithValues: existingTags.map { ($0.id, $0) })
+        var tagsByName = Dictionary(uniqueKeysWithValues: existingTags.map { ($0.normalizedName, $0) })
         var attachmentIDs = Set(existingAttachments.map(\.id))
         var listMapping: [UUID: ItemList] = [:]
+        var tagMapping: [UUID: CaptureTag] = [:]
         var storedRelativePaths: [String] = []
         var importedCount = 0
         var duplicateCount = 0
@@ -214,8 +241,44 @@ final class CapturePackageService {
                 listMapping[record.id] = list
             }
 
+            for record in manifest.tags ?? [] {
+                let displayName = CaptureTagParser.normalizedDisplayName(record.name)
+                let normalizedName = CaptureTagParser.normalize(displayName)
+                guard !displayName.isEmpty,
+                      displayName.allSatisfy(CaptureTagParser.isTagCharacter) else {
+                    throw CapturePackageError.invalidTagName(record.name)
+                }
+                if let existing = tagsByName[normalizedName] {
+                    tagMapping[record.id] = existing
+                    continue
+                }
+                let chosenID: UUID
+                if tagsByID[record.id] == nil {
+                    chosenID = record.id
+                } else {
+                    chosenID = UUID()
+                    reassignedCount += 1
+                }
+                let tag = CaptureTag(
+                    id: chosenID,
+                    name: displayName,
+                    normalizedName: normalizedName,
+                    colorSeed: record.colorSeed ?? TagColorSeed.random(),
+                    createdAt: record.createdAt,
+                    updatedAt: record.updatedAt
+                )
+                modelContext.insert(tag)
+                tagsByID[chosenID] = tag
+                tagsByName[normalizedName] = tag
+                tagMapping[record.id] = tag
+            }
+
             for record in manifest.items {
-                if let existing = itemsByID[record.id], isExactDuplicate(record, of: existing) {
+                let mappedTags = try (record.tagIDs ?? []).map { tagID in
+                    guard let tag = tagMapping[tagID] else { throw CapturePackageError.missingTag(tagID) }
+                    return tag
+                }
+                if let existing = itemsByID[record.id], isExactDuplicate(record, mappedTags: mappedTags, of: existing) {
                     duplicateCount += 1
                     continue
                 }
@@ -280,6 +343,7 @@ final class CapturePackageService {
                     origin: record.origin,
                     source: record.source,
                     list: record.listID.flatMap { listMapping[$0] },
+                    tags: mappedTags,
                     attachments: attachments,
                     createdAt: record.createdAt,
                     updatedAt: record.updatedAt
@@ -302,7 +366,11 @@ final class CapturePackageService {
         )
     }
 
-    private func isExactDuplicate(_ record: CapturePackageManifest.ItemRecord, of item: CaptureItem) -> Bool {
+    private func isExactDuplicate(
+        _ record: CapturePackageManifest.ItemRecord,
+        mappedTags: [CaptureTag],
+        of item: CaptureItem
+    ) -> Bool {
         let existingAttachments = item.attachments.sorted(by: { $0.order < $1.order })
         let recordAttachments = record.attachments.sorted(by: { $0.order < $1.order })
         let attachmentsMatch = recordAttachments.count == existingAttachments.count &&
@@ -325,6 +393,7 @@ final class CapturePackageService {
             record.origin == item.origin &&
             record.source == item.source &&
             record.listID == item.list?.id &&
+            Set(mappedTags.map(\.id)) == Set(item.tags.map(\.id)) &&
             attachmentsMatch
     }
 
@@ -353,6 +422,8 @@ enum CapturePackageError: LocalizedError {
     case unsupportedSchema(Int)
     case unsafePath(String)
     case missingAttachment(String)
+    case missingTag(UUID)
+    case invalidTagName(String)
 
     var errorDescription: String? {
         switch self {
@@ -362,6 +433,8 @@ enum CapturePackageError: LocalizedError {
         case let .unsupportedSchema(version): "Package schema version \(version) is not supported."
         case let .unsafePath(path): "The package contains an unsafe path: \(path)"
         case let .missingAttachment(path): "The package attachment is missing: \(path)"
+        case let .missingTag(id): "The package references a missing tag: \(id.uuidString)"
+        case let .invalidTagName(name): "The package contains an invalid tag name: \(name)"
         }
     }
 }

@@ -115,6 +115,8 @@ final class CaptureItem {
     var sourceBundleIdentifier: String?
     var sourceDocumentURL: URL?
     var list: ItemList?
+    @Relationship(deleteRule: .nullify, inverse: \CaptureTag.items)
+    var tags: [CaptureTag]
     @Relationship(deleteRule: .cascade, inverse: \Attachment.item)
     var attachments: [Attachment]
 
@@ -132,6 +134,7 @@ final class CaptureItem {
         origin: CaptureOrigin = .manual,
         source: CaptureSource = CaptureSource(),
         list: ItemList? = nil,
+        tags: [CaptureTag] = [],
         attachments: [Attachment] = [],
         createdAt: Date = .now,
         updatedAt: Date = .now
@@ -153,6 +156,7 @@ final class CaptureItem {
         self.sourceBundleIdentifier = source.bundleIdentifier
         self.sourceDocumentURL = source.documentURL
         self.list = list
+        self.tags = tags
         self.attachments = attachments
         for attachment in attachments {
             attachment.item = self
@@ -207,6 +211,36 @@ final class CaptureItem {
 
     func touch(at date: Date = .now) {
         updatedAt = date
+    }
+}
+
+@Model
+final class CaptureTag {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    @Attribute(.unique) var normalizedName: String
+    /// Optional so existing stores can migrate additively; backfilled on launch.
+    var colorSeed: Double?
+    var createdAt: Date
+    var updatedAt: Date
+    var items: [CaptureItem]
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        normalizedName: String? = nil,
+        colorSeed: Double? = TagColorSeed.random(),
+        createdAt: Date = .now,
+        updatedAt: Date = .now,
+        items: [CaptureItem] = []
+    ) {
+        self.id = id
+        self.name = name
+        self.normalizedName = normalizedName ?? CaptureTagParser.normalize(name)
+        self.colorSeed = colorSeed
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.items = items
     }
 }
 
