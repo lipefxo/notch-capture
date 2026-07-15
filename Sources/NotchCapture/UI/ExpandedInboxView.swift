@@ -7,10 +7,61 @@ private extension UTType {
     static let notchCaptureLedgerItem = UTType(exportedAs: "com.notchcapture.ledger-item")
 }
 
-private struct LedgerReorderTarget: Equatable {
+struct LedgerReorderTarget: Equatable {
     let targetID: UUID?
     let placement: AppViewModel.ReorderPlacement
     let destinationPinned: Bool
+}
+
+struct LedgerReorderSession: Equatable {
+    let draggedItemID: UUID
+    var reorderTarget: LedgerReorderTarget?
+    var targetedFolderID: UUID?
+
+    init(
+        draggedItemID: UUID,
+        reorderTarget: LedgerReorderTarget? = nil,
+        targetedFolderID: UUID? = nil
+    ) {
+        self.draggedItemID = draggedItemID
+        self.reorderTarget = reorderTarget
+        self.targetedFolderID = targetedFolderID
+    }
+
+    func previewing(_ items: [AppViewModel.LedgerItem]) -> [AppViewModel.LedgerItem] {
+        guard targetedFolderID == nil,
+              let reorderTarget,
+              reorderTarget.targetID != draggedItemID,
+              let dragged = items.first(where: { $0.id == draggedItemID }) else {
+            return items
+        }
+
+        var preview = items.filter { $0.id != draggedItemID }
+        let insertionIndex: Int
+
+        if let targetID = reorderTarget.targetID {
+            guard let targetIndex = preview.firstIndex(where: {
+                $0.id == targetID && $0.isPinned == reorderTarget.destinationPinned
+            }) else { return items }
+            insertionIndex = targetIndex + (reorderTarget.placement == .after ? 1 : 0)
+        } else {
+            let destinationIndices = preview.indices.filter {
+                preview[$0].isPinned == reorderTarget.destinationPinned
+            }
+            if reorderTarget.placement == .before {
+                insertionIndex = destinationIndices.first
+                    ?? (reorderTarget.destinationPinned ? preview.startIndex : preview.endIndex)
+            } else {
+                insertionIndex = destinationIndices.last.map { $0 + 1 }
+                    ?? (reorderTarget.destinationPinned ? preview.startIndex : preview.endIndex)
+            }
+        }
+
+        var moved = dragged
+        moved.isPinned = reorderTarget.destinationPinned
+        preview.insert(moved, at: insertionIndex)
+        return preview
+    }
 }
 
 private struct LedgerInsertionIndicator: View {
@@ -60,12 +111,14 @@ private struct LedgerDragPreview: View {
 
 private struct LedgerRowDropDelegate: DropDelegate {
     let item: AppViewModel.LedgerItem
-    @Binding var draggedItemID: UUID?
-    @Binding var reorderTarget: LedgerReorderTarget?
+    let draggedItemID: UUID?
+    let onPreview: (LedgerReorderTarget) -> Void
     let onCommit: (LedgerReorderTarget) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
-        draggedItemID != nil && info.hasItemsConforming(to: [UTType.notchCaptureLedgerItem.identifier])
+        draggedItemID != nil
+            && draggedItemID != item.id
+            && info.hasItemsConforming(to: [UTType.notchCaptureLedgerItem.identifier])
     }
 
     func dropEntered(info: DropInfo) {
@@ -77,27 +130,27 @@ private struct LedgerRowDropDelegate: DropDelegate {
         return DropProposal(operation: .move)
     }
 
-    func dropExited(info: DropInfo) {
-        if reorderTarget?.targetID == item.id {
-            reorderTarget = nil
-        }
-    }
+    func dropExited(info: DropInfo) {}
 
     func performDrop(info: DropInfo) -> Bool {
-        updateTarget(for: info)
-        guard let reorderTarget, reorderTarget.targetID == item.id else { return false }
-        onCommit(reorderTarget)
+        let target = target(for: info)
+        onPreview(target)
+        onCommit(target)
         return true
     }
 
     private func updateTarget(for info: DropInfo) {
+        onPreview(target(for: info))
+    }
+
+    private func target(for info: DropInfo) -> LedgerReorderTarget {
         let height: CGFloat
         if item.attachments.count == 1 && item.detail.isEmpty && item.kind == .note {
             height = item.attachments.first?.kind == .image || item.attachments.first?.kind == .screenshot ? 64 : 56
         } else {
             height = item.detail.isEmpty ? 56 : 66
         }
-        reorderTarget = LedgerReorderTarget(
+        return LedgerReorderTarget(
             targetID: item.id,
             placement: info.location.y < height / 2 ? .before : .after,
             destinationPinned: item.isPinned
@@ -107,8 +160,8 @@ private struct LedgerRowDropDelegate: DropDelegate {
 
 private struct LedgerSectionDropDelegate: DropDelegate {
     let destinationPinned: Bool
-    @Binding var draggedItemID: UUID?
-    @Binding var reorderTarget: LedgerReorderTarget?
+    let draggedItemID: UUID?
+    let onPreview: (LedgerReorderTarget) -> Void
     let onCommit: (LedgerReorderTarget) -> Void
 
     private var target: LedgerReorderTarget {
@@ -120,22 +173,18 @@ private struct LedgerSectionDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        reorderTarget = target
+        onPreview(target)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        reorderTarget = target
+        onPreview(target)
         return DropProposal(operation: .move)
     }
 
-    func dropExited(info: DropInfo) {
-        if reorderTarget == target {
-            reorderTarget = nil
-        }
-    }
+    func dropExited(info: DropInfo) {}
 
     func performDrop(info: DropInfo) -> Bool {
-        reorderTarget = target
+        onPreview(target)
         onCommit(target)
         return true
     }
@@ -143,8 +192,9 @@ private struct LedgerSectionDropDelegate: DropDelegate {
 
 private struct FolderDropDelegate: DropDelegate {
     let folderID: UUID
-    @Binding var draggedItemID: UUID?
-    @Binding var targetedFolderID: UUID?
+    let draggedItemID: UUID?
+    let targetedFolderID: UUID?
+    let onTargeted: (UUID?) -> Void
     let onCommit: (UUID, UUID) -> Void
 
     func validateDrop(info: DropInfo) -> Bool {
@@ -152,25 +202,53 @@ private struct FolderDropDelegate: DropDelegate {
     }
 
     func dropEntered(info: DropInfo) {
-        targetedFolderID = folderID
+        onTargeted(folderID)
     }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
-        targetedFolderID = folderID
+        onTargeted(folderID)
         return DropProposal(operation: .move)
     }
 
     func dropExited(info: DropInfo) {
         if targetedFolderID == folderID {
-            targetedFolderID = nil
+            onTargeted(nil)
         }
     }
 
     func performDrop(info: DropInfo) -> Bool {
         guard let draggedItemID else { return false }
         onCommit(draggedItemID, folderID)
-        targetedFolderID = nil
         return true
+    }
+}
+
+private struct LedgerFeedDropDelegate: DropDelegate {
+    let draggedItemID: UUID?
+    let reorderTarget: LedgerReorderTarget?
+    let onExit: () -> Void
+    let onCommit: (LedgerReorderTarget) -> Void
+    let onCancel: () -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedItemID != nil && info.hasItemsConforming(to: [UTType.notchCaptureLedgerItem.identifier])
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        onExit()
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        if let reorderTarget {
+            onCommit(reorderTarget)
+            return true
+        }
+        onCancel()
+        return false
     }
 }
 
@@ -181,9 +259,7 @@ struct ExpandedInboxView: View {
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @FocusState private var focusedField: Field?
     @Namespace private var filterSelection
-    @State private var draggedItemID: UUID?
-    @State private var reorderTarget: LedgerReorderTarget?
-    @State private var targetedFolderID: UUID?
+    @State private var reorderSession: LedgerReorderSession?
     @State private var isCreatingFolder = false
     @State private var folderBeingRenamed: AppViewModel.FolderSummary?
     @State private var renameFolderName = ""
@@ -193,6 +269,19 @@ struct ExpandedInboxView: View {
     private let floatingComposerHeight: CGFloat = 52
     private let floatingGlassHeight: CGFloat = 134
     private let ledgerBottomClearance: CGFloat = 96
+
+    private var draggedItemID: UUID? { reorderSession?.draggedItemID }
+    private var reorderTarget: LedgerReorderTarget? { reorderSession?.reorderTarget }
+    private var targetedFolderID: UUID? { reorderSession?.targetedFolderID }
+    private var previewVisibleItems: [AppViewModel.LedgerItem] {
+        reorderSession?.previewing(viewModel.visibleItems) ?? viewModel.visibleItems
+    }
+    private var previewPinnedItems: [AppViewModel.LedgerItem] {
+        previewVisibleItems.filter(\.isPinned)
+    }
+    private var previewUnpinnedItems: [AppViewModel.LedgerItem] {
+        previewVisibleItems.filter { !$0.isPinned }
+    }
 
     private enum Field {
         case unifiedInput
@@ -221,6 +310,10 @@ struct ExpandedInboxView: View {
             viewModel.acceptDrop(providers)
         }
         .onExitCommand {
+            if reorderSession != nil {
+                resetReorderState()
+                return
+            }
             if viewModel.isAtRoot {
                 viewModel.dismiss()
             } else {
@@ -228,6 +321,7 @@ struct ExpandedInboxView: View {
             }
         }
         .onAppear { focusComposer() }
+        .onDisappear { resetReorderState() }
         .onChange(of: viewModel.surfaceState) { _, state in
             if state == .expanded {
                 focusComposer()
@@ -758,10 +852,20 @@ struct ExpandedInboxView: View {
             }
             .background(HiddenScrollIndicatorConfigurator())
             .overlay(alignment: .top) {
-                if draggedItemID != nil, reorderTarget != nil, viewModel.pinnedItems.isEmpty {
+                if draggedItemID != nil, reorderTarget != nil, previewPinnedItems.isEmpty {
                     emptyGroupDropTarget(title: "Drop to pin", isPinned: true)
                 }
             }
+            .onDrop(
+                of: [UTType.notchCaptureLedgerItem.identifier],
+                delegate: LedgerFeedDropDelegate(
+                    draggedItemID: draggedItemID,
+                    reorderTarget: reorderTarget,
+                    onExit: clearReorderPreview,
+                    onCommit: commitReorder,
+                    onCancel: resetReorderState
+                )
+            )
         }
         .scrollIndicators(.hidden)
     }
@@ -778,22 +882,22 @@ struct ExpandedInboxView: View {
             LedgerSectionHeader(title: "Results", count: viewModel.visibleItems.count)
         }
 
-        if !viewModel.pinnedItems.isEmpty {
-            reorderSectionHeader(title: "Pinned", count: viewModel.pinnedItems.count, isPinned: true)
-            ForEach(viewModel.pinnedItems) { item in
+        if !previewPinnedItems.isEmpty {
+            reorderSectionHeader(title: "Pinned", count: previewPinnedItems.count, isPinned: true)
+            ForEach(previewPinnedItems) { item in
                 reorderableRow(item)
             }
         }
 
-        if !viewModel.pinnedItems.isEmpty, !viewModel.unpinnedItems.isEmpty {
+        if !previewPinnedItems.isEmpty, !previewUnpinnedItems.isEmpty {
             reorderSectionDivider(isPinned: false)
         }
 
-        ForEach(viewModel.unpinnedItems) { item in
+        ForEach(previewUnpinnedItems) { item in
             reorderableRow(item)
         }
 
-        if draggedItemID != nil, reorderTarget != nil, viewModel.unpinnedItems.isEmpty {
+        if draggedItemID != nil, reorderTarget != nil, previewUnpinnedItems.isEmpty {
             emptyGroupDropTarget(title: "Drop to unpin", isPinned: false)
         }
     }
@@ -812,8 +916,9 @@ struct ExpandedInboxView: View {
             of: [UTType.notchCaptureLedgerItem.identifier],
             delegate: FolderDropDelegate(
                 folderID: folder.id,
-                draggedItemID: $draggedItemID,
-                targetedFolderID: $targetedFolderID,
+                draggedItemID: draggedItemID,
+                targetedFolderID: targetedFolderID,
+                onTargeted: previewFolderTarget,
                 onCommit: commitMoveToFolder
             )
         )
@@ -831,13 +936,12 @@ struct ExpandedInboxView: View {
     private func draggableRow(_ item: AppViewModel.LedgerItem) -> some View {
         let target = reorderTarget?.targetID == item.id ? reorderTarget : nil
         return LedgerRowView(item: item, viewModel: viewModel)
-            .opacity(draggedItemID == item.id && reorderTarget != nil ? 0.58 : 1)
+            .opacity(draggedItemID == item.id && reorderTarget != nil && targetedFolderID == nil ? 0.24 : 1)
             .overlay {
                 LedgerInsertionIndicator(placement: target?.placement)
             }
             .onDrag {
-                draggedItemID = item.id
-                reorderTarget = nil
+                reorderSession = LedgerReorderSession(draggedItemID: item.id)
                 return itemProvider(for: item.id)
             } preview: {
                 LedgerDragPreview(item: item)
@@ -846,8 +950,8 @@ struct ExpandedInboxView: View {
                 of: [UTType.notchCaptureLedgerItem.identifier],
                 delegate: LedgerRowDropDelegate(
                     item: item,
-                    draggedItemID: $draggedItemID,
-                    reorderTarget: $reorderTarget,
+                    draggedItemID: draggedItemID,
+                    onPreview: previewReorder,
                     onCommit: commitReorder
                 )
             )
@@ -870,13 +974,15 @@ struct ExpandedInboxView: View {
             resetReorderState()
             return
         }
-        let update = { viewModel.move(item, to: folderID) }
+        let update = {
+            viewModel.move(item, to: folderID)
+            reorderSession = nil
+        }
         if reduceMotion {
             update()
         } else {
             withAnimation(NotchMotion.reorder, update)
         }
-        resetReorderState()
     }
 
     private func reorderSectionHeader(title: String, count: Int, isPinned: Bool) -> some View {
@@ -894,8 +1000,8 @@ struct ExpandedInboxView: View {
                 of: [UTType.notchCaptureLedgerItem.identifier],
                 delegate: LedgerSectionDropDelegate(
                     destinationPinned: isPinned,
-                    draggedItemID: $draggedItemID,
-                    reorderTarget: $reorderTarget,
+                    draggedItemID: draggedItemID,
+                    onPreview: previewReorder,
                     onCommit: commitReorder
                 )
             )
@@ -920,8 +1026,8 @@ struct ExpandedInboxView: View {
                 of: [UTType.notchCaptureLedgerItem.identifier],
                 delegate: LedgerSectionDropDelegate(
                     destinationPinned: isPinned,
-                    draggedItemID: $draggedItemID,
-                    reorderTarget: $reorderTarget,
+                    draggedItemID: draggedItemID,
+                    onPreview: previewReorder,
                     onCommit: commitReorder
                 )
             )
@@ -949,8 +1055,8 @@ struct ExpandedInboxView: View {
                 of: [UTType.notchCaptureLedgerItem.identifier],
                 delegate: LedgerSectionDropDelegate(
                     destinationPinned: isPinned,
-                    draggedItemID: $draggedItemID,
-                    reorderTarget: $reorderTarget,
+                    draggedItemID: draggedItemID,
+                    onPreview: previewReorder,
                     onCommit: commitReorder
                 )
             )
@@ -971,7 +1077,7 @@ struct ExpandedInboxView: View {
     }
 
     private func commitReorder(_ target: LedgerReorderTarget) {
-        guard let draggedItemID else {
+        guard let draggedItemID = reorderSession?.draggedItemID else {
             resetReorderState()
             return
         }
@@ -982,13 +1088,47 @@ struct ExpandedInboxView: View {
                 placement: target.placement,
                 destinationPinned: target.destinationPinned
             )
+            reorderSession = nil
         }
         if reduceMotion {
             update()
         } else {
             withAnimation(NotchMotion.reorder, update)
         }
-        resetReorderState()
+    }
+
+    private func previewReorder(_ target: LedgerReorderTarget) {
+        guard var session = reorderSession,
+              target.targetID != session.draggedItemID,
+              session.reorderTarget != target || session.targetedFolderID != nil else { return }
+        session.reorderTarget = target
+        session.targetedFolderID = nil
+        updateReorderSession(session)
+    }
+
+    private func previewFolderTarget(_ folderID: UUID?) {
+        guard var session = reorderSession,
+              session.targetedFolderID != folderID else { return }
+        session.targetedFolderID = folderID
+        updateReorderSession(session)
+    }
+
+    private func clearReorderPreview() {
+        guard var session = reorderSession,
+              session.reorderTarget != nil || session.targetedFolderID != nil else { return }
+        session.reorderTarget = nil
+        session.targetedFolderID = nil
+        updateReorderSession(session)
+    }
+
+    private func updateReorderSession(_ session: LedgerReorderSession) {
+        if reduceMotion {
+            reorderSession = session
+        } else {
+            withAnimation(NotchMotion.reorder) {
+                reorderSession = session
+            }
+        }
     }
 
     private func commitAccessibleMove(_ update: () -> Void) {
@@ -1000,9 +1140,7 @@ struct ExpandedInboxView: View {
     }
 
     private func resetReorderState() {
-        draggedItemID = nil
-        reorderTarget = nil
-        targetedFolderID = nil
+        reorderSession = nil
     }
 
     private var dropTargetBinding: Binding<Bool> {
@@ -1074,14 +1212,19 @@ private struct FolderLedgerRow: View {
     let onOpen: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
+    @State private var isHovered = false
 
     var body: some View {
         Button(action: onOpen) {
             HStack(spacing: 10) {
                 Image(systemName: isDropTarget ? "folder.badge.plus" : "folder.fill")
-                    .font(.system(size: 14, weight: .regular))
-                    .foregroundStyle(isDropTarget ? NotchTheme.mint : NotchTheme.secondaryText)
-                    .frame(width: 20, height: 20)
+                    .font(.system(size: 12.5, weight: .regular))
+                    .foregroundStyle(
+                        isDropTarget
+                            ? NotchTheme.mint
+                            : (isHovered ? NotchTheme.primaryText : NotchTheme.secondaryText)
+                    )
+                    .frame(width: 18, height: 18)
 
                 HStack(spacing: 7) {
                     Text(folder.name)
@@ -1098,11 +1241,19 @@ private struct FolderLedgerRow: View {
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(isDropTarget ? NotchTheme.mint : NotchTheme.tertiaryText)
+                    .foregroundStyle(
+                        isDropTarget
+                            ? NotchTheme.mint
+                            : (isHovered ? NotchTheme.secondaryText : NotchTheme.tertiaryText)
+                    )
             }
             .padding(.horizontal, 20)
             .frame(minHeight: 50)
-            .background(isDropTarget ? NotchTheme.mint.opacity(0.08) : Color.clear)
+            .background(
+                isDropTarget
+                    ? NotchTheme.mint.opacity(0.08)
+                    : (isHovered ? NotchTheme.hoveredLedger : Color.clear)
+            )
             .overlay {
                 if isDropTarget {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -1121,6 +1272,8 @@ private struct FolderLedgerRow: View {
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.86))
         .scaleEffect(isDropTarget && !reduceMotion ? 1.006 : 1)
+        .onHover { isHovered = $0 }
+        .animation(reduceMotion ? nil : NotchMotion.hover, value: isHovered)
         .animation(reduceMotion ? nil : NotchMotion.hover, value: isDropTarget)
         .contextMenu {
             Button("Open Folder", action: onOpen)

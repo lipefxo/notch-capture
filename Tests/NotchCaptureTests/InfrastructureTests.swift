@@ -114,6 +114,46 @@ final class PanelTransitionPolicyTests: XCTestCase {
 }
 
 @MainActor
+final class PanelDismissalEventPolicyTests: XCTestCase {
+    func testLocalMonitorLeavesMouseEventsToAppOwnedDialogs() {
+        XCTAssertTrue(PanelDismissalEventPolicy.localEventMask.contains(.keyDown))
+        XCTAssertFalse(PanelDismissalEventPolicy.localEventMask.contains(.leftMouseDown))
+        XCTAssertFalse(PanelDismissalEventPolicy.localEventMask.contains(.rightMouseDown))
+    }
+
+    func testEscapeDismissesTheNotchPanel() {
+        let panel = NSPanel()
+
+        XCTAssertTrue(PanelDismissalEventPolicy.shouldDismissForEscape(
+            eventWindow: panel,
+            panel: panel
+        ))
+    }
+
+    func testEscapeIsPassedToAnAppOwnedDialog() {
+        let panel = NSPanel()
+        let dialog = NSWindow()
+
+        XCTAssertFalse(PanelDismissalEventPolicy.shouldDismissForEscape(
+            eventWindow: dialog,
+            panel: panel
+        ))
+    }
+
+    func testExternalClickDismissesWhenThePanelIsTheOnlyVisibleWindow() {
+        XCTAssertTrue(PanelDismissalEventPolicy.shouldDismissForExternalClick(
+            hasVisibleAuxiliaryWindow: false
+        ))
+    }
+
+    func testExternalClickDoesNotDestroyAnActiveDialog() {
+        XCTAssertFalse(PanelDismissalEventPolicy.shouldDismissForExternalClick(
+            hasVisibleAuxiliaryWindow: true
+        ))
+    }
+}
+
+@MainActor
 final class ApplicationMenuTests: XCTestCase {
     func testEditMenuProvidesStandardPasteResponderCommand() throws {
         let menu = ApplicationMenuFactory.makeMainMenu()

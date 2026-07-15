@@ -47,6 +47,24 @@ struct PanelTransitionPolicy: Equatable {
     }
 }
 
+struct PanelDismissalEventPolicy {
+    /// Mouse events delivered to this process belong to the notch panel or to
+    /// one of its auxiliary dialogs. Clicks in other applications are handled
+    /// by the global event monitor below.
+    static let localEventMask: NSEvent.EventTypeMask = [.keyDown]
+
+    static func shouldDismissForEscape(
+        eventWindow: NSWindow?,
+        panel: NSWindow
+    ) -> Bool {
+        eventWindow === panel
+    }
+
+    static func shouldDismissForExternalClick(hasVisibleAuxiliaryWindow: Bool) -> Bool {
+        !hasVisibleAuxiliaryWindow
+    }
+}
+
 @MainActor
 public final class PanelController: NSObject, ObservableObject {
     public typealias ContentFactory = @MainActor (PanelState) -> AnyView
@@ -334,15 +352,16 @@ public final class PanelController: NSObject, ObservableObject {
 
         if localEventMonitor == nil {
             localEventMonitor = NSEvent.addLocalMonitorForEvents(
-                matching: [.leftMouseDown, .rightMouseDown, .keyDown]
+                matching: PanelDismissalEventPolicy.localEventMask
             ) { [weak self] event in
                 guard let self else { return event }
-                if event.type == .keyDown, event.keyCode == 53 {
+                if event.keyCode == 53,
+                   PanelDismissalEventPolicy.shouldDismissForEscape(
+                       eventWindow: event.window,
+                       panel: self.panel
+                   ) {
                     self.requestDismissal()
                     return nil
-                }
-                if event.window !== self.panel, event.type != .keyDown {
-                    self.requestDismissal()
                 }
                 return event
             }
@@ -352,8 +371,18 @@ public final class PanelController: NSObject, ObservableObject {
             globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
                 matching: [.leftMouseDown, .rightMouseDown]
             ) { [weak self] _ in
-                self?.requestDismissal()
+                guard let self,
+                      PanelDismissalEventPolicy.shouldDismissForExternalClick(
+                          hasVisibleAuxiliaryWindow: self.hasVisibleAuxiliaryWindow
+                      ) else { return }
+                self.requestDismissal()
             }
+        }
+    }
+
+    private var hasVisibleAuxiliaryWindow: Bool {
+        NSApp.windows.contains { window in
+            window !== panel && window.isVisible && !window.isMiniaturized
         }
     }
 

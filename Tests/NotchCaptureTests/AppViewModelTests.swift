@@ -619,3 +619,139 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(confirmation.remaining(at: currentDate), 5, accuracy: 0.001)
     }
 }
+
+@MainActor
+final class LedgerReorderSessionTests: XCTestCase {
+    func testPreviewReordersRowsWithoutMutatingOrPersistingTheViewModel() {
+        let first = AppViewModel.LedgerItem(title: "First", sortOrder: 0)
+        let second = AppViewModel.LedgerItem(title: "Second", sortOrder: 1)
+        let third = AppViewModel.LedgerItem(title: "Third", sortOrder: 2)
+        var persistenceCalls = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onReorder = { _ in persistenceCalls += 1 }
+        let viewModel = AppViewModel(items: [first, second, third], hooks: hooks)
+        let session = LedgerReorderSession(
+            draggedItemID: third.id,
+            reorderTarget: LedgerReorderTarget(
+                targetID: first.id,
+                placement: .before,
+                destinationPinned: false
+            )
+        )
+
+        let preview = session.previewing(viewModel.visibleItems)
+
+        XCTAssertEqual(preview.map(\.id), [third.id, first.id, second.id])
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [first.id, second.id, third.id])
+        XCTAssertEqual(persistenceCalls, 0)
+    }
+
+    func testPreviewMovesRowsAcrossPinnedGroupsAndIntoAnEmptyGroup() {
+        let pinned = AppViewModel.LedgerItem(title: "Pinned", isPinned: true, sortOrder: 0)
+        let first = AppViewModel.LedgerItem(title: "First", sortOrder: 0)
+        let second = AppViewModel.LedgerItem(title: "Second", sortOrder: 1)
+        let pinAtTop = LedgerReorderSession(
+            draggedItemID: second.id,
+            reorderTarget: LedgerReorderTarget(
+                targetID: nil,
+                placement: .before,
+                destinationPinned: true
+            )
+        )
+
+        let pinnedPreview = pinAtTop.previewing([pinned, first, second])
+
+        XCTAssertEqual(pinnedPreview.map(\.id), [second.id, pinned.id, first.id])
+        XCTAssertTrue(pinnedPreview[0].isPinned)
+
+        let onlyUnpinned = LedgerReorderSession(
+            draggedItemID: first.id,
+            reorderTarget: LedgerReorderTarget(
+                targetID: nil,
+                placement: .before,
+                destinationPinned: true
+            )
+        ).previewing([first, second])
+
+        XCTAssertEqual(onlyUnpinned.map(\.id), [first.id, second.id])
+        XCTAssertTrue(onlyUnpinned[0].isPinned)
+    }
+
+    func testFolderHoverAndCancellationRestoreTheOriginalPresentation() {
+        let first = AppViewModel.LedgerItem(title: "First", sortOrder: 0)
+        let second = AppViewModel.LedgerItem(title: "Second", sortOrder: 1)
+        let target = LedgerReorderTarget(
+            targetID: first.id,
+            placement: .before,
+            destinationPinned: false
+        )
+
+        let folderHover = LedgerReorderSession(
+            draggedItemID: second.id,
+            reorderTarget: target,
+            targetedFolderID: UUID()
+        )
+        let cancelled = LedgerReorderSession(draggedItemID: second.id)
+
+        XCTAssertEqual(folderHover.previewing([first, second]).map(\.id), [first.id, second.id])
+        XCTAssertEqual(cancelled.previewing([first, second]).map(\.id), [first.id, second.id])
+    }
+
+    func testOpenFolderPreviewIsScopedToItsVisibleItems() {
+        let folder = AppViewModel.FolderSummary(name: "Work")
+        let first = AppViewModel.LedgerItem(
+            title: "First",
+            folderID: folder.id,
+            folderName: folder.name,
+            sortOrder: 0
+        )
+        let second = AppViewModel.LedgerItem(
+            title: "Second",
+            folderID: folder.id,
+            folderName: folder.name,
+            sortOrder: 1
+        )
+        let inbox = AppViewModel.LedgerItem(title: "Inbox", sortOrder: 0)
+        let viewModel = AppViewModel(items: [first, second, inbox], folders: [folder])
+        viewModel.openFolder(folder)
+        let session = LedgerReorderSession(
+            draggedItemID: second.id,
+            reorderTarget: LedgerReorderTarget(
+                targetID: first.id,
+                placement: .before,
+                destinationPinned: false
+            )
+        )
+
+        let preview = session.previewing(viewModel.visibleItems)
+
+        XCTAssertEqual(preview.map(\.id), [second.id, first.id])
+        XCTAssertEqual(viewModel.items.first(where: { $0.id == inbox.id })?.sortOrder, 0)
+    }
+
+    func testMovingPinnedItemIntoFolderPreservesPinAndPlacesItAtTop() {
+        let folder = AppViewModel.FolderSummary(name: "Work")
+        let existing = AppViewModel.LedgerItem(
+            title: "Existing",
+            folderID: folder.id,
+            folderName: folder.name,
+            isPinned: true,
+            sortOrder: 4
+        )
+        let moving = AppViewModel.LedgerItem(title: "Moving", isPinned: true, sortOrder: 2)
+        var moves: [(UUID, UUID?)] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onMove = { moves.append(($0, $1)) }
+        let viewModel = AppViewModel(items: [existing, moving], folders: [folder], hooks: hooks)
+
+        viewModel.move(moving, to: folder.id)
+
+        let moved = viewModel.items.first(where: { $0.id == moving.id })
+        XCTAssertTrue(moved?.isPinned == true)
+        XCTAssertEqual(moved?.folderID, folder.id)
+        XCTAssertEqual(moved?.sortOrder, 3)
+        XCTAssertEqual(moves.count, 1)
+        XCTAssertEqual(moves.first?.0, moving.id)
+        XCTAssertEqual(moves.first?.1, folder.id)
+    }
+}
