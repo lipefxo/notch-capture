@@ -19,6 +19,15 @@ enum NotchTheme {
     static let secondaryText = Color.white.opacity(0.55)
     static let tertiaryText = Color.white.opacity(0.39)
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
+    static let composerIridescence = Gradient(colors: [
+        Color(red: 0.31, green: 0.89, blue: 1.00),
+        Color(red: 0.46, green: 0.42, blue: 1.00),
+        Color(red: 0.93, green: 0.34, blue: 0.94),
+        Color(red: 1.00, green: 0.42, blue: 0.55),
+        Color(red: 1.00, green: 0.78, blue: 0.30),
+        Color(red: 0.28, green: 0.94, blue: 0.65),
+        Color(red: 0.31, green: 0.89, blue: 1.00),
+    ])
 }
 
 enum NotchMotion {
@@ -31,6 +40,8 @@ enum NotchMotion {
     static let hoverDuration: TimeInterval = 0.08
     static let dropEnterDuration: TimeInterval = 0.14
     static let dropExitDuration: TimeInterval = 0.10
+    static let composerFocusDuration: TimeInterval = 0.18
+    static let composerIridescenceCycleDuration: TimeInterval = 10
     static let reducedMotionDuration: TimeInterval = 0.10
 
     static func easeOut(duration: TimeInterval) -> Animation {
@@ -44,6 +55,7 @@ enum NotchMotion {
     static let hover = easeOut(duration: hoverDuration)
     static let dropEnter = easeOut(duration: dropEnterDuration)
     static let dropExit = easeOut(duration: dropExitDuration)
+    static let composerFocus = easeOut(duration: composerFocusDuration)
     static let reducedMotion = easeOut(duration: reducedMotionDuration)
     static let reorder = Animation.spring(response: 0.32, dampingFraction: 1, blendDuration: 0)
 }

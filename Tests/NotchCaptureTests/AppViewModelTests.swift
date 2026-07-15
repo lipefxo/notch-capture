@@ -26,10 +26,43 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertFalse(label.localizedCaseInsensitiveContains("min"))
     }
 
+    func testCreationTimestampSupportsTwentyFourHourFormat() throws {
+        var components = DateComponents()
+        components.calendar = Calendar(identifier: .gregorian)
+        components.timeZone = try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        components.year = 2026
+        components.month = 7
+        components.day = 15
+        components.hour = 16
+        components.minute = 59
+        let date = try XCTUnwrap(components.date)
+
+        let label = CaptureTimestampFormatter.string(
+            from: date,
+            timeFormat: .twentyFourHour,
+            locale: Locale(identifier: "en_US_POSIX"),
+            timeZone: try XCTUnwrap(TimeZone(secondsFromGMT: 0))
+        )
+
+        XCTAssertEqual(label, "Jul 15, 16:59")
+    }
+
+    func testTimeFormatChangeNotifiesPersistenceHook() {
+        var persistedFormat: AppViewModel.TimeFormat?
+        var hooks = AppViewModel.Hooks()
+        hooks.onSetTimeFormat = { persistedFormat = $0 }
+        let viewModel = AppViewModel(hooks: hooks)
+
+        XCTAssertEqual(viewModel.timeFormat, .twelveHour)
+        viewModel.timeFormat = .twentyFourHour
+
+        XCTAssertEqual(persistedFormat, .twentyFourHour)
+    }
+
     func testUnifiedInputFiltersMatchingItemsInsteadOfCapturing() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()
-        hooks.onCaptureText = { captured.append($0) }
+        hooks.onCaptureText = { text, _ in captured.append(text) }
         let matchingItem = AppViewModel.LedgerItem(title: "Book studio time")
         let otherItem = AppViewModel.LedgerItem(title: "Review launch notes")
         let viewModel = AppViewModel(
@@ -54,7 +87,7 @@ final class AppViewModelTests: XCTestCase {
     func testUnifiedInputCapturesWhenNoItemMatches() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()
-        hooks.onCaptureText = { captured.append($0) }
+        hooks.onCaptureText = { text, _ in captured.append(text) }
         let viewModel = AppViewModel(
             surfaceState: .expanded,
             items: [AppViewModel.LedgerItem(title: "Review launch notes")],
@@ -71,6 +104,246 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.composerText, "")
         XCTAssertEqual(viewModel.filter, .all)
         XCTAssertEqual(viewModel.surfaceState, .expanded)
+    }
+
+    func testRootShowsFoldersAndOnlyUnfiledItemsUntilSearching() {
+        let work = AppViewModel.FolderSummary(name: "Work", sortOrder: 0)
+        let ideas = AppViewModel.FolderSummary(name: "Ideas", sortOrder: 1)
+        let inboxItem = AppViewModel.LedgerItem(title: "Loose thought", sortOrder: 0)
+        let workTask = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Ship folder view",
+            folderID: work.id,
+            folderName: work.name,
+            sortOrder: 0
+        )
+        let idea = AppViewModel.LedgerItem(
+            title: "Try a compact row",
+            folderID: ideas.id,
+            folderName: ideas.name,
+            sortOrder: 0
+        )
+        let viewModel = AppViewModel(items: [inboxItem, workTask, idea], folders: [work, ideas])
+
+        XCTAssertEqual(viewModel.visibleFolders.map(\.id), [work.id, ideas.id])
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [inboxItem.id])
+        XCTAssertEqual(viewModel.matchingItemCount(in: work.id), 1)
+
+        viewModel.filter = .tasks
+
+        XCTAssertEqual(viewModel.visibleFolders.map(\.id), [work.id])
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+
+        viewModel.filter = .all
+        viewModel.composerText = "compact"
+
+        XCTAssertTrue(viewModel.visibleFolders.isEmpty)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [idea.id])
+        XCTAssertTrue(viewModel.isShowingGlobalSearchResults)
+    }
+
+    func testFolderNameSearchShowsFolderAndIndependentItemMatches() {
+        let projects = AppViewModel.FolderSummary(name: "Projects")
+        let unrelatedFolderItem = AppViewModel.LedgerItem(
+            title: "Unrelated capture",
+            folderID: projects.id,
+            folderName: projects.name
+        )
+        let matchingItem = AppViewModel.LedgerItem(title: "Projects launch notes")
+        let viewModel = AppViewModel(
+            items: [unrelatedFolderItem, matchingItem],
+            folders: [projects]
+        )
+
+        viewModel.composerText = "projects"
+
+        XCTAssertEqual(viewModel.visibleFolders.map(\.id), [projects.id])
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [matchingItem.id])
+        XCTAssertEqual(viewModel.searchMatchCount, 2)
+        XCTAssertTrue(viewModel.composerHasMatches)
+        XCTAssertFalse(viewModel.canAddComposerText)
+
+        viewModel.submitComposer()
+
+        XCTAssertEqual(viewModel.browseLocation, .folder(projects.id))
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertNil(viewModel.selectedItemID)
+    }
+
+    func testFolderSearchResultsRespectEveryActiveFilter() {
+        let populated = AppViewModel.FolderSummary(name: "Projects Active")
+        let ineligible = AppViewModel.FolderSummary(name: "Projects Notes", sortOrder: 1)
+        let now = Date.now
+        let items = [
+            AppViewModel.LedgerItem(
+                kind: .task,
+                title: "Open task",
+                dueDate: now,
+                folderID: populated.id,
+                folderName: populated.name
+            ),
+            AppViewModel.LedgerItem(
+                kind: .task,
+                title: "Completed task",
+                folderID: populated.id,
+                folderName: populated.name,
+                isCompleted: true,
+                completedAt: now
+            ),
+            AppViewModel.LedgerItem(
+                title: "Archived note",
+                folderID: populated.id,
+                folderName: populated.name,
+                isArchived: true
+            ),
+            AppViewModel.LedgerItem(
+                title: "Trashed note",
+                folderID: populated.id,
+                folderName: populated.name,
+                isTrashed: true
+            ),
+            AppViewModel.LedgerItem(
+                title: "Ordinary note",
+                folderID: ineligible.id,
+                folderName: ineligible.name
+            ),
+        ]
+        let viewModel = AppViewModel(items: items, folders: [populated, ineligible])
+        viewModel.composerText = "Projects"
+
+        for filter in [
+            AppViewModel.InboxFilter.tasks,
+            .due,
+            .completed,
+            .archive,
+            .trash,
+        ] {
+            viewModel.filter = filter
+            XCTAssertEqual(viewModel.visibleFolders.map(\.id), [populated.id], "Filter: \(filter)")
+        }
+    }
+
+    func testFolderBrowsingScopesSearchAndComposerDestination() {
+        let work = AppViewModel.FolderSummary(name: "Work")
+        let personal = AppViewModel.FolderSummary(name: "Personal", sortOrder: 1)
+        let workItem = AppViewModel.LedgerItem(
+            title: "Shared title",
+            folderID: work.id,
+            folderName: work.name
+        )
+        let personalItem = AppViewModel.LedgerItem(
+            title: "Shared title",
+            folderID: personal.id,
+            folderName: personal.name
+        )
+        var capture: (text: String, folderID: UUID?)?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureText = { capture = ($0, $1) }
+        let viewModel = AppViewModel(
+            items: [workItem, personalItem],
+            folders: [work, personal],
+            hooks: hooks
+        )
+
+        viewModel.openFolder(work)
+        viewModel.composerText = "Shared"
+
+        XCTAssertEqual(viewModel.navigationTitle, "Work")
+        XCTAssertTrue(viewModel.visibleFolders.isEmpty)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [workItem.id])
+
+        viewModel.composerText = "Write release notes"
+        XCTAssertTrue(viewModel.canAddComposerText)
+        viewModel.submitComposer()
+
+        XCTAssertEqual(capture?.text, "Write release notes")
+        XCTAssertEqual(capture?.folderID, work.id)
+        XCTAssertEqual(viewModel.filter, .all)
+
+        viewModel.openRoot()
+        XCTAssertEqual(viewModel.browseLocation, .root)
+        XCTAssertEqual(viewModel.navigationTitle, "Inbox")
+    }
+
+    func testMoveUsesFolderIdentityAndDeleteReturnsContentsToInbox() {
+        let folder = AppViewModel.FolderSummary(name: "Research")
+        let inbox = AppViewModel.LedgerItem(title: "Inbox", sortOrder: 0)
+        let first = AppViewModel.LedgerItem(
+            title: "First",
+            folderID: folder.id,
+            folderName: folder.name,
+            sortOrder: 0
+        )
+        let second = AppViewModel.LedgerItem(
+            title: "Second",
+            folderID: folder.id,
+            folderName: folder.name,
+            sortOrder: 1
+        )
+        var moves: [(UUID, UUID?)] = []
+        var deletedFolderID: UUID?
+        var hooks = AppViewModel.Hooks()
+        hooks.onMove = { moves.append(($0, $1)) }
+        hooks.onDeleteFolder = { deletedFolderID = $0 }
+        let viewModel = AppViewModel(items: [inbox, first, second], folders: [folder], hooks: hooks)
+
+        viewModel.move(inbox, to: folder.id)
+
+        XCTAssertEqual(moves.first?.0, inbox.id)
+        XCTAssertEqual(moves.first?.1, folder.id)
+        XCTAssertEqual(viewModel.items.first(where: { $0.id == inbox.id })?.folderID, folder.id)
+
+        viewModel.deleteFolder(folder)
+
+        XCTAssertEqual(deletedFolderID, folder.id)
+        XCTAssertTrue(viewModel.folders.isEmpty)
+        XCTAssertTrue(viewModel.items.allSatisfy { $0.folderID == nil && $0.folderName == nil })
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [inbox.id, first.id, second.id])
+    }
+
+    func testReorderIsScopedToTheOpenFolderAndDisabledForGlobalResults() {
+        let folder = AppViewModel.FolderSummary(name: "Work")
+        let first = AppViewModel.LedgerItem(
+            title: "First",
+            folderID: folder.id,
+            folderName: folder.name,
+            sortOrder: 0
+        )
+        let second = AppViewModel.LedgerItem(
+            title: "Second",
+            folderID: folder.id,
+            folderName: folder.name,
+            sortOrder: 1
+        )
+        let inbox = AppViewModel.LedgerItem(title: "Inbox", sortOrder: 0)
+        var assignments: [ItemOrderAssignment] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onReorder = { assignments = $0 }
+        let viewModel = AppViewModel(items: [first, second, inbox], folders: [folder], hooks: hooks)
+
+        viewModel.openFolder(folder)
+        XCTAssertTrue(
+            viewModel.reorder(
+                itemID: second.id,
+                relativeTo: first.id,
+                placement: .before,
+                destinationPinned: false
+            )
+        )
+        XCTAssertEqual(assignments.map(\.id), [second.id, first.id])
+        XCTAssertEqual(viewModel.items.first(where: { $0.id == inbox.id })?.sortOrder, 0)
+
+        viewModel.openRoot()
+        viewModel.composerText = "Inbox"
+        XCTAssertFalse(viewModel.canReorderVisibleItems)
+        XCTAssertFalse(
+            viewModel.reorder(
+                itemID: inbox.id,
+                relativeTo: nil,
+                placement: .before,
+                destinationPinned: true
+            )
+        )
     }
 
     func testSelectedRowKeyboardCommandsToggleCompletionAndMoveToTrash() {

@@ -141,6 +141,39 @@ private struct LedgerSectionDropDelegate: DropDelegate {
     }
 }
 
+private struct FolderDropDelegate: DropDelegate {
+    let folderID: UUID
+    @Binding var draggedItemID: UUID?
+    @Binding var targetedFolderID: UUID?
+    let onCommit: (UUID, UUID) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedItemID != nil && info.hasItemsConforming(to: [UTType.notchCaptureLedgerItem.identifier])
+    }
+
+    func dropEntered(info: DropInfo) {
+        targetedFolderID = folderID
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        targetedFolderID = folderID
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if targetedFolderID == folderID {
+            targetedFolderID = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        guard let draggedItemID else { return false }
+        onCommit(draggedItemID, folderID)
+        targetedFolderID = nil
+        return true
+    }
+}
+
 struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -150,9 +183,14 @@ struct ExpandedInboxView: View {
     @Namespace private var filterSelection
     @State private var draggedItemID: UUID?
     @State private var reorderTarget: LedgerReorderTarget?
+    @State private var targetedFolderID: UUID?
+    @State private var isCreatingFolder = false
+    @State private var folderBeingRenamed: AppViewModel.FolderSummary?
+    @State private var renameFolderName = ""
+    @State private var folderPendingDeletion: AppViewModel.FolderSummary?
 
     private let floatingComposerMargin: CGFloat = 18
-    private let floatingComposerHeight: CGFloat = 60
+    private let floatingComposerHeight: CGFloat = 52
     private let floatingGlassHeight: CGFloat = 134
     private let ledgerBottomClearance: CGFloat = 96
 
@@ -182,7 +220,13 @@ struct ExpandedInboxView: View {
         .onDrop(of: acceptedDropTypes, isTargeted: dropTargetBinding) { providers in
             viewModel.acceptDrop(providers)
         }
-        .onExitCommand { viewModel.dismiss() }
+        .onExitCommand {
+            if viewModel.isAtRoot {
+                viewModel.dismiss()
+            } else {
+                navigate { viewModel.openRoot() }
+            }
+        }
         .onAppear { focusComposer() }
         .onChange(of: viewModel.surfaceState) { _, state in
             if state == .expanded {
@@ -201,8 +245,55 @@ struct ExpandedInboxView: View {
                 focusedField = nil
             }
         }
+        .alert("New Folder", isPresented: $isCreatingFolder) {
+            TextField("Folder name", text: $viewModel.newFolderName)
+            Button("Cancel", role: .cancel) { viewModel.newFolderName = "" }
+            Button("Create") { _ = viewModel.createFolder() }
+        } message: {
+            Text("Create a folder to group related captures.")
+        }
+        .alert("Rename Folder", isPresented: renameAlertBinding) {
+            TextField("Folder name", text: $renameFolderName)
+            Button("Cancel", role: .cancel) { folderBeingRenamed = nil }
+            Button("Rename") {
+                if let folderBeingRenamed {
+                    _ = viewModel.renameFolder(folderBeingRenamed, to: renameFolderName)
+                }
+                folderBeingRenamed = nil
+            }
+        }
+        .confirmationDialog(
+            "Delete \(folderPendingDeletion?.name ?? "folder")?",
+            isPresented: deleteConfirmationBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Folder", role: .destructive) {
+                if let folderPendingDeletion {
+                    viewModel.deleteFolder(folderPendingDeletion)
+                }
+                folderPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { folderPendingDeletion = nil }
+        } message: {
+            let count = folderPendingDeletion.map { viewModel.totalItemCount(in: $0.id) } ?? 0
+            Text("\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.")
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture inbox")
+    }
+
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { folderBeingRenamed != nil },
+            set: { if !$0 { folderBeingRenamed = nil } }
+        )
+    }
+
+    private var deleteConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { folderPendingDeletion != nil },
+            set: { if !$0 { folderPendingDeletion = nil } }
+        )
     }
 
     private var floatingComposer: some View {
@@ -265,11 +356,61 @@ struct ExpandedInboxView: View {
     private var header: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                Text("Inbox")
+                if !viewModel.isAtRoot {
+                    Button {
+                        navigate { viewModel.openRoot() }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(PressableIconButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .help("Back to Inbox")
+                    .accessibilityLabel("Back to Inbox")
+                }
+
+                Text(viewModel.navigationTitle)
                     .font(.system(size: 18, weight: .medium))
                     .foregroundStyle(NotchTheme.primaryText)
+                    .lineLimit(1)
 
                 Spacer()
+
+                if viewModel.isAtRoot {
+                    Button {
+                        viewModel.newFolderName = ""
+                        isCreatingFolder = true
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 13, weight: .regular))
+                    }
+                    .buttonStyle(PressableIconButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .help("New folder")
+                    .accessibilityLabel("Create a new folder")
+                } else if let folder = viewModel.currentFolder {
+                    Menu {
+                        Button {
+                            beginRenaming(folder)
+                        } label: {
+                            Label("Rename Folder", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            folderPendingDeletion = folder
+                        } label: {
+                            Label("Delete Folder", systemImage: "trash")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 13, weight: .semibold))
+                            .frame(width: 28, height: 28)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .frame(width: 28, height: 28)
+                    .help("Folder actions")
+                    .accessibilityLabel("Actions for \(folder.name)")
+                }
 
                 Button {
                     viewModel.beginScreenshot()
@@ -300,21 +441,57 @@ struct ExpandedInboxView: View {
         .background(NotchTheme.ink)
     }
 
+    private func navigate(_ update: () -> Void) {
+        if reduceMotion {
+            update()
+        } else {
+            withAnimation(NotchMotion.filter, update)
+        }
+        resetReorderState()
+    }
+
+    private func beginRenaming(_ folder: AppViewModel.FolderSummary) {
+        renameFolderName = folder.name
+        folderBeingRenamed = folder
+    }
+
     private var captureField: some View {
+        TimelineView(
+            .animation(
+                minimumInterval: 1 / 30,
+                paused: reduceMotion || focusedField != .unifiedInput
+            )
+        ) { context in
+            let angle = composerIridescenceAngle(at: context.date)
+
+            captureFieldContent
+                .background {
+                    composerBackground(angle: angle)
+                }
+                .clipShape(composerShape)
+                .overlay {
+                    composerBorder(angle: angle)
+                }
+        }
+        .contentShape(composerShape)
+        .shadow(color: .black.opacity(0.42), radius: 14, y: 8)
+    }
+
+    private var captureFieldContent: some View {
         HStack(spacing: 13) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15, weight: .light))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .frame(width: 24, height: 24)
 
-            TextField("Search or add a thought", text: $viewModel.composerText, axis: .vertical)
+            TextField("Search or add to \(viewModel.captureDestinationName)", text: $viewModel.composerText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
                 .onSubmit { viewModel.submitComposer() }
-                .accessibilityLabel("Search or add a thought")
+                .accessibilityLabel("Search or add to \(viewModel.captureDestinationName)")
                 .accessibilityHint(unifiedInputHint)
 
             if viewModel.canAddComposerText {
@@ -337,10 +514,10 @@ struct ExpandedInboxView: View {
                 .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .keyboardShortcut(.return, modifiers: .command)
-                .help("Add this thought to Inbox")
-                .accessibilityLabel("Add thought to Inbox")
+                .help("Add this thought to \(viewModel.captureDestinationName)")
+                .accessibilityLabel("Add thought to \(viewModel.captureDestinationName)")
             } else if viewModel.composerHasMatches {
-                Text("\(viewModel.visibleItems.count) \(viewModel.visibleItems.count == 1 ? "match" : "matches")")
+                Text("\(viewModel.searchMatchCount) \(viewModel.searchMatchCount == 1 ? "match" : "matches")")
                     .font(.system(size: 10.5, weight: .regular))
                     .foregroundStyle(NotchTheme.tertiaryText)
                     .lineLimit(1)
@@ -348,38 +525,89 @@ struct ExpandedInboxView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: floatingComposerHeight)
-        .background {
-            ZStack {
-                if !reduceTransparency {
-                    RoundedRectangle(cornerRadius: 16, style: .continuous)
-                        .fill(.ultraThinMaterial)
-                }
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(NotchTheme.field.opacity(reduceTransparency ? 1 : 0.72))
+    }
+
+    private var composerShape: Capsule {
+        Capsule()
+    }
+
+    private func composerBackground(angle: Angle) -> some View {
+        ZStack {
+            if !reduceTransparency {
+                composerShape
+                    .fill(.ultraThinMaterial)
+            }
+
+            composerShape
+                .fill(NotchTheme.field.opacity(reduceTransparency ? 1 : 0.72))
+
+            if !reduceTransparency {
+                composerShape
+                    .fill(composerIridescentGradient(angle: angle))
+                    .blur(radius: 12)
+                    .opacity(focusedField == .unifiedInput ? 0.03 : 0)
+                    .animation(composerFocusAnimation, value: focusedField)
             }
         }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func composerBorder(angle: Angle) -> some View {
+        ZStack {
+            composerShape
+                .strokeBorder(composerIridescentGradient(angle: angle), lineWidth: 1)
+                .opacity(
+                    focusedField == .unifiedInput && colorSchemeContrast != .increased
+                        ? 0.35
+                        : 0
+                )
+
+            composerShape
                 .strokeBorder(
                     colorSchemeContrast == .increased
                         ? Color.white.opacity(0.18)
                         : NotchTheme.controlStroke,
                     lineWidth: colorSchemeContrast == .increased ? 1.5 : 1
                 )
+                .opacity(
+                    focusedField == .unifiedInput && colorSchemeContrast != .increased
+                        ? 0
+                        : 1
+                )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .shadow(color: .black.opacity(0.42), radius: 14, y: 8)
+        .animation(composerFocusAnimation, value: focusedField)
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private func composerIridescentGradient(angle: Angle) -> AngularGradient {
+        AngularGradient(
+            gradient: NotchTheme.composerIridescence,
+            center: .center,
+            angle: angle
+        )
+    }
+
+    private func composerIridescenceAngle(at date: Date) -> Angle {
+        guard !reduceMotion else { return .degrees(0) }
+        let elapsed = date.timeIntervalSinceReferenceDate
+            .truncatingRemainder(dividingBy: NotchMotion.composerIridescenceCycleDuration)
+        return .degrees((elapsed / NotchMotion.composerIridescenceCycleDuration) * 360)
+    }
+
+    private var composerFocusAnimation: Animation {
+        reduceMotion ? NotchMotion.reducedMotion : NotchMotion.composerFocus
     }
 
     private var unifiedInputHint: String {
         if viewModel.canAddComposerText {
-            return "No matching items. Press Return to add this thought to Inbox."
+            return "No matching items. Press Return to add this thought to \(viewModel.captureDestinationName)."
         }
         if viewModel.composerHasMatches {
             return "Matching items are shown below."
         }
-        return "Type to search. If no item matches, press Return to add a new thought."
+        return "Type to search \(viewModel.isAtRoot ? "all items" : viewModel.captureDestinationName). If no item matches, press Return to add a new thought."
     }
 
     private var filterBar: some View {
@@ -503,10 +731,11 @@ struct ExpandedInboxView: View {
                     .padding(12)
                     itemFeed
                 }
-            } else if viewModel.visibleItems.isEmpty {
+            } else if !viewModel.hasVisibleContent {
                 EmptyInboxView(
                     filter: viewModel.filter,
                     query: viewModel.composerText,
+                    folderName: viewModel.currentFolder?.name,
                     onCompose: { focusedField = .unifiedInput }
                 )
                 .padding(.bottom, ledgerBottomClearance)
@@ -539,6 +768,16 @@ struct ExpandedInboxView: View {
 
     @ViewBuilder
     private var feedContent: some View {
+        if !viewModel.visibleFolders.isEmpty {
+            ForEach(viewModel.visibleFolders) { folder in
+                folderRow(folder)
+            }
+        }
+
+        if viewModel.isShowingGlobalSearchResults, !viewModel.visibleItems.isEmpty {
+            LedgerSectionHeader(title: "Results", count: viewModel.visibleItems.count)
+        }
+
         if !viewModel.pinnedItems.isEmpty {
             reorderSectionHeader(title: "Pinned", count: viewModel.pinnedItems.count, isPinned: true)
             ForEach(viewModel.pinnedItems) { item in
@@ -547,7 +786,7 @@ struct ExpandedInboxView: View {
         }
 
         if !viewModel.pinnedItems.isEmpty, !viewModel.unpinnedItems.isEmpty {
-            reorderSectionHeader(title: "Unpinned", count: viewModel.unpinnedItems.count, isPinned: false)
+            reorderSectionDivider(isPinned: false)
         }
 
         ForEach(viewModel.unpinnedItems) { item in
@@ -559,7 +798,37 @@ struct ExpandedInboxView: View {
         }
     }
 
+    private func folderRow(_ folder: AppViewModel.FolderSummary) -> some View {
+        FolderLedgerRow(
+            folder: folder,
+            itemCount: viewModel.matchingItemCount(in: folder.id),
+            isDropTarget: targetedFolderID == folder.id,
+            reduceMotion: reduceMotion,
+            onOpen: { navigate { viewModel.openFolder(folder) } },
+            onRename: { beginRenaming(folder) },
+            onDelete: { folderPendingDeletion = folder }
+        )
+        .onDrop(
+            of: [UTType.notchCaptureLedgerItem.identifier],
+            delegate: FolderDropDelegate(
+                folderID: folder.id,
+                draggedItemID: $draggedItemID,
+                targetedFolderID: $targetedFolderID,
+                onCommit: commitMoveToFolder
+            )
+        )
+    }
+
+    @ViewBuilder
     private func reorderableRow(_ item: AppViewModel.LedgerItem) -> some View {
+        if viewModel.canReorderVisibleItems {
+            draggableRow(item)
+        } else {
+            LedgerRowView(item: item, viewModel: viewModel)
+        }
+    }
+
+    private func draggableRow(_ item: AppViewModel.LedgerItem) -> some View {
         let target = reorderTarget?.targetID == item.id ? reorderTarget : nil
         return LedgerRowView(item: item, viewModel: viewModel)
             .opacity(draggedItemID == item.id && reorderTarget != nil ? 0.58 : 1)
@@ -596,6 +865,20 @@ struct ExpandedInboxView: View {
             }
     }
 
+    private func commitMoveToFolder(itemID: UUID, folderID: UUID) {
+        guard let item = viewModel.items.first(where: { $0.id == itemID }) else {
+            resetReorderState()
+            return
+        }
+        let update = { viewModel.move(item, to: folderID) }
+        if reduceMotion {
+            update()
+        } else {
+            withAnimation(NotchMotion.reorder, update)
+        }
+        resetReorderState()
+    }
+
     private func reorderSectionHeader(title: String, count: Int, isPinned: Bool) -> some View {
         LedgerSectionHeader(title: title, count: count)
             .overlay {
@@ -616,6 +899,34 @@ struct ExpandedInboxView: View {
                     onCommit: commitReorder
                 )
             )
+    }
+
+    private func reorderSectionDivider(isPinned: Bool) -> some View {
+        Rectangle()
+            .fill(NotchTheme.hairline)
+            .frame(height: 1)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+            .overlay {
+                LedgerInsertionIndicator(
+                    placement: reorderTarget == LedgerReorderTarget(
+                        targetID: nil,
+                        placement: .before,
+                        destinationPinned: isPinned
+                    ) ? .before : nil
+                )
+            }
+            .onDrop(
+                of: [UTType.notchCaptureLedgerItem.identifier],
+                delegate: LedgerSectionDropDelegate(
+                    destinationPinned: isPinned,
+                    draggedItemID: $draggedItemID,
+                    reorderTarget: $reorderTarget,
+                    onCommit: commitReorder
+                )
+            )
+            .accessibilityLabel(isPinned ? "Pinned items" : "Unpinned items")
+            .accessibilityHint("Drop an item here to move it to this section")
     }
 
     private func emptyGroupDropTarget(title: String, isPinned: Bool) -> some View {
@@ -691,6 +1002,7 @@ struct ExpandedInboxView: View {
     private func resetReorderState() {
         draggedItemID = nil
         reorderTarget = nil
+        targetedFolderID = nil
     }
 
     private var dropTargetBinding: Binding<Bool> {
@@ -754,6 +1066,76 @@ private struct HiddenScrollIndicatorConfigurator: NSViewRepresentable {
     }
 }
 
+private struct FolderLedgerRow: View {
+    let folder: AppViewModel.FolderSummary
+    let itemCount: Int
+    let isDropTarget: Bool
+    let reduceMotion: Bool
+    let onOpen: () -> Void
+    let onRename: () -> Void
+    let onDelete: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            HStack(spacing: 10) {
+                Image(systemName: isDropTarget ? "folder.badge.plus" : "folder.fill")
+                    .font(.system(size: 14, weight: .regular))
+                    .foregroundStyle(isDropTarget ? NotchTheme.mint : NotchTheme.secondaryText)
+                    .frame(width: 20, height: 20)
+
+                HStack(spacing: 7) {
+                    Text(folder.name)
+                        .font(.system(size: 12.5, weight: .medium))
+                        .foregroundStyle(NotchTheme.primaryText)
+                        .lineLimit(1)
+                    Text("\(itemCount) \(itemCount == 1 ? "item" : "items")")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(NotchTheme.tertiaryText)
+                        .lineLimit(1)
+                }
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(isDropTarget ? NotchTheme.mint : NotchTheme.tertiaryText)
+            }
+            .padding(.horizontal, 20)
+            .frame(minHeight: 50)
+            .background(isDropTarget ? NotchTheme.mint.opacity(0.08) : Color.clear)
+            .overlay {
+                if isDropTarget {
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .strokeBorder(NotchTheme.mint.opacity(0.9), lineWidth: 1.5)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                }
+            }
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(NotchTheme.hairline)
+                    .frame(height: 1)
+                    .padding(.leading, 20)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.86))
+        .scaleEffect(isDropTarget && !reduceMotion ? 1.006 : 1)
+        .animation(reduceMotion ? nil : NotchMotion.hover, value: isDropTarget)
+        .contextMenu {
+            Button("Open Folder", action: onOpen)
+            Button("Rename Folder", action: onRename)
+            Divider()
+            Button("Delete Folder", role: .destructive, action: onDelete)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Folder \(folder.name), \(itemCount) \(itemCount == 1 ? "item" : "items")")
+        .accessibilityHint("Opens this folder")
+        .accessibilityAction(named: "Rename Folder", onRename)
+        .accessibilityAction(named: "Delete Folder", onDelete)
+    }
+}
+
 private struct LedgerRowView: View {
     let item: AppViewModel.LedgerItem
     @ObservedObject var viewModel: AppViewModel
@@ -769,7 +1151,14 @@ private struct LedgerRowView: View {
     var body: some View {
         Group {
             if isAttachmentOnly, let attachment = item.attachments.first {
-                AttachmentLedgerRow(item: item, attachment: attachment)
+                AttachmentLedgerRow(
+                    item: item,
+                    attachment: attachment,
+                    timeFormat: viewModel.timeFormat,
+                    searchLocation: viewModel.isShowingGlobalSearchResults
+                        ? (item.folderName ?? "Inbox")
+                        : nil
+                )
             } else {
                 textRow
             }
@@ -834,7 +1223,7 @@ private struct LedgerRowView: View {
 
     private var trailingContent: some View {
         ZStack(alignment: .trailing) {
-            Text(CaptureTimestampFormatter.string(from: item.createdAt))
+            Text(CaptureTimestampFormatter.string(from: item.createdAt, timeFormat: viewModel.timeFormat))
                 .font(.system(size: 9.5, weight: .regular))
                 .foregroundStyle(NotchTheme.tertiaryText)
                 .lineLimit(1)
@@ -889,13 +1278,16 @@ private struct LedgerRowView: View {
     }
 
     private var subtitle: String? {
+        if viewModel.isShowingGlobalSearchResults {
+            return item.folderName.map { "Folder · \($0)" } ?? "Inbox"
+        }
         if !item.detail.isEmpty { return item.detail }
         if let dueDate = item.dueDate {
             if Calendar.current.isDateInToday(dueDate) { return "Today" }
             return dueDate.formatted(date: .abbreviated, time: .omitted)
         }
         if let sourceApp = item.sourceApp { return "Selected from \(sourceApp)" }
-        if let listName = item.listName { return listName }
+        if let folderName = item.folderName { return "Folder · \(folderName)" }
         return nil
     }
 
@@ -949,14 +1341,27 @@ private struct LedgerRowView: View {
             Label("Due date", systemImage: "calendar")
         }
 
-        if !viewModel.lists.isEmpty {
-            Menu {
-                ForEach(viewModel.lists, id: \.self) { list in
-                    Button(list) { viewModel.move(item, to: list) }
-                }
+        Menu {
+            Button {
+                viewModel.move(item, to: nil)
             } label: {
-                Label("Move", systemImage: "tag")
+                Label("Inbox", systemImage: "tray")
             }
+            .disabled(item.folderID == nil)
+
+            if !viewModel.folders.isEmpty {
+                Divider()
+                ForEach(viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder })) { folder in
+                    Button {
+                        viewModel.move(item, to: folder.id)
+                    } label: {
+                        Label(folder.name, systemImage: "folder")
+                    }
+                    .disabled(item.folderID == folder.id)
+                }
+            }
+        } label: {
+            Label("Move", systemImage: "folder")
         }
 
         Divider()
@@ -999,6 +1404,8 @@ private struct LedgerRowView: View {
 private struct AttachmentLedgerRow: View {
     let item: AppViewModel.LedgerItem
     let attachment: AppViewModel.LedgerAttachment
+    let timeFormat: AppViewModel.TimeFormat
+    let searchLocation: String?
 
     var body: some View {
         Button {
@@ -1036,7 +1443,13 @@ private struct AttachmentLedgerRow: View {
                             .foregroundStyle(NotchTheme.secondaryText)
                             .lineLimit(1)
                     }
-                    Text(CaptureTimestampFormatter.string(from: item.createdAt))
+                    if let searchLocation {
+                        Text(searchLocation == "Inbox" ? "Inbox" : "Folder · \(searchLocation)")
+                            .font(.system(size: 9.5, weight: .regular))
+                            .foregroundStyle(NotchTheme.secondaryText)
+                            .lineLimit(1)
+                    }
+                    Text(CaptureTimestampFormatter.string(from: item.createdAt, timeFormat: timeFormat))
                         .font(.system(size: 9.5, weight: .regular))
                         .foregroundStyle(NotchTheme.tertiaryText)
                 }
@@ -1114,6 +1527,7 @@ private struct QuickLookThumbnail: View {
 private struct EmptyInboxView: View {
     let filter: AppViewModel.InboxFilter
     let query: String
+    let folderName: String?
     let onCompose: () -> Void
 
     private var isSearching: Bool {
@@ -1129,7 +1543,7 @@ private struct EmptyInboxView: View {
             Text(isSearching ? "No matches" : emptyTitle)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(NotchTheme.primaryText)
-            Text(isSearching ? "Press Return to add “\(query)” to Inbox." : emptyDetail)
+            Text(isSearching ? "Press Return to add “\(query)” to \(folderName ?? "Inbox")." : emptyDetail)
                 .font(.system(size: 10, weight: .regular))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -1147,7 +1561,10 @@ private struct EmptyInboxView: View {
     }
 
     private var emptyTitle: String {
-        switch filter {
+        if let folderName, filter == .all {
+            return "\(folderName) is empty"
+        }
+        return switch filter {
         case .all: "Your pocket is clear"
         case .tasks: "No open tasks"
         case .due: "Nothing is due"
@@ -1158,7 +1575,12 @@ private struct EmptyInboxView: View {
     }
 
     private var emptyDetail: String {
-        filter == .all ? "Press ⌃⇧Space anywhere to keep the current selection." : "Items in this view will appear here."
+        if folderName != nil, filter == .all {
+            return "Add a thought here or move an item into this folder."
+        }
+        return filter == .all
+            ? "Press ⌃⇧Space anywhere to keep the current selection."
+            : "Items in this view will appear here."
     }
 }
 

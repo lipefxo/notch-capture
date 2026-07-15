@@ -131,6 +131,64 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(fetched[1].sortOrder, 0)
     }
 
+    func testFolderCreationRenameAndDuplicateValidation() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let folder = try repository.createList(name: "  Research  ")
+
+        XCTAssertEqual(folder.name, "Research")
+        XCTAssertThrowsError(try repository.createList(name: "research")) { error in
+            guard case ItemRepositoryError.duplicateListName = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        try repository.renameList(folder, to: "Reading")
+        XCTAssertEqual(folder.name, "Reading")
+        XCTAssertThrowsError(try repository.renameList(folder, to: " \n ")) { error in
+            guard case ItemRepositoryError.emptyListName = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+    }
+
+    func testFolderScopedOrderingAllowsEqualRanksAcrossContainers() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let folder = try repository.createList(name: "Work")
+        let inboxItem = try repository.createItem(text: "Inbox", origin: .manual)
+        let folderItem = try repository.createItem(text: "Folder", origin: .manual, list: folder)
+
+        XCTAssertEqual(inboxItem.sortOrder, folderItem.sortOrder)
+        XCTAssertFalse(try repository.backfillMissingSortOrders())
+
+        let newerFolderItem = try repository.createItem(text: "Newer folder item", origin: .manual, list: folder)
+        XCTAssertLessThan(try XCTUnwrap(newerFolderItem.sortOrder), try XCTUnwrap(folderItem.sortOrder))
+        XCTAssertNil(inboxItem.list)
+        XCTAssertEqual(folderItem.list?.id, folder.id)
+    }
+
+    func testMovingAndDeletingFolderPreservesItemsAndRelativeOrder() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let folder = try repository.createList(name: "Projects")
+        let existingInbox = try repository.createItem(text: "Existing inbox", origin: .manual)
+        let first = try repository.createItem(text: "First", origin: .manual, list: folder)
+        let second = try repository.createItem(text: "Second", origin: .manual, list: folder)
+
+        try repository.move(existingInbox, to: folder)
+        XCTAssertEqual(existingInbox.list?.id, folder.id)
+        XCTAssertEqual(try repository.fetch(scope: .list(folder.id)).first?.id, existingInbox.id)
+
+        XCTAssertEqual(try repository.deleteList(folder), 3)
+
+        let storedFolders = try container.mainContext.fetch(FetchDescriptor<ItemList>())
+        XCTAssertTrue(storedFolders.isEmpty)
+        let inbox = try repository.fetch(scope: .inbox)
+        XCTAssertEqual(inbox.map(\.id), [existingInbox.id, second.id, first.id])
+        XCTAssertTrue(inbox.allSatisfy { $0.list == nil })
+    }
+
     func testMissingReorderItemDoesNotPartiallyApplyAssignments() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)

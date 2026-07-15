@@ -2,6 +2,9 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: AppViewModel
+    @State private var folderBeingRenamed: AppViewModel.FolderSummary?
+    @State private var renameFolderName = ""
+    @State private var folderPendingDeletion: AppViewModel.FolderSummary?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -10,7 +13,7 @@ struct SettingsView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     ownershipSection
                     shortcutsSection
-                    listsSection
+                    foldersSection
                     permissionSection
                     behaviorSection
                     dataSection
@@ -24,6 +27,32 @@ struct SettingsView: View {
         .background(NotchSurfaceBackground())
         .clipShape(NotchHugShape(bottomRadius: 24))
         .onExitCommand { viewModel.openExpanded() }
+        .alert("Rename Folder", isPresented: renameAlertBinding) {
+            TextField("Folder name", text: $renameFolderName)
+            Button("Cancel", role: .cancel) { folderBeingRenamed = nil }
+            Button("Rename") {
+                if let folderBeingRenamed {
+                    _ = viewModel.renameFolder(folderBeingRenamed, to: renameFolderName)
+                }
+                folderBeingRenamed = nil
+            }
+        }
+        .confirmationDialog(
+            "Delete \(folderPendingDeletion?.name ?? "folder")?",
+            isPresented: deleteConfirmationBinding,
+            titleVisibility: .visible
+        ) {
+            Button("Delete Folder", role: .destructive) {
+                if let folderPendingDeletion {
+                    viewModel.deleteFolder(folderPendingDeletion)
+                }
+                folderPendingDeletion = nil
+            }
+            Button("Cancel", role: .cancel) { folderPendingDeletion = nil }
+        } message: {
+            let count = folderPendingDeletion.map { viewModel.totalItemCount(in: $0.id) } ?? 0
+            Text("\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.")
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture settings")
     }
@@ -140,28 +169,37 @@ struct SettingsView: View {
         }
     }
 
-    private var listsSection: some View {
-        SettingsSection(title: "Lists", caption: "Each item can belong to one list.") {
-            if !viewModel.lists.isEmpty {
+    private var foldersSection: some View {
+        SettingsSection(title: "Folders", caption: "Each item can belong to one folder.") {
+            if !viewModel.folders.isEmpty {
                 FlowLayout(spacing: 6) {
-                    ForEach(viewModel.lists, id: \.self) { list in
-                        Label(list, systemImage: "folder")
+                    ForEach(viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder })) { folder in
+                        Label(folder.name, systemImage: "folder")
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(Color.white.opacity(0.7))
                             .padding(.horizontal, 8)
                             .frame(height: 25)
                             .background(Color.white.opacity(0.05))
                             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                            .contextMenu {
+                                Button("Rename Folder") {
+                                    renameFolderName = folder.name
+                                    folderBeingRenamed = folder
+                                }
+                                Button("Delete Folder", role: .destructive) {
+                                    folderPendingDeletion = folder
+                                }
+                            }
                     }
                 }
             }
 
             HStack(spacing: 8) {
-                TextField("New list", text: $viewModel.newListName)
+                TextField("New folder", text: $viewModel.newFolderName)
                     .textFieldStyle(.plain)
                     .font(.system(size: 11))
-                    .onSubmit { viewModel.createList() }
-                Button("Add") { viewModel.createList() }
+                    .onSubmit { viewModel.createFolder() }
+                Button("Add") { viewModel.createFolder() }
                     .buttonStyle(MintButtonStyle())
                     .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
@@ -171,8 +209,31 @@ struct SettingsView: View {
         }
     }
 
+    private var renameAlertBinding: Binding<Bool> {
+        Binding(
+            get: { folderBeingRenamed != nil },
+            set: { if !$0 { folderBeingRenamed = nil } }
+        )
+    }
+
+    private var deleteConfirmationBinding: Binding<Bool> {
+        Binding(
+            get: { folderPendingDeletion != nil },
+            set: { if !$0 { folderPendingDeletion = nil } }
+        )
+    }
+
     private var behaviorSection: some View {
         SettingsSection(title: "Behavior", caption: nil) {
+            Picker("Time format", selection: $viewModel.timeFormat) {
+                ForEach(AppViewModel.TimeFormat.allCases) { format in
+                    Text(format.rawValue).tag(format)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .accessibilityLabel("Time format")
+
             Toggle("Launch at login", isOn: $viewModel.launchAtLogin)
                 .toggleStyle(.switch)
                 .controlSize(.small)

@@ -11,6 +11,7 @@ final class AppCoordinator {
         static let onboardingComplete = "onboardingComplete"
         static let ownership = "notchOwnership"
         static let autoHideExternalPill = "autoHideExternalPill"
+        static let timeFormat = "timeFormat"
 
         static func shortcut(_ action: GlobalHotKeyAction, field: String) -> String {
             "shortcut.\(action.rawValue).\(field)"
@@ -83,6 +84,9 @@ final class AppCoordinator {
         let ownership = AppViewModel.NotchOwnership(
             rawValue: defaults.string(forKey: DefaultsKey.ownership) ?? ""
         ) ?? .automatic
+        let timeFormat = AppViewModel.TimeFormat(
+            rawValue: defaults.string(forKey: DefaultsKey.timeFormat) ?? ""
+        ) ?? .twelveHour
         let initialState: AppViewModel.SurfaceState
         if previewMode {
             initialState = Self.requestedPreviewState()
@@ -109,6 +113,7 @@ final class AppCoordinator {
                 ownership: ownership,
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
                 launchAtLogin: loginItemService.isEnabled,
+                timeFormat: timeFormat,
                 accessibilityGranted: selectionService.isAccessibilityTrusted,
                 screenRecordingGranted: screenCaptureService.hasPermission
             )
@@ -209,8 +214,8 @@ final class AppCoordinator {
         hooks.onDismiss = { [weak self] in
             self?.panelController.restoreFocus()
         }
-        hooks.onCaptureText = { [weak self] text in
-            self?.captureManualText(text)
+        hooks.onCaptureText = { [weak self] text, folderID in
+            self?.captureManualText(text, folderID: folderID)
         }
         hooks.onUndoCapture = { [weak self] id in
             self?.undoCapture(id: id)
@@ -233,11 +238,17 @@ final class AppCoordinator {
         hooks.onSetDueDate = { [weak self] id, date in
             self?.setDueDate(date, for: id)
         }
-        hooks.onMove = { [weak self] id, listName in
-            self?.move(id: id, to: listName)
+        hooks.onMove = { [weak self] id, folderID in
+            self?.move(id: id, to: folderID)
         }
-        hooks.onCreateList = { [weak self] name in
-            self?.createList(named: name)
+        hooks.onCreateFolder = { [weak self] name in
+            self?.createFolder(named: name)
+        }
+        hooks.onRenameFolder = { [weak self] id, name in
+            self?.renameFolder(id: id, to: name)
+        }
+        hooks.onDeleteFolder = { [weak self] id in
+            self?.deleteFolder(id: id)
         }
         hooks.onTrash = { [weak self] id in
             self?.trash(id: id)
@@ -265,6 +276,9 @@ final class AppCoordinator {
         }
         hooks.onSetOwnership = { [weak self] ownership in
             self?.setOwnership(ownership)
+        }
+        hooks.onSetTimeFormat = { [weak self] timeFormat in
+            self?.defaults.set(timeFormat.rawValue, forKey: DefaultsKey.timeFormat)
         }
         hooks.onOpenShortcutRecorder = { [weak self] action in
             self?.recordShortcut(for: action)
@@ -396,14 +410,15 @@ final class AppCoordinator {
         }
     }
 
-    private func captureManualText(_ text: String) {
+    private func captureManualText(_ text: String, folderID: UUID?) {
         do {
+            let list = try folderID.map(findList)
             let payload: CapturePayload = if let url = CaptureURLParser.url(from: text) {
                 .url(url)
             } else {
                 .text(text)
             }
-            let item = try repository.createItem(from: payload, origin: .manual)
+            let item = try repository.createItem(from: payload, origin: .manual, list: list)
             presentCaptureFeedback(for: item, feedback: .stayExpanded)
         } catch {
             show(error)
@@ -530,21 +545,43 @@ final class AppCoordinator {
         } catch { show(error) }
     }
 
-    private func move(id: UUID, to listName: String) {
+    private func move(id: UUID, to folderID: UUID?) {
         guard let item = findItem(id) else { return }
         do {
-            let lists = try modelContainer.mainContext.fetch(FetchDescriptor<ItemList>())
-            let list = try lists.first(where: { $0.name == listName }) ?? repository.createList(name: listName)
+            let list = try folderID.map(findList)
             try repository.move(item, to: list)
             reloadFromStore()
-        } catch { show(error) }
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
     }
 
-    private func createList(named name: String) {
+    private func createFolder(named name: String) {
         do {
             _ = try repository.createList(name: name)
             reloadFromStore()
         } catch { show(error) }
+    }
+
+    private func renameFolder(id: UUID, to name: String) {
+        do {
+            try repository.renameList(try findList(id), to: name)
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
+    }
+
+    private func deleteFolder(id: UUID) {
+        do {
+            _ = try repository.deleteList(try findList(id))
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
     }
 
     private func trash(id: UUID) {
@@ -573,6 +610,14 @@ final class AppCoordinator {
 
     private func findItem(_ id: UUID) -> CaptureItem? {
         try? modelContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first { $0.id == id }
+    }
+
+    private func findList(_ id: UUID) throws -> ItemList {
+        let lists = try modelContainer.mainContext.fetch(FetchDescriptor<ItemList>())
+        guard let list = lists.first(where: { $0.id == id }) else {
+            throw ItemRepositoryError.listNotFound(id)
+        }
+        return list
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) {
@@ -924,19 +969,11 @@ final class AppCoordinator {
             let lists = try modelContainer.mainContext.fetch(
                 FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
             )
-            if lists.isEmpty {
-                for name in ["Work", "Personal", "Ideas"] {
-                    _ = try repository.createList(name: name)
-                }
-                let seeded = try modelContainer.mainContext.fetch(
-                    FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
-                )
-                viewModel.items = items.map(makeLedgerItem)
-                viewModel.lists = seeded.map(\.name)
-                return
-            }
             viewModel.items = items.map(makeLedgerItem)
-            viewModel.lists = lists.map(\.name)
+            viewModel.folders = lists.map {
+                AppViewModel.FolderSummary(id: $0.id, name: $0.name, sortOrder: $0.sortOrder)
+            }
+            viewModel.reconcileBrowsingLocation()
         } catch {
             show(error)
         }
@@ -970,7 +1007,8 @@ final class AppCoordinator {
             detail: detail,
             createdAt: item.createdAt,
             dueDate: item.dueDate,
-            listName: item.list?.name,
+            folderID: item.list?.id,
+            folderName: item.list?.name,
             sourceApp: item.sourceApplicationName,
             isPinned: item.isPinned,
             isCompleted: item.isCompleted,
@@ -992,7 +1030,7 @@ final class AppCoordinator {
     }
 
     private func show(_ error: Error) {
-        viewModel.errorMessage = error.localizedDescription
         viewModel.openExpanded()
+        viewModel.errorMessage = error.localizedDescription
     }
 }

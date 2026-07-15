@@ -17,6 +17,7 @@ final class ItemRepository {
         text: String = "",
         origin: CaptureOrigin,
         source: CaptureSource = CaptureSource(),
+        list: ItemList? = nil,
         attachments: [Attachment] = [],
         now: Date = .now
     ) throws -> CaptureItem {
@@ -25,9 +26,10 @@ final class ItemRepository {
         }
         let item = CaptureItem(
             text: text,
-            sortOrder: try nextTopSortOrder(isPinned: false),
+            sortOrder: try nextTopSortOrder(isPinned: false, list: list),
             origin: origin,
             source: source,
+            list: list,
             attachments: attachments,
             createdAt: now,
             updatedAt: now
@@ -42,6 +44,7 @@ final class ItemRepository {
         from payload: CapturePayload,
         origin: CaptureOrigin,
         source: CaptureSource = CaptureSource(),
+        list: ItemList? = nil,
         now: Date = .now
     ) throws -> CaptureItem {
         guard !payload.isEmpty else { throw ItemRepositoryError.emptyCapture }
@@ -82,6 +85,7 @@ final class ItemRepository {
                 text: text,
                 origin: origin,
                 source: source,
+                list: list,
                 attachments: attachments,
                 now: now
             )
@@ -101,11 +105,53 @@ final class ItemRepository {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ItemRepositoryError.emptyListName }
         let descriptor = FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
-        let nextOrder = (try modelContext.fetch(descriptor).map(\.sortOrder).max() ?? -1) + 1
+        let lists = try modelContext.fetch(descriptor)
+        guard !lists.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
+            throw ItemRepositoryError.duplicateListName
+        }
+        let nextOrder = (lists.map(\.sortOrder).max() ?? -1) + 1
         let list = ItemList(name: trimmed, sortOrder: nextOrder)
         modelContext.insert(list)
         try modelContext.save()
         return list
+    }
+
+    func renameList(_ list: ItemList, to name: String) throws {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { throw ItemRepositoryError.emptyListName }
+        let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        guard !lists.contains(where: {
+            $0.id != list.id && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) else {
+            throw ItemRepositoryError.duplicateListName
+        }
+        list.name = trimmed
+        list.updatedAt = .now
+        try modelContext.save()
+    }
+
+    /// Deletes the folder but returns every contained item to Inbox.
+    @discardableResult
+    func deleteList(_ list: ItemList) throws -> Int {
+        let containedItems = list.items
+        do {
+            for isPinned in [true, false] {
+                let ordered = containedItems
+                    .filter { $0.isPinned == isPinned }
+                    .sorted(by: migrationComesBefore)
+                let inboxTop = try nextTopSortOrder(isPinned: isPinned, list: nil)
+                for (index, item) in ordered.enumerated() {
+                    item.list = nil
+                    item.sortOrder = inboxTop - ordered.count + index
+                }
+            }
+            modelContext.delete(list)
+            try modelContext.save()
+            return containedItems.count
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
     }
 
     func fetch(scope: CaptureScope, search: String = "", now: Date = .now) throws -> [CaptureItem] {
@@ -148,16 +194,17 @@ final class ItemRepository {
     func backfillMissingSortOrders() throws -> Bool {
         let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let needsBackfill = items.contains { $0.sortOrder == nil }
-        let hasDuplicateRanks = [true, false].contains { isPinned in
-            let ranks = items.filter { $0.isPinned == isPinned }.compactMap(\.sortOrder)
+        let grouped = Dictionary(grouping: items) { item in
+            OrderGroup(listID: item.list?.id, isPinned: item.isPinned)
+        }
+        let hasDuplicateRanks = grouped.values.contains { group in
+            let ranks = group.compactMap(\.sortOrder)
             return Set(ranks).count != ranks.count
         }
         guard needsBackfill || hasDuplicateRanks else { return false }
 
-        for isPinned in [true, false] {
-            let ordered = items
-                .filter { $0.isPinned == isPinned }
-                .sorted(by: migrationComesBefore)
+        for group in grouped.values {
+            let ordered = group.sorted(by: migrationComesBefore)
             for (index, item) in ordered.enumerated() {
                 item.sortOrder = index
             }
@@ -196,6 +243,8 @@ final class ItemRepository {
     }
 
     func move(_ item: CaptureItem, to list: ItemList?) throws {
+        guard item.list?.id != list?.id else { return }
+        item.sortOrder = try nextTopSortOrder(isPinned: item.isPinned, list: list)
         item.list = list
         item.touch()
         try modelContext.save()
@@ -203,7 +252,7 @@ final class ItemRepository {
 
     func setPinned(_ pinned: Bool, for item: CaptureItem) throws {
         guard item.isPinned != pinned else { return }
-        item.sortOrder = try nextTopSortOrder(isPinned: pinned)
+        item.sortOrder = try nextTopSortOrder(isPinned: pinned, list: item.list)
         item.isPinned = pinned
         item.touch()
         try modelContext.save()
@@ -287,9 +336,11 @@ final class ItemRepository {
         )
     }
 
-    private func nextTopSortOrder(isPinned: Bool) throws -> Int {
+    private func nextTopSortOrder(isPinned: Bool, list: ItemList?) throws -> Int {
         let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
-        return (items.filter { $0.isPinned == isPinned }.compactMap(\.sortOrder).min() ?? 0) - 1
+        return (items.filter {
+            $0.isPinned == isPinned && $0.list?.id == list?.id
+        }.compactMap(\.sortOrder).min() ?? 0) - 1
     }
 
     private func comesBefore(_ lhs: CaptureItem, _ rhs: CaptureItem) -> Bool {
@@ -323,22 +374,31 @@ final class ItemRepository {
             return lhs.id.uuidString < rhs.id.uuidString
         }
     }
+
+    private struct OrderGroup: Hashable {
+        let listID: UUID?
+        let isPinned: Bool
+    }
 }
 
 enum ItemRepositoryError: LocalizedError {
     case emptyCapture
     case emptyListName
+    case duplicateListName
     case notATask
     case attachmentStoreRequired
     case itemNotFound(UUID)
+    case listNotFound(UUID)
 
     var errorDescription: String? {
         switch self {
         case .emptyCapture: "A capture must contain text or an attachment."
-        case .emptyListName: "A list name cannot be empty."
+        case .emptyListName: "A folder name cannot be empty."
+        case .duplicateListName: "A folder with that name already exists."
         case .notATask: "Only tasks can be completed."
         case .attachmentStoreRequired: "An attachment store is required for file and image captures."
         case let .itemNotFound(id): "The item \(id.uuidString) no longer exists."
+        case let .listNotFound(id): "The folder \(id.uuidString) no longer exists."
         }
     }
 }

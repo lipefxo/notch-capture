@@ -56,6 +56,13 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    enum TimeFormat: String, CaseIterable, Identifiable {
+        case twelveHour = "12-hour"
+        case twentyFourHour = "24-hour"
+
+        var id: Self { self }
+    }
+
     enum ItemKind: String, Codable, Hashable {
         case note
         case task
@@ -70,6 +77,23 @@ final class AppViewModel: ObservableObject {
         case composer
         case selectedRow
         case none
+    }
+
+    enum BrowseLocation: Hashable {
+        case root
+        case folder(UUID)
+    }
+
+    struct FolderSummary: Identifiable, Hashable {
+        var id: UUID
+        var name: String
+        var sortOrder: Int
+
+        init(id: UUID = UUID(), name: String, sortOrder: Int = 0) {
+            self.id = id
+            self.name = name
+            self.sortOrder = sortOrder
+        }
     }
 
     struct LedgerAttachment: Identifiable, Hashable {
@@ -108,7 +132,8 @@ final class AppViewModel: ObservableObject {
         var detail: String
         var createdAt: Date
         var dueDate: Date?
-        var listName: String?
+        var folderID: UUID?
+        var folderName: String?
         var sourceApp: String?
         var isPinned: Bool
         var isCompleted: Bool
@@ -125,7 +150,8 @@ final class AppViewModel: ObservableObject {
             detail: String = "",
             createdAt: Date = .now,
             dueDate: Date? = nil,
-            listName: String? = nil,
+            folderID: UUID? = nil,
+            folderName: String? = nil,
             sourceApp: String? = nil,
             isPinned: Bool = false,
             isCompleted: Bool = false,
@@ -141,7 +167,8 @@ final class AppViewModel: ObservableObject {
             self.detail = detail
             self.createdAt = createdAt
             self.dueDate = dueDate
-            self.listName = listName
+            self.folderID = folderID
+            self.folderName = folderName
             self.sourceApp = sourceApp
             self.isPinned = isPinned
             self.isCompleted = isCompleted
@@ -214,7 +241,7 @@ final class AppViewModel: ObservableObject {
 
     struct Hooks {
         var onDismiss: () -> Void = {}
-        var onCaptureText: (String) -> Void = { _ in }
+        var onCaptureText: (String, UUID?) -> Void = { _, _ in }
         var onUndoCapture: (UUID?) -> Void = { _ in }
         var onConfirmationPauseChanged: (Bool, TimeInterval) -> Void = { _, _ in }
         var onToggleComplete: (UUID) -> Void = { _ in }
@@ -222,8 +249,10 @@ final class AppViewModel: ObservableObject {
         var onReorder: ([ItemOrderAssignment]) -> Void = { _ in }
         var onArchive: (UUID) -> Void = { _ in }
         var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
-        var onMove: (UUID, String) -> Void = { _, _ in }
-        var onCreateList: (String) -> Void = { _ in }
+        var onMove: (UUID, UUID?) -> Void = { _, _ in }
+        var onCreateFolder: (String) -> Void = { _ in }
+        var onRenameFolder: (UUID, String) -> Void = { _, _ in }
+        var onDeleteFolder: (UUID) -> Void = { _ in }
         var onTrash: (UUID) -> Void = { _ in }
         var onRestore: (UUID) -> Void = { _ in }
         var onDeletePermanently: (UUID) -> Void = { _ in }
@@ -233,6 +262,7 @@ final class AppViewModel: ObservableObject {
         var onRequestScreenRecording: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
         var onSetOwnership: (NotchOwnership) -> Void = { _ in }
+        var onSetTimeFormat: (TimeFormat) -> Void = { _ in }
         var onOpenShortcutRecorder: (Shortcut.Action) -> Void = { _ in }
         var onImport: () -> Void = {}
         var onExport: () -> Void = {}
@@ -243,18 +273,22 @@ final class AppViewModel: ObservableObject {
     @Published var items: [LedgerItem]
     @Published var selectedItemID: UUID?
     @Published private(set) var keyboardFocus: KeyboardFocus = .composer
+    @Published var browseLocation: BrowseLocation = .root
     @Published var filter: InboxFilter = .all
     @Published var composerText = ""
     @Published var confirmation: Confirmation?
     @Published var errorMessage: String?
-    @Published var lists: [String]
-    @Published var newListName = ""
+    @Published var folders: [FolderSummary]
+    @Published var newFolderName = ""
     @Published var ownership: NotchOwnership {
         didSet { hooks.onSetOwnership(ownership) }
     }
     @Published var autoHideExternalPill: Bool
     @Published var launchAtLogin: Bool {
         didSet { hooks.onSetLaunchAtLogin(launchAtLogin) }
+    }
+    @Published var timeFormat: TimeFormat {
+        didSet { hooks.onSetTimeFormat(timeFormat) }
     }
     @Published var accessibilityGranted: Bool
     @Published var screenRecordingGranted: Bool
@@ -268,10 +302,11 @@ final class AppViewModel: ObservableObject {
     init(
         surfaceState: SurfaceState = .collapsed,
         items: [LedgerItem] = [],
-        lists: [String] = ["Work", "Personal", "Ideas"],
+        folders: [FolderSummary] = [],
         ownership: NotchOwnership = .automatic,
         autoHideExternalPill: Bool = false,
         launchAtLogin: Bool = false,
+        timeFormat: TimeFormat = .twelveHour,
         accessibilityGranted: Bool = false,
         screenRecordingGranted: Bool = false,
         shortcuts: [Shortcut] = [
@@ -284,10 +319,11 @@ final class AppViewModel: ObservableObject {
     ) {
         self.surfaceState = surfaceState
         self.items = items
-        self.lists = lists
+        self.folders = folders
         self.ownership = ownership
         self.autoHideExternalPill = autoHideExternalPill
         self.launchAtLogin = launchAtLogin
+        self.timeFormat = timeFormat
         self.accessibilityGranted = accessibilityGranted
         self.screenRecordingGranted = screenRecordingGranted
         self.shortcuts = shortcuts
@@ -299,6 +335,7 @@ final class AppViewModel: ObservableObject {
         let query = normalizedComposerText
         return items
             .filter(matchesFilter)
+            .filter(matchesBrowseLocation)
             .filter { item in
                 query.isEmpty || item.title.localizedCaseInsensitiveContains(query)
                     || item.detail.localizedCaseInsensitiveContains(query)
@@ -313,9 +350,40 @@ final class AppViewModel: ObservableObject {
     var pinnedItems: [LedgerItem] { visibleItems.filter(\.isPinned) }
     var unpinnedItems: [LedgerItem] { visibleItems.filter { !$0.isPinned } }
 
+    var visibleFolders: [FolderSummary] {
+        guard browseLocation == .root else { return [] }
+        let query = normalizedComposerText
+        return folders
+            .filter { folder in
+                filter == .all || matchingItemCount(in: folder.id) > 0
+            }
+            .filter { folder in
+                query.isEmpty || folder.name.localizedCaseInsensitiveContains(query)
+            }
+            .sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+    }
+
+    var currentFolder: FolderSummary? {
+        guard case let .folder(id) = browseLocation else { return nil }
+        return folders.first { $0.id == id }
+    }
+
+    var navigationTitle: String { currentFolder?.name ?? "Inbox" }
+    var captureDestinationID: UUID? { currentFolder?.id }
+    var captureDestinationName: String { currentFolder?.name ?? "Inbox" }
+    var isAtRoot: Bool { browseLocation == .root }
+    var isShowingGlobalSearchResults: Bool { isAtRoot && composerHasQuery }
+    var canReorderVisibleItems: Bool { !isShowingGlobalSearchResults }
+    var hasVisibleContent: Bool { !visibleFolders.isEmpty || !visibleItems.isEmpty }
+    var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
+
     var composerHasQuery: Bool { !normalizedComposerText.isEmpty }
-    var composerHasMatches: Bool { composerHasQuery && !visibleItems.isEmpty }
-    var canAddComposerText: Bool { composerHasQuery && visibleItems.isEmpty }
+    var searchMatchCount: Int { visibleFolders.count + visibleItems.count }
+    var composerHasMatches: Bool { composerHasQuery && searchMatchCount > 0 }
+    var canAddComposerText: Bool { composerHasQuery && searchMatchCount == 0 }
 
     func openExpanded() {
         errorMessage = nil
@@ -337,15 +405,37 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard canAddComposerText else {
-            if let item = visibleItems.first {
+            if let folder = visibleFolders.first {
+                openFolder(folder)
+            } else if let item = visibleItems.first {
                 select(item)
             }
             return
         }
         errorMessage = nil
         filter = .all
-        hooks.onCaptureText(text)
+        hooks.onCaptureText(text, captureDestinationID)
         composerText = ""
+    }
+
+    func openFolder(_ folder: FolderSummary) {
+        clearSelection()
+        composerText = ""
+        errorMessage = nil
+        browseLocation = .folder(folder.id)
+    }
+
+    func openRoot() {
+        clearSelection()
+        composerText = ""
+        errorMessage = nil
+        browseLocation = .root
+    }
+
+    func reconcileBrowsingLocation() {
+        guard case let .folder(id) = browseLocation,
+              !folders.contains(where: { $0.id == id }) else { return }
+        openRoot()
     }
 
     func focusComposer() {
@@ -439,7 +529,7 @@ final class AppViewModel: ObservableObject {
     func togglePin(_ item: LedgerItem) {
         let destinationPinned = !item.isPinned
         let topOrder = (items
-            .filter { $0.isPinned == destinationPinned }
+            .filter { $0.isPinned == destinationPinned && $0.folderID == item.folderID }
             .compactMap(\.sortOrder)
             .min() ?? 0) - 1
         mutateItem(item.id) {
@@ -457,11 +547,18 @@ final class AppViewModel: ObservableObject {
         destinationPinned: Bool
     ) -> Bool {
         guard let dragged = items.first(where: { $0.id == itemID }) else { return false }
+        guard canReorderVisibleItems else { return false }
         let sourcePinned = dragged.isPinned
         guard targetID != itemID else { return false }
+        if let targetID,
+           items.first(where: { $0.id == targetID })?.folderID != dragged.folderID {
+            return false
+        }
 
         var destination = items
-            .filter { $0.isPinned == destinationPinned && $0.id != itemID }
+            .filter {
+                $0.folderID == dragged.folderID && $0.isPinned == destinationPinned && $0.id != itemID
+            }
             .sorted(by: itemComesBefore)
 
         let insertionIndex: Int
@@ -484,7 +581,9 @@ final class AppViewModel: ObservableObject {
             let ordered = pinnedState == destinationPinned
                 ? destination
                 : items
-                    .filter { $0.isPinned == pinnedState && $0.id != itemID }
+                    .filter {
+                        $0.folderID == dragged.folderID && $0.isPinned == pinnedState && $0.id != itemID
+                    }
                     .sorted(by: itemComesBefore)
             assignments.append(contentsOf: ordered.enumerated().map { index, item in
                 ItemOrderAssignment(id: item.id, isPinned: pinnedState, sortOrder: index)
@@ -556,23 +655,98 @@ final class AppViewModel: ObservableObject {
         shortcuts[index].displayValue = displayValue
     }
 
-    func move(_ item: LedgerItem, to list: String) {
-        mutateItem(item.id) { $0.listName = list }
-        hooks.onMove(item.id, list)
+    func move(_ item: LedgerItem, to folderID: UUID?) {
+        guard item.folderID != folderID else { return }
+        let destinationName = folderID.flatMap { id in folders.first(where: { $0.id == id })?.name }
+        let topOrder = (items
+            .filter { $0.folderID == folderID && $0.isPinned == item.isPinned }
+            .compactMap(\.sortOrder)
+            .min() ?? 0) - 1
+        mutateItem(item.id) {
+            $0.folderID = folderID
+            $0.folderName = destinationName
+            $0.sortOrder = topOrder
+        }
+        clearSelection()
+        hooks.onMove(item.id, folderID)
     }
 
-    func createList() {
-        let name = newListName.trimmingCharacters(in: .whitespacesAndNewlines)
+    @discardableResult
+    func createFolder() -> Bool {
+        createFolder(named: newFolderName)
+    }
+
+    @discardableResult
+    func createFolder(named proposedName: String) -> Bool {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
-            errorMessage = "Give the list a name."
-            return
+            errorMessage = "Give the folder a name."
+            return false
         }
-        guard !lists.contains(where: { $0.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
-            errorMessage = "That list already exists."
-            return
+        guard !folders.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
+            errorMessage = "That folder already exists."
+            return false
         }
-        hooks.onCreateList(name)
-        newListName = ""
+        errorMessage = nil
+        hooks.onCreateFolder(name)
+        newFolderName = ""
+        return true
+    }
+
+    @discardableResult
+    func renameFolder(_ folder: FolderSummary, to proposedName: String) -> Bool {
+        let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else {
+            errorMessage = "Give the folder a name."
+            return false
+        }
+        guard !folders.contains(where: {
+            $0.id != folder.id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
+            errorMessage = "That folder already exists."
+            return false
+        }
+        if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+            folders[index].name = name
+        }
+        for index in items.indices where items[index].folderID == folder.id {
+            items[index].folderName = name
+        }
+        errorMessage = nil
+        hooks.onRenameFolder(folder.id, name)
+        return true
+    }
+
+    func deleteFolder(_ folder: FolderSummary) {
+        for isPinned in [true, false] {
+            let contained = items
+                .filter { $0.folderID == folder.id && $0.isPinned == isPinned }
+                .sorted(by: itemComesBefore)
+            let inboxTop = (items
+                .filter { $0.folderID == nil && $0.isPinned == isPinned }
+                .compactMap(\.sortOrder)
+                .min() ?? 0) - 1
+            for (offset, containedItem) in contained.enumerated() {
+                mutateItem(containedItem.id) {
+                    $0.folderID = nil
+                    $0.folderName = nil
+                    $0.sortOrder = inboxTop - contained.count + offset
+                }
+            }
+        }
+        folders.removeAll { $0.id == folder.id }
+        if browseLocation == .folder(folder.id) {
+            openRoot()
+        }
+        hooks.onDeleteFolder(folder.id)
+    }
+
+    func totalItemCount(in folderID: UUID) -> Int {
+        items.count { $0.folderID == folderID }
+    }
+
+    func matchingItemCount(in folderID: UUID) -> Int {
+        items.count { $0.folderID == folderID && matchesFilter($0) }
     }
 
     func trash(_ item: LedgerItem) {
@@ -618,6 +792,15 @@ final class AppViewModel: ObservableObject {
 
     private var normalizedComposerText: String {
         composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func matchesBrowseLocation(_ item: LedgerItem) -> Bool {
+        switch browseLocation {
+        case .root:
+            return composerHasQuery || item.folderID == nil
+        case let .folder(id):
+            return item.folderID == id
+        }
     }
 
     private func matchesFilter(_ item: LedgerItem) -> Bool {
@@ -678,6 +861,7 @@ extension AppViewModel {
         let today = Date.now
         let thumbnailURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
             .appendingPathComponent("Design/reference-thumbnail.png")
+        let projectsFolder = FolderSummary(name: "Projects", sortOrder: 0)
         let pinned = LedgerItem(
             title: "Review launch notes",
             detail: "Selected from Safari",
@@ -694,6 +878,13 @@ extension AppViewModel {
             surfaceState: .expanded,
             items: [
                 pinned,
+                LedgerItem(
+                    title: "Projects capture flow",
+                    detail: "Folder organization pass",
+                    folderID: projectsFolder.id,
+                    folderName: projectsFolder.name,
+                    sortOrder: 0
+                ),
                 LedgerItem(
                     title: "IMG_2147.jpg",
                     createdAt: calendar.date(bySettingHour: 9, minute: 36, second: 0, of: today) ?? today,
@@ -719,9 +910,15 @@ extension AppViewModel {
                 ),
                 selectedTask
             ],
+            folders: [projectsFolder],
             accessibilityGranted: true
         )
         model.selectedItemID = selectedTask.id
+        if CommandLine.arguments.contains("--preview-folder-search") {
+            model.composerText = "Projects"
+        } else if CommandLine.arguments.contains("--preview-folder") {
+            model.openFolder(projectsFolder)
+        }
         return model
     }
 }
