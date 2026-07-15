@@ -622,6 +622,90 @@ final class AppViewModelTests: XCTestCase {
 
 @MainActor
 final class LedgerReorderSessionTests: XCTestCase {
+    func testDragResolverUsesRowMidpointsForReactivePlacement() {
+        let item = AppViewModel.LedgerItem(title: "Target", sortOrder: 0)
+        let regions: [LedgerDragRegion: CGRect] = [
+            .feed: CGRect(x: 0, y: 0, width: 420, height: 500),
+            .row(item.id): CGRect(x: 0, y: 100, width: 420, height: 60),
+        ]
+
+        let before = LedgerDragResolver.destination(
+            at: CGPoint(x: 200, y: 115),
+            regions: regions,
+            items: [item],
+            draggedItemID: UUID(),
+            currentTarget: nil
+        )
+        let after = LedgerDragResolver.destination(
+            at: CGPoint(x: 200, y: 145),
+            regions: regions,
+            items: [item],
+            draggedItemID: UUID(),
+            currentTarget: nil
+        )
+
+        XCTAssertEqual(before, .reorder(LedgerReorderTarget(
+            targetID: item.id,
+            placement: .before,
+            destinationPinned: false
+        )))
+        XCTAssertEqual(after, .reorder(LedgerReorderTarget(
+            targetID: item.id,
+            placement: .after,
+            destinationPinned: false
+        )))
+    }
+
+    func testDragResolverPrioritizesFolderAndRetainsTargetOverPlaceholder() {
+        let draggedID = UUID()
+        let folderID = UUID()
+        let currentTarget = LedgerReorderTarget(
+            targetID: UUID(),
+            placement: .after,
+            destinationPinned: false
+        )
+        let regions: [LedgerDragRegion: CGRect] = [
+            .feed: CGRect(x: 0, y: 0, width: 420, height: 500),
+            .folder(folderID): CGRect(x: 0, y: 0, width: 420, height: 50),
+            .row(draggedID): CGRect(x: 0, y: 100, width: 420, height: 60),
+        ]
+
+        XCTAssertEqual(
+            LedgerDragResolver.destination(
+                at: CGPoint(x: 200, y: 25),
+                regions: regions,
+                items: [],
+                draggedItemID: draggedID,
+                currentTarget: currentTarget
+            ),
+            .folder(folderID)
+        )
+        XCTAssertEqual(
+            LedgerDragResolver.destination(
+                at: CGPoint(x: 200, y: 130),
+                regions: regions,
+                items: [],
+                draggedItemID: draggedID,
+                currentTarget: currentTarget
+            ),
+            .reorder(currentTarget)
+        )
+    }
+
+    func testDragResolverCancelsOutsideTheFeed() {
+        XCTAssertNil(LedgerDragResolver.destination(
+            at: CGPoint(x: 200, y: 520),
+            regions: [.feed: CGRect(x: 0, y: 0, width: 420, height: 500)],
+            items: [],
+            draggedItemID: UUID(),
+            currentTarget: LedgerReorderTarget(
+                targetID: UUID(),
+                placement: .before,
+                destinationPinned: false
+            )
+        ))
+    }
+
     func testPreviewReordersRowsWithoutMutatingOrPersistingTheViewModel() {
         let first = AppViewModel.LedgerItem(title: "First", sortOrder: 0)
         let second = AppViewModel.LedgerItem(title: "Second", sortOrder: 1)
