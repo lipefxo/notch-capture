@@ -3,11 +3,153 @@ import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
+private extension UTType {
+    static let notchCaptureLedgerItem = UTType(exportedAs: "com.notchcapture.ledger-item")
+}
+
+private struct LedgerReorderTarget: Equatable {
+    let targetID: UUID?
+    let placement: AppViewModel.ReorderPlacement
+    let destinationPinned: Bool
+}
+
+private struct LedgerInsertionIndicator: View {
+    let placement: AppViewModel.ReorderPlacement?
+
+    var body: some View {
+        GeometryReader { proxy in
+            if let placement {
+                Rectangle()
+                    .fill(NotchTheme.mint)
+                    .frame(height: 2)
+                    .shadow(color: NotchTheme.mint.opacity(0.45), radius: 3)
+                    .offset(y: placement == .after ? max(0, proxy.size.height - 2) : 0)
+                    .transition(.opacity)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct LedgerDragPreview: View {
+    let item: AppViewModel.LedgerItem
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: item.kind == .task ? "checkmark.circle" : "note.text")
+                .font(.system(size: 14, weight: .light))
+                .foregroundStyle(NotchTheme.secondaryText)
+            Text(item.title)
+                .font(.system(size: 12.5, weight: .medium))
+                .foregroundStyle(NotchTheme.primaryText)
+                .lineLimit(1)
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 14)
+        .frame(width: 330, height: 48)
+        .background(NotchTheme.raisedGraphite.opacity(0.98))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: .black.opacity(0.38), radius: 12, y: 7)
+    }
+}
+
+private struct LedgerRowDropDelegate: DropDelegate {
+    let item: AppViewModel.LedgerItem
+    @Binding var draggedItemID: UUID?
+    @Binding var reorderTarget: LedgerReorderTarget?
+    let onCommit: (LedgerReorderTarget) -> Void
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedItemID != nil && info.hasItemsConforming(to: [UTType.notchCaptureLedgerItem.identifier])
+    }
+
+    func dropEntered(info: DropInfo) {
+        updateTarget(for: info)
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        updateTarget(for: info)
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if reorderTarget?.targetID == item.id {
+            reorderTarget = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        updateTarget(for: info)
+        guard let reorderTarget, reorderTarget.targetID == item.id else { return false }
+        onCommit(reorderTarget)
+        return true
+    }
+
+    private func updateTarget(for info: DropInfo) {
+        let height: CGFloat
+        if item.attachments.count == 1 && item.detail.isEmpty && item.kind == .note {
+            height = item.attachments.first?.kind == .image || item.attachments.first?.kind == .screenshot ? 64 : 56
+        } else {
+            height = item.detail.isEmpty ? 56 : 66
+        }
+        reorderTarget = LedgerReorderTarget(
+            targetID: item.id,
+            placement: info.location.y < height / 2 ? .before : .after,
+            destinationPinned: item.isPinned
+        )
+    }
+}
+
+private struct LedgerSectionDropDelegate: DropDelegate {
+    let destinationPinned: Bool
+    @Binding var draggedItemID: UUID?
+    @Binding var reorderTarget: LedgerReorderTarget?
+    let onCommit: (LedgerReorderTarget) -> Void
+
+    private var target: LedgerReorderTarget {
+        LedgerReorderTarget(targetID: nil, placement: .before, destinationPinned: destinationPinned)
+    }
+
+    func validateDrop(info: DropInfo) -> Bool {
+        draggedItemID != nil && info.hasItemsConforming(to: [UTType.notchCaptureLedgerItem.identifier])
+    }
+
+    func dropEntered(info: DropInfo) {
+        reorderTarget = target
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        reorderTarget = target
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        if reorderTarget == target {
+            reorderTarget = nil
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        reorderTarget = target
+        onCommit(target)
+        return true
+    }
+}
+
 struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @FocusState private var focusedField: Field?
+    @Namespace private var filterSelection
+    @State private var draggedItemID: UUID?
+    @State private var reorderTarget: LedgerReorderTarget?
 
     private let floatingComposerMargin: CGFloat = 18
     private let floatingComposerHeight: CGFloat = 60
@@ -34,13 +176,31 @@ struct ExpandedInboxView: View {
         .overlay {
             if viewModel.surfaceState == .drop {
                 DropTargetOverlay()
-                    .transition(.opacity)
+                    .transition(dropTransition)
             }
         }
         .onDrop(of: acceptedDropTypes, isTargeted: dropTargetBinding) { providers in
             viewModel.acceptDrop(providers)
         }
         .onExitCommand { viewModel.dismiss() }
+        .onAppear { focusComposer() }
+        .onChange(of: viewModel.surfaceState) { _, state in
+            if state == .expanded {
+                focusComposer()
+            } else {
+                resetReorderState()
+            }
+        }
+        .onChange(of: focusedField) { _, field in
+            if field == .unifiedInput {
+                viewModel.focusComposer()
+            }
+        }
+        .onChange(of: viewModel.keyboardFocus) { _, focus in
+            if focus == .selectedRow {
+                focusedField = nil
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture inbox")
     }
@@ -174,7 +334,7 @@ struct ExpandedInboxView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("Add this thought to Inbox")
@@ -229,11 +389,12 @@ struct ExpandedInboxView: View {
 
             ZStack {
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(
-                        [.all, .tasks].contains(viewModel.filter)
-                            ? NotchTheme.control
-                            : NotchTheme.selectedControl
-                    )
+                    .fill(NotchTheme.control)
+                if ![.all, .tasks].contains(viewModel.filter) {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .fill(NotchTheme.selectedControl)
+                        .matchedGeometryEffect(id: "selected-filter", in: filterSelection)
+                }
                 RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
 
@@ -278,24 +439,57 @@ struct ExpandedInboxView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(NotchTheme.hairline).frame(height: 1)
         }
+        .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.filter)
     }
 
     private func filterButton(_ filter: AppViewModel.InboxFilter, width: CGFloat) -> some View {
-        Button(filter.rawValue) {
+        Button {
             viewModel.filter = filter
+        } label: {
+            Text(filter.rawValue)
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(viewModel.filter == filter ? NotchTheme.primaryText : NotchTheme.secondaryText)
+                .frame(width: width, height: 34)
+                .background {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .fill(NotchTheme.control)
+                        if viewModel.filter == filter {
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(NotchTheme.selectedControl)
+                                .matchedGeometryEffect(id: "selected-filter", in: filterSelection)
+                        }
+                    }
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9, style: .continuous)
+                        .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
-        .buttonStyle(.plain)
-        .font(.system(size: 12, weight: .regular))
-        .foregroundStyle(viewModel.filter == filter ? NotchTheme.primaryText : NotchTheme.secondaryText)
-        .frame(width: width, height: 34)
-        .background(viewModel.filter == filter ? NotchTheme.selectedControl : NotchTheme.control)
-        .overlay {
-            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.98, pressedOpacity: 0.92))
         .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
         .accessibilityAddTraits(viewModel.filter == filter ? .isSelected : [])
+    }
+
+    private var dropTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .opacity.animation(NotchMotion.reducedMotion)
+        }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .scale(scale: 0.985))
+                .animation(NotchMotion.dropEnter),
+            removal: .opacity.animation(NotchMotion.dropExit)
+        )
+    }
+
+    private func focusComposer() {
+        viewModel.focusComposer()
+        Task { @MainActor in
+            focusedField = .unifiedInput
+        }
     }
 
     private var ledgerBody: some View {
@@ -334,6 +528,11 @@ struct ExpandedInboxView: View {
                     .accessibilityHidden(true)
             }
             .background(HiddenScrollIndicatorConfigurator())
+            .overlay(alignment: .top) {
+                if draggedItemID != nil, reorderTarget != nil, viewModel.pinnedItems.isEmpty {
+                    emptyGroupDropTarget(title: "Drop to pin", isPinned: true)
+                }
+            }
         }
         .scrollIndicators(.hidden)
     }
@@ -341,25 +540,157 @@ struct ExpandedInboxView: View {
     @ViewBuilder
     private var feedContent: some View {
         if !viewModel.pinnedItems.isEmpty {
-            LedgerSectionHeader(title: "Pinned", count: viewModel.pinnedItems.count)
+            reorderSectionHeader(title: "Pinned", count: viewModel.pinnedItems.count, isPinned: true)
             ForEach(viewModel.pinnedItems) { item in
-                LedgerRowView(item: item, viewModel: viewModel)
+                reorderableRow(item)
             }
         }
 
-        if !viewModel.todayItems.isEmpty {
-            LedgerSectionHeader(title: "Today", count: viewModel.todayItems.count)
-            ForEach(viewModel.todayItems) { item in
-                LedgerRowView(item: item, viewModel: viewModel)
-            }
+        if !viewModel.pinnedItems.isEmpty, !viewModel.unpinnedItems.isEmpty {
+            reorderSectionHeader(title: "Unpinned", count: viewModel.unpinnedItems.count, isPinned: false)
         }
 
-        if !viewModel.earlierItems.isEmpty {
-            LedgerSectionHeader(title: "Earlier", count: viewModel.earlierItems.count)
-            ForEach(viewModel.earlierItems) { item in
-                LedgerRowView(item: item, viewModel: viewModel)
-            }
+        ForEach(viewModel.unpinnedItems) { item in
+            reorderableRow(item)
         }
+
+        if draggedItemID != nil, reorderTarget != nil, viewModel.unpinnedItems.isEmpty {
+            emptyGroupDropTarget(title: "Drop to unpin", isPinned: false)
+        }
+    }
+
+    private func reorderableRow(_ item: AppViewModel.LedgerItem) -> some View {
+        let target = reorderTarget?.targetID == item.id ? reorderTarget : nil
+        return LedgerRowView(item: item, viewModel: viewModel)
+            .opacity(draggedItemID == item.id && reorderTarget != nil ? 0.58 : 1)
+            .overlay {
+                LedgerInsertionIndicator(placement: target?.placement)
+            }
+            .onDrag {
+                draggedItemID = item.id
+                reorderTarget = nil
+                return itemProvider(for: item.id)
+            } preview: {
+                LedgerDragPreview(item: item)
+            }
+            .onDrop(
+                of: [UTType.notchCaptureLedgerItem.identifier],
+                delegate: LedgerRowDropDelegate(
+                    item: item,
+                    draggedItemID: $draggedItemID,
+                    reorderTarget: $reorderTarget,
+                    onCommit: commitReorder
+                )
+            )
+            .accessibilityActions {
+                if viewModel.canMoveUp(item) {
+                    Button("Move up") {
+                        commitAccessibleMove { viewModel.moveUp(item) }
+                    }
+                }
+                if viewModel.canMoveDown(item) {
+                    Button("Move down") {
+                        commitAccessibleMove { viewModel.moveDown(item) }
+                    }
+                }
+            }
+    }
+
+    private func reorderSectionHeader(title: String, count: Int, isPinned: Bool) -> some View {
+        LedgerSectionHeader(title: title, count: count)
+            .overlay {
+                LedgerInsertionIndicator(
+                    placement: reorderTarget == LedgerReorderTarget(
+                        targetID: nil,
+                        placement: .before,
+                        destinationPinned: isPinned
+                    ) ? .before : nil
+                )
+            }
+            .onDrop(
+                of: [UTType.notchCaptureLedgerItem.identifier],
+                delegate: LedgerSectionDropDelegate(
+                    destinationPinned: isPinned,
+                    draggedItemID: $draggedItemID,
+                    reorderTarget: $reorderTarget,
+                    onCommit: commitReorder
+                )
+            )
+    }
+
+    private func emptyGroupDropTarget(title: String, isPinned: Bool) -> some View {
+        Text(title)
+            .font(.system(size: 10.5, weight: .medium))
+            .foregroundStyle(NotchTheme.mint)
+            .frame(maxWidth: .infinity)
+            .frame(height: 30)
+            .background(NotchTheme.raisedGraphite.opacity(0.96))
+            .overlay(alignment: .bottom) {
+                LedgerInsertionIndicator(
+                    placement: reorderTarget == LedgerReorderTarget(
+                        targetID: nil,
+                        placement: .before,
+                        destinationPinned: isPinned
+                    ) ? .before : nil
+                )
+            }
+            .onDrop(
+                of: [UTType.notchCaptureLedgerItem.identifier],
+                delegate: LedgerSectionDropDelegate(
+                    destinationPinned: isPinned,
+                    draggedItemID: $draggedItemID,
+                    reorderTarget: $reorderTarget,
+                    onCommit: commitReorder
+                )
+            )
+            .accessibilityLabel(title)
+    }
+
+    private func itemProvider(for id: UUID) -> NSItemProvider {
+        let provider = NSItemProvider()
+        provider.suggestedName = id.uuidString
+        provider.registerDataRepresentation(
+            forTypeIdentifier: UTType.notchCaptureLedgerItem.identifier,
+            visibility: .ownProcess
+        ) { completion in
+            completion(Data(id.uuidString.utf8), nil)
+            return nil
+        }
+        return provider
+    }
+
+    private func commitReorder(_ target: LedgerReorderTarget) {
+        guard let draggedItemID else {
+            resetReorderState()
+            return
+        }
+        let update = {
+            _ = viewModel.reorder(
+                itemID: draggedItemID,
+                relativeTo: target.targetID,
+                placement: target.placement,
+                destinationPinned: target.destinationPinned
+            )
+        }
+        if reduceMotion {
+            update()
+        } else {
+            withAnimation(NotchMotion.reorder, update)
+        }
+        resetReorderState()
+    }
+
+    private func commitAccessibleMove(_ update: () -> Void) {
+        if reduceMotion {
+            update()
+        } else {
+            withAnimation(NotchMotion.reorder, update)
+        }
+    }
+
+    private func resetReorderState() {
+        draggedItemID = nil
+        reorderTarget = nil
     }
 
     private var dropTargetBinding: Binding<Bool> {
@@ -426,6 +757,7 @@ private struct HiddenScrollIndicatorConfigurator: NSViewRepresentable {
 private struct LedgerRowView: View {
     let item: AppViewModel.LedgerItem
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     private var isSelected: Bool { viewModel.selectedItemID == item.id }
@@ -457,10 +789,8 @@ private struct LedgerRowView: View {
 
             selectionContent
 
-            if showsActions {
-                inlineActions
-                    .layoutPriority(1)
-            }
+            trailingContent
+                .layoutPriority(1)
         }
         .padding(.horizontal, 20)
         .frame(minHeight: item.detail.isEmpty ? 56 : 66)
@@ -494,18 +824,30 @@ private struct LedgerRowView: View {
             }
 
             Spacer(minLength: 8)
-
-            if !showsActions {
-                Text(CaptureTimestampFormatter.string(from: item.createdAt))
-                    .font(.system(size: 9.5, weight: .regular))
-                    .foregroundStyle(NotchTheme.tertiaryText)
-            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
-            viewModel.selectedItemID = isSelected ? nil : item.id
+            viewModel.select(item)
         }
+    }
+
+    private var trailingContent: some View {
+        ZStack(alignment: .trailing) {
+            Text(CaptureTimestampFormatter.string(from: item.createdAt))
+                .font(.system(size: 9.5, weight: .regular))
+                .foregroundStyle(NotchTheme.tertiaryText)
+                .lineLimit(1)
+                .opacity(showsActions ? 0 : 1)
+                .accessibilityHidden(showsActions)
+
+            inlineActions
+                .opacity(showsActions ? 1 : 0)
+                .allowsHitTesting(showsActions)
+                .accessibilityHidden(!showsActions)
+        }
+        .frame(width: 112, height: 38, alignment: .trailing)
+        .animation(reduceMotion ? nil : NotchMotion.hover, value: showsActions)
     }
 
     private var prefixIcon: some View {
@@ -539,7 +881,7 @@ private struct LedgerRowView: View {
                     .frame(width: 20, height: 28)
                     .notchHitTarget(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.94, pressedOpacity: 0.82))
             .notchHitTarget(Rectangle())
             .help(item.isCompleted ? "Mark incomplete" : "Complete")
             .accessibilityLabel(item.isCompleted ? "Mark incomplete" : "Complete item")
@@ -715,7 +1057,7 @@ private struct AttachmentLedgerRow: View {
             }
             .notchHitTarget(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.88))
         .notchHitTarget(Rectangle())
         .disabled(attachment.previewURL == nil)
         .accessibilityElement(children: .ignore)
@@ -833,7 +1175,7 @@ private struct QuietButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .notchHitTarget(RoundedRectangle(cornerRadius: 8, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
     }
 }
 

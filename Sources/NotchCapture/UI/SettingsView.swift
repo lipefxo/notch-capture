@@ -108,7 +108,7 @@ struct SettingsView: View {
                         .padding(.vertical, 8)
                         .notchHitTarget(Rectangle())
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.82))
                     .notchHitTarget(Rectangle())
                     .accessibilityLabel("\(shortcut.title), \(shortcut.displayValue)")
                     .accessibilityHint("Change this shortcut")
@@ -322,6 +322,8 @@ private struct PermissionRow: View {
 }
 
 private struct SettingsButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 10, weight: .semibold))
@@ -331,5 +333,7 @@ private struct SettingsButtonStyle: ButtonStyle {
             .background(Color.white.opacity(configuration.isPressed ? 0.09 : 0.05))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
     }
 }

@@ -88,6 +88,146 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(link.displayTitle, "example.com")
     }
 
+    func testPlainWebAddressesBecomeURLAttachments() throws {
+        XCTAssertEqual(
+            CaptureURLParser.url(from: "  www.youtube.com/watch?v=123  ")?.absoluteString,
+            "https://www.youtube.com/watch?v=123"
+        )
+        XCTAssertEqual(
+            CaptureURLParser.url(from: "https://example.com/read")?.absoluteString,
+            "https://example.com/read"
+        )
+        XCTAssertNil(CaptureURLParser.url(from: "Watch www.youtube.com"))
+        XCTAssertNil(CaptureURLParser.url(from: "ftp://example.com"))
+
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let url = try XCTUnwrap(CaptureURLParser.url(from: "www.youtube.com"))
+        let item = try repository.createItem(from: .url(url), origin: .manual)
+
+        XCTAssertTrue(item.text.isEmpty)
+        XCTAssertEqual(item.attachments.map(\.kind), [.url])
+        XCTAssertEqual(item.attachments.first?.url?.absoluteString, "https://www.youtube.com")
+        XCTAssertEqual(item.displayTitle, "www.youtube.com")
+    }
+
+    func testNewItemsEnterAtTopAndAssignmentsPersistAtomically() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let first = try repository.createItem(text: "First", origin: .manual)
+        let second = try repository.createItem(text: "Second", origin: .manual)
+
+        XCTAssertEqual(try repository.fetch(scope: .inbox).map(\.id), [second.id, first.id])
+
+        try repository.applyOrderAssignments([
+            ItemOrderAssignment(id: first.id, isPinned: true, sortOrder: 0),
+            ItemOrderAssignment(id: second.id, isPinned: false, sortOrder: 0),
+        ])
+
+        let fetched = try repository.fetch(scope: .inbox)
+        XCTAssertEqual(fetched.map(\.id), [first.id, second.id])
+        XCTAssertTrue(fetched[0].isPinned)
+        XCTAssertEqual(fetched[0].sortOrder, 0)
+        XCTAssertEqual(fetched[1].sortOrder, 0)
+    }
+
+    func testMissingReorderItemDoesNotPartiallyApplyAssignments() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let item = try repository.createItem(text: "Existing", origin: .manual)
+        let originalRank = item.sortOrder
+
+        XCTAssertThrowsError(
+            try repository.applyOrderAssignments([
+                ItemOrderAssignment(id: item.id, isPinned: true, sortOrder: 9),
+                ItemOrderAssignment(id: UUID(), isPinned: false, sortOrder: 0),
+            ])
+        )
+
+        XCTAssertFalse(item.isPinned)
+        XCTAssertEqual(item.sortOrder, originalRank)
+    }
+
+    func testLegacySortOrderBackfillIsDeterministicAndIdempotent() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let older = CaptureItem(
+            text: "Older",
+            origin: .manual,
+            createdAt: Date(timeIntervalSinceReferenceDate: 100),
+            updatedAt: Date(timeIntervalSinceReferenceDate: 100)
+        )
+        let newer = CaptureItem(
+            text: "Newer",
+            origin: .manual,
+            createdAt: Date(timeIntervalSinceReferenceDate: 200),
+            updatedAt: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        container.mainContext.insert(older)
+        container.mainContext.insert(newer)
+        try container.mainContext.save()
+
+        XCTAssertTrue(try repository.backfillMissingSortOrders())
+        XCTAssertEqual(newer.sortOrder, 0)
+        XCTAssertEqual(older.sortOrder, 1)
+        XCTAssertFalse(try repository.backfillMissingSortOrders())
+        XCTAssertEqual(try repository.fetch(scope: .inbox).map(\.id), [newer.id, older.id])
+    }
+
+    func testArchiveAndRestorePreserveManualRank() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let item = try repository.createItem(text: "Keep my place", origin: .manual)
+        let rank = item.sortOrder
+
+        try repository.archive(item)
+        try repository.restore(item)
+
+        XCTAssertEqual(item.sortOrder, rank)
+    }
+
+    func testLegacyPackageWithoutSortOrderImportsAndBackfills() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let sourceContainer = try makeContainer()
+        let sourceStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("source-store", isDirectory: true))
+        let sourceRepository = ItemRepository(modelContext: sourceContainer.mainContext)
+        let older = try sourceRepository.createItem(
+            text: "Older",
+            origin: .manual,
+            now: Date(timeIntervalSinceReferenceDate: 100)
+        )
+        let newer = try sourceRepository.createItem(
+            text: "Newer",
+            origin: .manual,
+            now: Date(timeIntervalSinceReferenceDate: 200)
+        )
+        let package = temporary.appendingPathComponent("Legacy.notchcapture", isDirectory: true)
+        try CapturePackageService(modelContext: sourceContainer.mainContext, attachmentStore: sourceStore).export(to: package)
+
+        let manifestURL = package.appendingPathComponent("manifest.json")
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        var records = try XCTUnwrap(manifest["items"] as? [[String: Any]])
+        for index in records.indices {
+            records[index].removeValue(forKey: "sortOrder")
+        }
+        manifest["items"] = records
+        try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            .write(to: manifestURL, options: .atomic)
+
+        let targetContainer = try makeContainer()
+        let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target-store", isDirectory: true))
+        _ = try CapturePackageService(modelContext: targetContainer.mainContext, attachmentStore: targetStore)
+            .importPackage(at: package)
+        let targetRepository = ItemRepository(modelContext: targetContainer.mainContext)
+        XCTAssertTrue(try targetRepository.backfillMissingSortOrders())
+        XCTAssertEqual(try targetRepository.fetch(scope: .inbox).map(\.id), [newer.id, older.id])
+    }
+
     func testPackageRoundTripAndDuplicateSkip() throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -140,6 +280,7 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(imported[0].origin, .selection)
         XCTAssertEqual(imported[0].list?.name, "Research")
         XCTAssertEqual(imported[0].completedAt, completedAt)
+        XCTAssertEqual(imported[0].sortOrder, original.sortOrder)
         XCTAssertEqual(imported[0].attachments.count, 1)
         let importedPath = try XCTUnwrap(imported[0].attachments[0].relativePath)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try targetStore.resolve(relativePath: importedPath).path))

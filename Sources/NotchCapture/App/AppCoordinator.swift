@@ -123,6 +123,9 @@ final class AppCoordinator {
         ) { _ in
             AnyView(NotchSurfaceView(viewModel: viewModel))
         }
+        self.panelController.panel.onLedgerRowKeyboardCommand = { [weak viewModel] command in
+            viewModel?.performSelectedRowKeyboardCommand(command) ?? false
+        }
 
         configureHooks()
         configureStateSynchronization()
@@ -204,7 +207,7 @@ final class AppCoordinator {
     private func configureHooks() {
         var hooks = AppViewModel.Hooks()
         hooks.onDismiss = { [weak self] in
-            self?.panelController.dismiss()
+            self?.panelController.restoreFocus()
         }
         hooks.onCaptureText = { [weak self] text in
             self?.captureManualText(text)
@@ -212,11 +215,17 @@ final class AppCoordinator {
         hooks.onUndoCapture = { [weak self] id in
             self?.undoCapture(id: id)
         }
+        hooks.onConfirmationPauseChanged = { [weak self] paused, remaining in
+            self?.panelController.setConfirmationDismissalPaused(paused, remaining: remaining)
+        }
         hooks.onToggleComplete = { [weak self] id in
             self?.toggleComplete(id: id)
         }
         hooks.onTogglePin = { [weak self] id in
             self?.togglePin(id: id)
+        }
+        hooks.onReorder = { [weak self] assignments in
+            self?.applyOrderAssignments(assignments)
         }
         hooks.onArchive = { [weak self] id in
             self?.archive(id: id)
@@ -365,7 +374,6 @@ final class AppCoordinator {
             captureCurrentSelection()
         case .openComposer:
             viewModel.openExpanded()
-            synchronizePanel(with: .expanded)
         case .captureRegion:
             beginScreenshotSelection()
         }
@@ -390,7 +398,12 @@ final class AppCoordinator {
 
     private func captureManualText(_ text: String) {
         do {
-            let item = try repository.createItem(text: text, origin: .manual)
+            let payload: CapturePayload = if let url = CaptureURLParser.url(from: text) {
+                .url(url)
+            } else {
+                .text(text)
+            }
+            let item = try repository.createItem(from: payload, origin: .manual)
             presentCaptureFeedback(for: item, feedback: .stayExpanded)
         } catch {
             show(error)
@@ -456,9 +469,11 @@ final class AppCoordinator {
     ) {
         reloadFromStore()
         guard let ledger = viewModel.items.first(where: { $0.id == item.id }) else { return }
+        let refreshesVisibleConfirmation = feedback == .transientConfirmation
+            && viewModel.surfaceState == .confirmation
         viewModel.showCaptureFeedback(for: ledger, feedback: feedback)
-        if feedback == .transientConfirmation {
-            synchronizePanel(with: .confirmation)
+        if refreshesVisibleConfirmation {
+            panelController.restartConfirmationDismissal()
         }
     }
 
@@ -487,6 +502,16 @@ final class AppCoordinator {
             try repository.setPinned(!item.isPinned, for: item)
             reloadFromStore()
         } catch { show(error) }
+    }
+
+    private func applyOrderAssignments(_ assignments: [ItemOrderAssignment]) {
+        do {
+            try repository.applyOrderAssignments(assignments)
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
     }
 
     private func archive(id: UUID) {
@@ -588,11 +613,13 @@ final class AppCoordinator {
                     ))
                 }
                 storedPaths = attachments.compactMap(\.relativePath)
-                let item = try repository.createItem(
-                    text: textParts.joined(separator: "\n"),
-                    origin: .drop,
-                    attachments: attachments
-                )
+                let text = textParts.joined(separator: "\n")
+                let item: CaptureItem
+                if attachments.isEmpty, let url = CaptureURLParser.url(from: text) {
+                    item = try repository.createItem(from: .url(url), origin: .drop)
+                } else {
+                    item = try repository.createItem(text: text, origin: .drop, attachments: attachments)
+                }
                 presentConfirmation(for: item)
             } catch {
                 storedPaths.forEach { try? attachmentStore.remove(relativePath: $0) }
@@ -889,8 +916,9 @@ final class AppCoordinator {
     private func reloadFromStore() {
         guard !previewMode else { return }
         do {
+            try repository.backfillMissingSortOrders()
             let descriptor = FetchDescriptor<CaptureItem>(
-                sortBy: [SortDescriptor(\CaptureItem.updatedAt, order: .reverse)]
+                sortBy: [SortDescriptor(\CaptureItem.createdAt, order: .reverse)]
             )
             let items = try modelContainer.mainContext.fetch(descriptor)
             let lists = try modelContainer.mainContext.fetch(
@@ -949,6 +977,7 @@ final class AppCoordinator {
             completedAt: item.completedAt,
             isArchived: item.isArchived,
             isTrashed: item.isTrashed,
+            sortOrder: item.sortOrder,
             attachments: attachments
         )
     }

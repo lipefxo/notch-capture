@@ -3,6 +3,7 @@ import SwiftUI
 struct OnboardingView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var navigationDirection: CGFloat = 1
 
     var body: some View {
         VStack(spacing: 0) {
@@ -17,7 +18,7 @@ struct OnboardingView: View {
             }
             .id(viewModel.onboardingPage)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: 5)))
+            .transition(pageTransition)
 
             onboardingFooter
         }
@@ -172,8 +173,12 @@ struct OnboardingView: View {
                 ForEach(0..<3, id: \.self) { page in
                     Capsule()
                         .fill(page == viewModel.onboardingPage ? NotchTheme.mint : Color.white.opacity(0.14))
-                        .frame(width: page == viewModel.onboardingPage ? 14 : 5, height: 5)
+                        .frame(width: 14, height: 5)
+                        .scaleEffect(x: page == viewModel.onboardingPage ? 1 : 5 / 14)
                 }
+            }
+            .transaction { transaction in
+                if reduceMotion { transaction.animation = nil }
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel("Step \(viewModel.onboardingPage + 1) of 3")
@@ -199,13 +204,24 @@ struct OnboardingView: View {
     }
 
     private func move(to page: Int) {
+        navigationDirection = page >= viewModel.onboardingPage ? 1 : -1
         if reduceMotion {
-            viewModel.onboardingPage = page
+            withAnimation(NotchMotion.reducedMotion) {
+                viewModel.onboardingPage = page
+            }
         } else {
-            withAnimation(.easeOut(duration: 0.18)) {
+            withAnimation(NotchMotion.onboarding) {
                 viewModel.onboardingPage = page
             }
         }
+    }
+
+    private var pageTransition: AnyTransition {
+        guard !reduceMotion else { return .opacity }
+        return .asymmetric(
+            insertion: .opacity.combined(with: .offset(x: 12 * navigationDirection)),
+            removal: .opacity.combined(with: .offset(x: -12 * navigationDirection))
+        )
     }
 }
 

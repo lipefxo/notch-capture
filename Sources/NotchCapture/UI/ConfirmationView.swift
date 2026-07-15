@@ -3,9 +3,15 @@ import SwiftUI
 struct ConfirmationView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 30, paused: false)) { context in
+        TimelineView(
+            .animation(
+                minimumInterval: 1 / 30,
+                paused: reduceMotion || viewModel.confirmation?.isPaused == true
+            )
+        ) { context in
             let progress = remainingProgress(at: context.date)
 
             HStack(spacing: 11) {
@@ -46,11 +52,17 @@ struct ConfirmationView: View {
             .accessibilityElement(children: .contain)
             .accessibilityLabel("Captured. Saved to \(viewModel.confirmation?.destination ?? "Inbox")")
         }
+        .onHover { hovered in
+            isHovered = hovered
+            viewModel.setConfirmationPaused(hovered)
+        }
+        .onChange(of: viewModel.confirmation?.itemID) { _, _ in
+            if isHovered { viewModel.setConfirmationPaused(true) }
+        }
     }
 
     private func remainingProgress(at date: Date) -> Double {
         if reduceMotion { return 1 }
-        guard let expiresAt = viewModel.confirmation?.expiresAt else { return 0 }
-        return max(0, min(1, expiresAt.timeIntervalSince(date) / 5))
+        return viewModel.confirmation?.progress(at: date) ?? 0
     }
 }

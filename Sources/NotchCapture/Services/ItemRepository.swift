@@ -25,6 +25,7 @@ final class ItemRepository {
         }
         let item = CaptureItem(
             text: text,
+            sortOrder: try nextTopSortOrder(isPinned: false),
             origin: origin,
             source: source,
             attachments: attachments,
@@ -138,8 +139,31 @@ final class ItemRepository {
         }
         return matching.sorted {
             if $0.isPinned != $1.isPinned { return $0.isPinned }
-            return $0.updatedAt > $1.updatedAt
+            return comesBefore($0, $1)
         }
+    }
+
+    /// Gives legacy/imported rows stable ranks while preserving any existing custom order.
+    @discardableResult
+    func backfillMissingSortOrders() throws -> Bool {
+        let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
+        let needsBackfill = items.contains { $0.sortOrder == nil }
+        let hasDuplicateRanks = [true, false].contains { isPinned in
+            let ranks = items.filter { $0.isPinned == isPinned }.compactMap(\.sortOrder)
+            return Set(ranks).count != ranks.count
+        }
+        guard needsBackfill || hasDuplicateRanks else { return false }
+
+        for isPinned in [true, false] {
+            let ordered = items
+                .filter { $0.isPinned == isPinned }
+                .sorted(by: migrationComesBefore)
+            for (index, item) in ordered.enumerated() {
+                item.sortOrder = index
+            }
+        }
+        try modelContext.save()
+        return true
     }
 
     func updateText(_ item: CaptureItem, text: String) throws {
@@ -178,9 +202,31 @@ final class ItemRepository {
     }
 
     func setPinned(_ pinned: Bool, for item: CaptureItem) throws {
+        guard item.isPinned != pinned else { return }
+        item.sortOrder = try nextTopSortOrder(isPinned: pinned)
         item.isPinned = pinned
         item.touch()
         try modelContext.save()
+    }
+
+    func applyOrderAssignments(_ assignments: [ItemOrderAssignment]) throws {
+        guard !assignments.isEmpty else { return }
+        let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
+        let byID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
+        if let missing = assignments.first(where: { byID[$0.id] == nil }) {
+            throw ItemRepositoryError.itemNotFound(missing.id)
+        }
+        do {
+            for assignment in assignments {
+                guard let item = byID[assignment.id] else { continue }
+                item.isPinned = assignment.isPinned
+                item.sortOrder = assignment.sortOrder
+            }
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
     }
 
     func archive(_ item: CaptureItem, at date: Date = .now) throws {
@@ -240,6 +286,43 @@ final class ItemRepository {
             order: order
         )
     }
+
+    private func nextTopSortOrder(isPinned: Bool) throws -> Int {
+        let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
+        return (items.filter { $0.isPinned == isPinned }.compactMap(\.sortOrder).min() ?? 0) - 1
+    }
+
+    private func comesBefore(_ lhs: CaptureItem, _ rhs: CaptureItem) -> Bool {
+        switch (lhs.sortOrder, rhs.sortOrder) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (_?, nil):
+            return false
+        case (nil, _?):
+            return true
+        default:
+            let leftDate = lhs.completedAt ?? lhs.createdAt
+            let rightDate = rhs.completedAt ?? rhs.createdAt
+            if leftDate != rightDate { return leftDate > rightDate }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private func migrationComesBefore(_ lhs: CaptureItem, _ rhs: CaptureItem) -> Bool {
+        switch (lhs.sortOrder, rhs.sortOrder) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (nil, _?):
+            return true
+        case (_?, nil):
+            return false
+        default:
+            let leftDate = lhs.completedAt ?? lhs.createdAt
+            let rightDate = rhs.completedAt ?? rhs.createdAt
+            if leftDate != rightDate { return leftDate > rightDate }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
 }
 
 enum ItemRepositoryError: LocalizedError {
@@ -247,6 +330,7 @@ enum ItemRepositoryError: LocalizedError {
     case emptyListName
     case notATask
     case attachmentStoreRequired
+    case itemNotFound(UUID)
 
     var errorDescription: String? {
         switch self {
@@ -254,6 +338,7 @@ enum ItemRepositoryError: LocalizedError {
         case .emptyListName: "A list name cannot be empty."
         case .notATask: "Only tasks can be completed."
         case .attachmentStoreRequired: "An attachment store is required for file and image captures."
+        case let .itemNotFound(id): "The item \(id.uuidString) no longer exists."
         }
     }
 }

@@ -27,6 +27,7 @@ struct CapturePackageManifest: Codable, Sendable {
         let isPinned: Bool
         let archivedAt: Date?
         let trashedAt: Date?
+        let sortOrder: Int?
         let createdAt: Date
         let updatedAt: Date
         let origin: CaptureOrigin
@@ -131,6 +132,7 @@ final class CapturePackageService {
                 isPinned: item.isPinned,
                 archivedAt: item.archivedAt,
                 trashedAt: item.trashedAt,
+                sortOrder: item.sortOrder,
                 createdAt: item.createdAt,
                 updatedAt: item.updatedAt,
                 origin: item.origin,
@@ -274,6 +276,7 @@ final class CapturePackageService {
                     isPinned: record.isPinned,
                     archivedAt: record.archivedAt,
                     trashedAt: record.trashedAt,
+                    sortOrder: record.sortOrder,
                     origin: record.origin,
                     source: record.source,
                     list: record.listID.flatMap { listMapping[$0] },

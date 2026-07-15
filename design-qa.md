@@ -41,4 +41,13 @@
 
 The native implementation faithfully matches the requested floating-bottom layout and adds a balanced glass fade that preserves both ledger continuity and composer prominence.
 
+## Motion and interaction QA
+
+- Visible surface changes now use one persistent SwiftUI host and a top-centered AppKit frame morph: 220 ms expansion and 160 ms contraction with a strong ease-out curve. In-flight frame changes retarget from their current value.
+- Dormant/NotchFlow handoff remains immediate. A contraction to the owned idle pill stops intercepting pointer input before its visual settle completes.
+- Reduce Motion disables window resizing motion and uses short opacity-only content changes. Existing Reduce Transparency and Increased Contrast fallbacks remain intact.
+- Inbox/Settings navigation, onboarding direction, drop targeting, filter selection, press feedback, and row-hover actions use scoped transitions; typing and search-result updates remain immediate.
+- The composer takes focus after expansion and after returning from Settings. Confirmation expiry pauses while Undo is hovered and resumes from the remaining duration.
+- Static expanded and confirmation snapshots render without clipping regressions. The debug build is ad-hoc signed, and the complete test suite passes with 37 tests.
+
 final result: passed

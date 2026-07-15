@@ -2,27 +2,100 @@ import SwiftUI
 
 struct NotchSurfaceView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var displayedState: AppViewModel.SurfaceState
+    @State private var activeTransition: AnyTransition = .opacity
+
+    init(viewModel: AppViewModel) {
+        self.viewModel = viewModel
+        _displayedState = State(initialValue: viewModel.surfaceState)
+    }
 
     var body: some View {
-        Group {
-            switch viewModel.surfaceState {
-            case .dormant:
-                EmptyView()
-            case .collapsed:
-                CollapsedPillView(viewModel: viewModel)
-            case .confirmation:
-                ConfirmationView(viewModel: viewModel)
-            case .expanded, .drop:
-                ExpandedInboxView(viewModel: viewModel)
-            case .screenshot:
-                ScreenshotStateView(viewModel: viewModel)
-            case .onboarding:
-                OnboardingView(viewModel: viewModel)
-            case .settings:
-                SettingsView(viewModel: viewModel)
+        ZStack(alignment: .top) {
+            Group {
+                switch displayedState {
+                case .dormant:
+                    EmptyView()
+                case .collapsed:
+                    CollapsedPillView(viewModel: viewModel)
+                case .confirmation:
+                    ConfirmationView(viewModel: viewModel)
+                case .expanded, .drop:
+                    ExpandedInboxView(viewModel: viewModel)
+                case .screenshot:
+                    ScreenshotStateView(viewModel: viewModel)
+                case .onboarding:
+                    OnboardingView(viewModel: viewModel)
+                case .settings:
+                    SettingsView(viewModel: viewModel)
+                }
+            }
+            .id(contentIdentity(for: displayedState))
+            .transition(activeTransition)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .clipped()
+        .onChange(of: viewModel.surfaceState) { oldState, newState in
+            if isDropOnlyTransition(from: oldState, to: newState) {
+                displayedState = newState
+                return
+            }
+
+            activeTransition = transition(from: oldState, to: newState)
+            withAnimation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content) {
+                displayedState = newState
             }
         }
         .preferredColorScheme(.dark)
+    }
+
+    private func isDropOnlyTransition(
+        from oldState: AppViewModel.SurfaceState,
+        to newState: AppViewModel.SurfaceState
+    ) -> Bool {
+        (oldState == .expanded && newState == .drop)
+            || (oldState == .drop && newState == .expanded)
+    }
+
+    private func contentIdentity(for state: AppViewModel.SurfaceState) -> String {
+        switch state {
+        case .expanded, .drop: "expanded"
+        case .dormant: "dormant"
+        case .collapsed: "collapsed"
+        case .confirmation: "confirmation"
+        case .screenshot: "screenshot"
+        case .onboarding: "onboarding"
+        case .settings: "settings"
+        }
+    }
+
+    private func transition(
+        from oldState: AppViewModel.SurfaceState,
+        to newState: AppViewModel.SurfaceState
+    ) -> AnyTransition {
+        guard !reduceMotion else { return .opacity }
+
+        if oldState == .expanded && newState == .settings {
+            return .asymmetric(
+                insertion: .opacity.combined(with: .offset(x: 8)),
+                removal: .opacity.combined(with: .offset(x: -8))
+            )
+        }
+        if oldState == .settings && newState == .expanded {
+            return .asymmetric(
+                insertion: .opacity.combined(with: .offset(x: -8)),
+                removal: .opacity.combined(with: .offset(x: 8))
+            )
+        }
+        if newState == .confirmation {
+            return .asymmetric(
+                insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
+                removal: .opacity
+            )
+        }
+
+        return .opacity.combined(with: .offset(y: -4))
     }
 }
 
@@ -50,16 +123,18 @@ struct CollapsedPillView: View {
             .overlay(alignment: .bottom) {
                 Capsule()
                     .fill(isHovered ? NotchTheme.mint.opacity(0.65) : Color.white.opacity(0.1))
-                    .frame(width: isHovered ? 38 : 22, height: 1)
+                    .frame(width: 38, height: 1)
+                    .scaleEffect(x: isHovered ? 1 : 22 / 38)
                     .padding(.bottom, 3)
             }
             .clipShape(NotchHugShape(bottomRadius: 16))
             .contentShape(NotchHugShape(bottomRadius: 16))
             .shadow(color: .black.opacity(0.36), radius: 16, y: 8)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.94))
         .notchHitTarget(NotchHugShape(bottomRadius: 16))
         .onHover { isHovered = $0 }
+        .animation(NotchMotion.hover, value: isHovered)
         .help("Open Notch Capture")
         .accessibilityLabel("Open Notch Capture")
         .accessibilityHint("Opens the capture composer and inbox")

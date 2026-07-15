@@ -36,4 +36,17 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
             return false
         }
     }
+
+    var nominalSize: CGSize {
+        switch self {
+        case .collapsed:
+            CGSize(width: 176, height: 36)
+        case .confirmation:
+            CGSize(width: 300, height: 72)
+        case .expanded, .dropTarget, .onboarding, .settings:
+            CGSize(width: 420, height: 560)
+        case .dormant, .screenshot:
+            .zero
+        }
+    }
 }

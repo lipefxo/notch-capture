@@ -48,6 +48,12 @@ enum CaptureRequest: Sendable {
     case importPackage(URL)
 }
 
+struct ItemOrderAssignment: Equatable, Sendable {
+    let id: UUID
+    let isPinned: Bool
+    let sortOrder: Int
+}
+
 enum CapturePayload: Sendable, Equatable {
     case text(String)
     case url(URL)
@@ -100,6 +106,8 @@ final class CaptureItem {
     var isPinned: Bool
     var archivedAt: Date?
     var trashedAt: Date?
+    /// Nil only for libraries and import packages created before manual ordering existed.
+    var sortOrder: Int?
     var createdAt: Date
     var updatedAt: Date
     var originRawValue: String
@@ -120,6 +128,7 @@ final class CaptureItem {
         isPinned: Bool = false,
         archivedAt: Date? = nil,
         trashedAt: Date? = nil,
+        sortOrder: Int? = nil,
         origin: CaptureOrigin = .manual,
         source: CaptureSource = CaptureSource(),
         list: ItemList? = nil,
@@ -136,6 +145,7 @@ final class CaptureItem {
         self.isPinned = isPinned
         self.archivedAt = archivedAt
         self.trashedAt = trashedAt
+        self.sortOrder = sortOrder
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.originRawValue = origin.rawValue

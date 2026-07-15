@@ -1,5 +1,51 @@
 import AppKit
+import QuartzCore
 import SwiftUI
+
+struct PanelTransitionPolicy: Equatable {
+    enum Kind: Equatable {
+        case immediate
+        case expand
+        case contract
+    }
+
+    let kind: Kind
+    let duration: TimeInterval
+
+    var animatesFrame: Bool {
+        kind != .immediate && duration > 0
+    }
+
+    static func resolve(
+        from oldState: PanelState,
+        to newState: PanelState,
+        wasVisible: Bool,
+        reduceMotion: Bool
+    ) -> Self {
+        guard newState.isVisible, !reduceMotion else {
+            return Self(kind: .immediate, duration: 0)
+        }
+        guard oldState != newState || !wasVisible else {
+            return Self(kind: .immediate, duration: 0)
+        }
+
+        if !wasVisible {
+            return newState == .collapsed
+                ? Self(kind: .immediate, duration: 0)
+                : Self(kind: .expand, duration: NotchMotion.surfaceExpansionDuration)
+        }
+
+        let oldArea = oldState.nominalSize.width * oldState.nominalSize.height
+        let newArea = newState.nominalSize.width * newState.nominalSize.height
+        if newArea > oldArea {
+            return Self(kind: .expand, duration: NotchMotion.surfaceExpansionDuration)
+        }
+        if newArea < oldArea {
+            return Self(kind: .contract, duration: NotchMotion.surfaceContractionDuration)
+        }
+        return Self(kind: .immediate, duration: 0)
+    }
+}
 
 @MainActor
 public final class PanelController: NSObject, ObservableObject {
@@ -19,6 +65,7 @@ public final class PanelController: NSObject, ObservableObject {
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
     private var confirmationDismissalTask: Task<Void, Never>?
+    private var transitionGeneration = 0
 
     public init(
         displayLocator: any DisplayLocating = DisplayLocator(),
@@ -56,22 +103,43 @@ public final class PanelController: NSObject, ObservableObject {
         on screen: NSScreen? = nil,
         activate: Bool = false
     ) {
-        confirmationDismissalTask?.cancel()
-
         guard newState.isVisible else {
             transitionToHiddenState(newState)
             return
         }
 
+        let oldState = state
+        let wasVisible = panel.isVisible && oldState.isVisible
+        guard oldState != newState || !wasVisible else { return }
+        confirmationDismissalTask?.cancel()
+
         targetScreen = screen ?? displayLocator.pointerScreen
+        guard let targetFrame = panelFrame(for: newState) else { return }
+        let transition = PanelTransitionPolicy.resolve(
+            from: oldState,
+            to: newState,
+            wasVisible: wasVisible,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        )
+
         state = newState
-        hostingView.rootView = contentFactory(newState)
         panel.permitsKeyWindow = newState.acceptsKeyboardInput
         panel.level = newState.isExplicitSession
             ? NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 4)
             : .statusBar
-        layoutPanel(for: newState)
         installDismissalMonitorsIfNeeded()
+
+        transitionGeneration += 1
+        let generation = transitionGeneration
+        let contractsToPill = transition.kind == .contract && newState == .collapsed
+        panel.ignoresMouseEvents = contractsToPill
+
+        if !wasVisible {
+            let sourceFrame = transition.animatesFrame
+                ? panelFrame(for: .collapsed) ?? targetFrame
+                : targetFrame
+            panel.setFrame(sourceFrame, display: false)
+        }
 
         if activate && newState.acceptsKeyboardInput {
             rememberPreviousApplication()
@@ -80,6 +148,13 @@ public final class PanelController: NSObject, ObservableObject {
         } else {
             panel.orderFrontRegardless()
         }
+
+        animatePanel(
+            to: targetFrame,
+            transition: transition,
+            generation: generation,
+            restoreHitTesting: contractsToPill
+        )
 
         if newState == .confirmation {
             scheduleConfirmationDismissal()
@@ -90,7 +165,9 @@ public final class PanelController: NSObject, ObservableObject {
     public func reposition(on screen: NSScreen? = nil) {
         targetScreen = screen ?? targetScreen ?? displayLocator.pointerScreen
         guard state.isVisible else { return }
-        layoutPanel(for: state)
+        guard let frame = panelFrame(for: state) else { return }
+        transitionGeneration += 1
+        panel.setFrame(frame, display: true)
     }
 
 #if DEBUG
@@ -131,6 +208,26 @@ public final class PanelController: NSObject, ObservableObject {
         }
     }
 
+    public func restoreFocus() {
+        restorePreviousApplication()
+    }
+
+    public func setConfirmationDismissalPaused(_ paused: Bool, remaining: TimeInterval) {
+        guard state == .confirmation else { return }
+        confirmationDismissalTask?.cancel()
+        confirmationDismissalTask = nil
+        if !paused {
+            scheduleConfirmationDismissal(after: remaining)
+        }
+    }
+
+    public func restartConfirmationDismissal() {
+        guard state == .confirmation else { return }
+        confirmationDismissalTask?.cancel()
+        confirmationDismissalTask = nil
+        scheduleConfirmationDismissal()
+    }
+
     private func configurePanel() {
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
@@ -140,7 +237,7 @@ public final class PanelController: NSObject, ObservableObject {
         panel.hasShadow = true
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
-        panel.animationBehavior = .utilityWindow
+        panel.animationBehavior = .none
         panel.isMovable = false
         panel.isMovableByWindowBackground = false
         panel.acceptsMouseMovedEvents = true
@@ -155,37 +252,57 @@ public final class PanelController: NSObject, ObservableObject {
     private func transitionToHiddenState(_ hiddenState: PanelState) {
         confirmationDismissalTask?.cancel()
         confirmationDismissalTask = nil
+        transitionGeneration += 1
         state = hiddenState
-        hostingView.rootView = contentFactory(hiddenState)
+        panel.ignoresMouseEvents = false
         panel.orderOut(nil)
         removeDismissalMonitors()
     }
 
-    private func layoutPanel(for state: PanelState) {
+    private func panelFrame(for state: PanelState) -> CGRect? {
         guard
             let screen = targetScreen ?? displayLocator.pointerScreen,
             let geometry = displayLocator.geometry(for: screen)
         else {
             assertionFailure("A visible notch surface requires an available display geometry.")
-            return
+            return nil
         }
 
-        let size: CGSize
-        switch state {
-        case .collapsed:
+        var size = state.nominalSize
+        if state == .collapsed {
             let notchWidth = geometry.notchRect?.width ?? 156
-            let height = max(36, geometry.safeAreaInsets.top + 6)
-            size = CGSize(width: max(176, notchWidth + 24), height: height)
-        case .confirmation:
-            size = CGSize(width: 300, height: 72)
-        case .expanded, .dropTarget, .onboarding, .settings:
-            size = CGSize(width: 420, height: min(560, geometry.screenFrame.height - 28))
-        case .dormant, .screenshot:
+            size.width = max(size.width, notchWidth + 24)
+            size.height = max(size.height, geometry.safeAreaInsets.top + 6)
+        } else if [.expanded, .dropTarget, .onboarding, .settings].contains(state) {
+            size.height = min(size.height, geometry.screenFrame.height - 28)
+        }
+
+        guard size.width > 0, size.height > 0 else { return nil }
+        return geometry.panelFrame(for: size)
+    }
+
+    private func animatePanel(
+        to targetFrame: CGRect,
+        transition: PanelTransitionPolicy,
+        generation: Int,
+        restoreHitTesting: Bool
+    ) {
+        guard transition.animatesFrame, panel.frame != targetFrame else {
+            panel.setFrame(targetFrame, display: true)
+            if restoreHitTesting { panel.ignoresMouseEvents = false }
             return
         }
 
-        let frame = geometry.panelFrame(for: size)
-        panel.setFrame(frame, display: true)
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = transition.duration
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            panel.animator().setFrame(targetFrame, display: true)
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.transitionGeneration == generation else { return }
+                if restoreHitTesting { self.panel.ignoresMouseEvents = false }
+            }
+        }
     }
 
     private func rememberPreviousApplication() {
@@ -251,10 +368,10 @@ public final class PanelController: NSObject, ObservableObject {
         }
     }
 
-    private func scheduleConfirmationDismissal() {
+    private func scheduleConfirmationDismissal(after delay: TimeInterval = 5) {
         guard automaticDismissalEnabled else { return }
         confirmationDismissalTask = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(max(0, delay)))
             guard !Task.isCancelled else { return }
             self?.requestDismissal()
         }

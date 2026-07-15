@@ -61,6 +61,17 @@ final class AppViewModel: ObservableObject {
         case task
     }
 
+    enum ReorderPlacement: Hashable {
+        case before
+        case after
+    }
+
+    enum KeyboardFocus: Equatable {
+        case composer
+        case selectedRow
+        case none
+    }
+
     struct LedgerAttachment: Identifiable, Hashable {
         enum Kind: String, Hashable {
             case file
@@ -104,6 +115,7 @@ final class AppViewModel: ObservableObject {
         var completedAt: Date?
         var isArchived: Bool
         var isTrashed: Bool
+        var sortOrder: Int?
         var attachments: [LedgerAttachment]
 
         init(
@@ -120,6 +132,7 @@ final class AppViewModel: ObservableObject {
             completedAt: Date? = nil,
             isArchived: Bool = false,
             isTrashed: Bool = false,
+            sortOrder: Int? = nil,
             attachments: [LedgerAttachment] = []
         ) {
             self.id = id
@@ -135,6 +148,7 @@ final class AppViewModel: ObservableObject {
             self.completedAt = completedAt
             self.isArchived = isArchived
             self.isTrashed = isTrashed
+            self.sortOrder = sortOrder
             self.attachments = attachments
         }
 
@@ -144,21 +158,38 @@ final class AppViewModel: ObservableObject {
     }
 
     struct Confirmation: Equatable {
+        static let duration: TimeInterval = 5
+
         var itemID: UUID?
         var title: String
         var destination: String
         var expiresAt: Date
+        var pausedRemaining: TimeInterval?
 
         init(
             itemID: UUID? = nil,
             title: String,
             destination: String = "Inbox",
-            expiresAt: Date = .now.addingTimeInterval(5)
+            expiresAt: Date = .now.addingTimeInterval(Self.duration),
+            pausedRemaining: TimeInterval? = nil
         ) {
             self.itemID = itemID
             self.title = title
             self.destination = destination
             self.expiresAt = expiresAt
+            self.pausedRemaining = pausedRemaining
+        }
+
+        var isPaused: Bool {
+            pausedRemaining != nil
+        }
+
+        func remaining(at date: Date) -> TimeInterval {
+            max(0, min(Self.duration, pausedRemaining ?? expiresAt.timeIntervalSince(date)))
+        }
+
+        func progress(at date: Date) -> Double {
+            remaining(at: date) / Self.duration
         }
     }
 
@@ -185,8 +216,10 @@ final class AppViewModel: ObservableObject {
         var onDismiss: () -> Void = {}
         var onCaptureText: (String) -> Void = { _ in }
         var onUndoCapture: (UUID?) -> Void = { _ in }
+        var onConfirmationPauseChanged: (Bool, TimeInterval) -> Void = { _, _ in }
         var onToggleComplete: (UUID) -> Void = { _ in }
         var onTogglePin: (UUID) -> Void = { _ in }
+        var onReorder: ([ItemOrderAssignment]) -> Void = { _ in }
         var onArchive: (UUID) -> Void = { _ in }
         var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
         var onMove: (UUID, String) -> Void = { _, _ in }
@@ -209,6 +242,7 @@ final class AppViewModel: ObservableObject {
     @Published var surfaceState: SurfaceState
     @Published var items: [LedgerItem]
     @Published var selectedItemID: UUID?
+    @Published private(set) var keyboardFocus: KeyboardFocus = .composer
     @Published var filter: InboxFilter = .all
     @Published var composerText = ""
     @Published var confirmation: Confirmation?
@@ -229,6 +263,7 @@ final class AppViewModel: ObservableObject {
     @Published var shortcuts: [Shortcut]
 
     var hooks: Hooks
+    private let now: () -> Date
 
     init(
         surfaceState: SurfaceState = .collapsed,
@@ -244,7 +279,8 @@ final class AppViewModel: ObservableObject {
             Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N"),
             Shortcut(action: .captureRegion, title: "Capture region", displayValue: "⌃⇧S")
         ],
-        hooks: Hooks = Hooks()
+        hooks: Hooks = Hooks(),
+        now: @escaping () -> Date = { .now }
     ) {
         self.surfaceState = surfaceState
         self.items = items
@@ -256,6 +292,7 @@ final class AppViewModel: ObservableObject {
         self.screenRecordingGranted = screenRecordingGranted
         self.shortcuts = shortcuts
         self.hooks = hooks
+        self.now = now
     }
 
     var visibleItems: [LedgerItem] {
@@ -269,7 +306,7 @@ final class AppViewModel: ObservableObject {
             }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
-                return activityDate(for: lhs) > activityDate(for: rhs)
+                return itemComesBefore(lhs, rhs)
             }
     }
 
@@ -280,21 +317,14 @@ final class AppViewModel: ObservableObject {
     var composerHasMatches: Bool { composerHasQuery && !visibleItems.isEmpty }
     var canAddComposerText: Bool { composerHasQuery && visibleItems.isEmpty }
 
-    var todayItems: [LedgerItem] {
-        unpinnedItems.filter { Calendar.current.isDateInToday(activityDate(for: $0)) }
-    }
-
-    var earlierItems: [LedgerItem] {
-        unpinnedItems.filter { !Calendar.current.isDateInToday(activityDate(for: $0)) }
-    }
-
     func openExpanded() {
         errorMessage = nil
+        keyboardFocus = .composer
         surfaceState = .expanded
     }
 
     func dismiss() {
-        selectedItemID = nil
+        clearSelection()
         composerText = ""
         errorMessage = nil
         surfaceState = shouldYieldIdleSurface ? .dormant : .collapsed
@@ -307,13 +337,46 @@ final class AppViewModel: ObservableObject {
             return
         }
         guard canAddComposerText else {
-            selectedItemID = visibleItems.first?.id
+            if let item = visibleItems.first {
+                select(item)
+            }
             return
         }
         errorMessage = nil
         filter = .all
         hooks.onCaptureText(text)
         composerText = ""
+    }
+
+    func focusComposer() {
+        keyboardFocus = .composer
+    }
+
+    func select(_ item: LedgerItem) {
+        guard selectedItemID != item.id else {
+            clearSelection()
+            return
+        }
+        selectedItemID = item.id
+        keyboardFocus = .selectedRow
+    }
+
+    @discardableResult
+    func performSelectedRowKeyboardCommand(_ command: LedgerRowKeyboardCommand) -> Bool {
+        guard keyboardFocus == .selectedRow,
+              let selectedItemID,
+              let item = visibleItems.first(where: { $0.id == selectedItemID }) else {
+            return false
+        }
+
+        switch command {
+        case .toggleCompletion:
+            toggleComplete(item)
+        case .moveToTrash:
+            guard !item.isTrashed else { return true }
+            trash(item)
+        }
+        return true
     }
 
     func showCaptureFeedback(
@@ -327,7 +390,12 @@ final class AppViewModel: ObservableObject {
             confirmation = nil
             surfaceState = .expanded
         case .transientConfirmation:
-            confirmation = Confirmation(itemID: item.id, title: item.title, destination: destination)
+            confirmation = Confirmation(
+                itemID: item.id,
+                title: item.title,
+                destination: destination,
+                expiresAt: now().addingTimeInterval(Confirmation.duration)
+            )
             surfaceState = .confirmation
         }
     }
@@ -342,6 +410,24 @@ final class AppViewModel: ObservableObject {
         dismiss()
     }
 
+    func setConfirmationPaused(_ paused: Bool) {
+        guard var confirmation else { return }
+        let date = now()
+
+        if paused {
+            guard confirmation.pausedRemaining == nil else { return }
+            confirmation.pausedRemaining = confirmation.remaining(at: date)
+        } else {
+            guard let remaining = confirmation.pausedRemaining else { return }
+            confirmation.pausedRemaining = nil
+            confirmation.expiresAt = date.addingTimeInterval(remaining)
+        }
+
+        let remaining = confirmation.remaining(at: date)
+        self.confirmation = confirmation
+        hooks.onConfirmationPauseChanged(paused, remaining)
+    }
+
     func toggleComplete(_ item: LedgerItem) {
         mutateItem(item.id) {
             $0.isCompleted.toggle()
@@ -351,13 +437,109 @@ final class AppViewModel: ObservableObject {
     }
 
     func togglePin(_ item: LedgerItem) {
-        mutateItem(item.id) { $0.isPinned.toggle() }
+        let destinationPinned = !item.isPinned
+        let topOrder = (items
+            .filter { $0.isPinned == destinationPinned }
+            .compactMap(\.sortOrder)
+            .min() ?? 0) - 1
+        mutateItem(item.id) {
+            $0.isPinned = destinationPinned
+            $0.sortOrder = topOrder
+        }
         hooks.onTogglePin(item.id)
+    }
+
+    @discardableResult
+    func reorder(
+        itemID: UUID,
+        relativeTo targetID: UUID?,
+        placement: ReorderPlacement,
+        destinationPinned: Bool
+    ) -> Bool {
+        guard let dragged = items.first(where: { $0.id == itemID }) else { return false }
+        let sourcePinned = dragged.isPinned
+        guard targetID != itemID else { return false }
+
+        var destination = items
+            .filter { $0.isPinned == destinationPinned && $0.id != itemID }
+            .sorted(by: itemComesBefore)
+
+        let insertionIndex: Int
+        if let targetID,
+           let targetIndex = destination.firstIndex(where: { $0.id == targetID }) {
+            insertionIndex = targetIndex + (placement == .after ? 1 : 0)
+        } else {
+            insertionIndex = placement == .before ? 0 : destination.endIndex
+        }
+
+        var moved = dragged
+        moved.isPinned = destinationPinned
+        destination.insert(moved, at: insertionIndex)
+
+        let affectedPinnedStates = sourcePinned == destinationPinned
+            ? [destinationPinned]
+            : [sourcePinned, destinationPinned]
+        var assignments: [ItemOrderAssignment] = []
+        for pinnedState in affectedPinnedStates {
+            let ordered = pinnedState == destinationPinned
+                ? destination
+                : items
+                    .filter { $0.isPinned == pinnedState && $0.id != itemID }
+                    .sorted(by: itemComesBefore)
+            assignments.append(contentsOf: ordered.enumerated().map { index, item in
+                ItemOrderAssignment(id: item.id, isPinned: pinnedState, sortOrder: index)
+            })
+        }
+
+        let changed = assignments.contains { assignment in
+            guard let item = items.first(where: { $0.id == assignment.id }) else { return true }
+            return item.isPinned != assignment.isPinned || item.sortOrder != assignment.sortOrder
+        }
+        guard changed else { return false }
+
+        let assignmentByID = Dictionary(uniqueKeysWithValues: assignments.map { ($0.id, $0) })
+        for index in items.indices {
+            guard let assignment = assignmentByID[items[index].id] else { continue }
+            items[index].isPinned = assignment.isPinned
+            items[index].sortOrder = assignment.sortOrder
+        }
+        hooks.onReorder(assignments)
+        return true
+    }
+
+    func moveUp(_ item: LedgerItem) {
+        let group = visibleItems.filter { $0.isPinned == item.isPinned }
+        guard let index = group.firstIndex(where: { $0.id == item.id }), index > 0 else { return }
+        _ = reorder(
+            itemID: item.id,
+            relativeTo: group[index - 1].id,
+            placement: .before,
+            destinationPinned: item.isPinned
+        )
+    }
+
+    func moveDown(_ item: LedgerItem) {
+        let group = visibleItems.filter { $0.isPinned == item.isPinned }
+        guard let index = group.firstIndex(where: { $0.id == item.id }), index < group.count - 1 else { return }
+        _ = reorder(
+            itemID: item.id,
+            relativeTo: group[index + 1].id,
+            placement: .after,
+            destinationPinned: item.isPinned
+        )
+    }
+
+    func canMoveUp(_ item: LedgerItem) -> Bool {
+        visibleItems.filter { $0.isPinned == item.isPinned }.first?.id != item.id
+    }
+
+    func canMoveDown(_ item: LedgerItem) -> Bool {
+        visibleItems.filter { $0.isPinned == item.isPinned }.last?.id != item.id
     }
 
     func archive(_ item: LedgerItem) {
         mutateItem(item.id) { $0.isArchived = true }
-        selectedItemID = nil
+        clearSelection()
         hooks.onArchive(item.id)
     }
 
@@ -395,7 +577,7 @@ final class AppViewModel: ObservableObject {
 
     func trash(_ item: LedgerItem) {
         mutateItem(item.id) { $0.isTrashed = true }
-        selectedItemID = nil
+        clearSelection()
         hooks.onTrash(item.id)
     }
 
@@ -406,7 +588,7 @@ final class AppViewModel: ObservableObject {
 
     func deletePermanently(_ item: LedgerItem) {
         items.removeAll { $0.id == item.id }
-        selectedItemID = nil
+        clearSelection()
         hooks.onDeletePermanently(item.id)
     }
 
@@ -463,9 +645,30 @@ final class AppViewModel: ObservableObject {
         item.completedAt ?? item.createdAt
     }
 
+    private func itemComesBefore(_ lhs: LedgerItem, _ rhs: LedgerItem) -> Bool {
+        switch (lhs.sortOrder, rhs.sortOrder) {
+        case let (left?, right?) where left != right:
+            return left < right
+        case (nil, _?):
+            return true
+        case (_?, nil):
+            return false
+        default:
+            let leftDate = activityDate(for: lhs)
+            let rightDate = activityDate(for: rhs)
+            if leftDate != rightDate { return leftDate > rightDate }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
     private func mutateItem(_ id: UUID, mutation: (inout LedgerItem) -> Void) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         mutation(&items[index])
+    }
+
+    private func clearSelection() {
+        selectedItemID = nil
+        keyboardFocus = .none
     }
 }
 

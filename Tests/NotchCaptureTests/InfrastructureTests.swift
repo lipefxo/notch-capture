@@ -38,6 +38,81 @@ final class PanelStateTests: XCTestCase {
     }
 }
 
+final class PanelTransitionPolicyTests: XCTestCase {
+    func testHiddenExpandedSurfaceStartsWithExpansionMorph() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .dormant,
+            to: .expanded,
+            wasVisible: false,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .expand)
+        XCTAssertEqual(policy.duration, NotchMotion.surfaceExpansionDuration)
+        XCTAssertTrue(policy.animatesFrame)
+    }
+
+    func testExpandedSurfaceContractsToCollapsedPill() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .collapsed,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .contract)
+        XCTAssertEqual(policy.duration, NotchMotion.surfaceContractionDuration)
+    }
+
+    func testSameSizeContentNavigationDoesNotResizeWindow() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .settings,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .immediate)
+        XCTAssertFalse(policy.animatesFrame)
+    }
+
+    func testReducedMotionDisablesFrameMorph() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .collapsed,
+            to: .expanded,
+            wasVisible: true,
+            reduceMotion: true
+        )
+
+        XCTAssertEqual(policy.kind, .immediate)
+        XCTAssertEqual(policy.duration, 0)
+    }
+
+    func testDormantDestinationNeverAnimates() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .dormant,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .immediate)
+        XCTAssertFalse(policy.animatesFrame)
+    }
+
+    func testDuplicateVisibleTargetDoesNotAnimate() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .expanded,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .immediate)
+        XCTAssertFalse(policy.animatesFrame)
+    }
+}
+
 @MainActor
 final class ApplicationMenuTests: XCTestCase {
     func testEditMenuProvidesStandardPasteResponderCommand() throws {
@@ -66,6 +141,58 @@ final class ApplicationMenuTests: XCTestCase {
         ))
 
         XCTAssertEqual(NotchPanel.editingAction(for: commandV), #selector(NSText.paste(_:)))
+    }
+
+    func testNotchPanelClassifiesUnmodifiedLedgerRowCommands() throws {
+        let returnKey = try XCTUnwrap(makeKeyEvent(characters: "\r", keyCode: 36))
+        let keypadEnter = try XCTUnwrap(makeKeyEvent(characters: "\r", keyCode: 76))
+        let space = try XCTUnwrap(makeKeyEvent(characters: " ", keyCode: 49))
+        let delete = try XCTUnwrap(makeKeyEvent(characters: "\u{8}", keyCode: 51))
+        let forwardDelete = try XCTUnwrap(makeKeyEvent(characters: "\u{7F}", keyCode: 117))
+
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: returnKey), .toggleCompletion)
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: keypadEnter), .toggleCompletion)
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: space), .toggleCompletion)
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: delete), .moveToTrash)
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: forwardDelete), .moveToTrash)
+    }
+
+    func testNotchPanelLeavesModifiedAndRepeatedLedgerRowKeysToTheResponderChain() throws {
+        let commandSpace = try XCTUnwrap(makeKeyEvent(
+            characters: " ",
+            modifierFlags: .command,
+            keyCode: 49
+        ))
+        let repeatedSpace = try XCTUnwrap(makeKeyEvent(
+            characters: " ",
+            isARepeat: true,
+            keyCode: 49
+        ))
+        let otherKey = try XCTUnwrap(makeKeyEvent(characters: "a", keyCode: 0))
+
+        XCTAssertNil(NotchPanel.ledgerRowKeyboardCommand(for: commandSpace))
+        XCTAssertNil(NotchPanel.ledgerRowKeyboardCommand(for: repeatedSpace))
+        XCTAssertNil(NotchPanel.ledgerRowKeyboardCommand(for: otherKey))
+    }
+
+    private func makeKeyEvent(
+        characters: String,
+        modifierFlags: NSEvent.ModifierFlags = [],
+        isARepeat: Bool = false,
+        keyCode: UInt16
+    ) -> NSEvent? {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: modifierFlags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: characters,
+            charactersIgnoringModifiers: characters,
+            isARepeat: isARepeat,
+            keyCode: keyCode
+        )
     }
 }
 
@@ -99,6 +226,20 @@ final class NotchGeometryTests: XCTestCase {
         XCTAssertEqual(frame, CGRect(x: 546, y: 422, width: 420, height: 560))
         XCTAssertEqual(frame.maxY, geometry.screenFrame.maxY)
         XCTAssertEqual(frame.midX, geometry.notchRect?.midX)
+    }
+
+    func testCollapsedAndExpandedFramesShareTheSameTopAnchor() {
+        let geometry = makeGeometry(
+            screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+            notchRect: CGRect(x: 680, y: 944, width: 152, height: 38)
+        )
+
+        let collapsed = geometry.panelFrame(for: CGSize(width: 176, height: 44))
+        let expanded = geometry.panelFrame(for: CGSize(width: 420, height: 560))
+
+        XCTAssertEqual(collapsed.maxY, expanded.maxY)
+        XCTAssertEqual(collapsed.midX, expanded.midX)
+        XCTAssertEqual(collapsed.maxY, geometry.screenFrame.maxY)
     }
 
     func testExternalDisplayUsesDisplayCenter() {

@@ -21,6 +21,33 @@ enum NotchTheme {
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
 }
 
+enum NotchMotion {
+    static let surfaceExpansionDuration: TimeInterval = 0.22
+    static let surfaceContractionDuration: TimeInterval = 0.16
+    static let contentDuration: TimeInterval = 0.16
+    static let onboardingDuration: TimeInterval = 0.20
+    static let filterDuration: TimeInterval = 0.15
+    static let controlPressDuration: TimeInterval = 0.12
+    static let hoverDuration: TimeInterval = 0.08
+    static let dropEnterDuration: TimeInterval = 0.14
+    static let dropExitDuration: TimeInterval = 0.10
+    static let reducedMotionDuration: TimeInterval = 0.10
+
+    static func easeOut(duration: TimeInterval) -> Animation {
+        .timingCurve(0.23, 1, 0.32, 1, duration: duration)
+    }
+
+    static let content = easeOut(duration: contentDuration)
+    static let onboarding = easeOut(duration: onboardingDuration)
+    static let filter = easeOut(duration: filterDuration)
+    static let controlPress = easeOut(duration: controlPressDuration)
+    static let hover = easeOut(duration: hoverDuration)
+    static let dropEnter = easeOut(duration: dropEnterDuration)
+    static let dropExit = easeOut(duration: dropExitDuration)
+    static let reducedMotion = easeOut(duration: reducedMotionDuration)
+    static let reorder = Animation.spring(response: 0.32, dampingFraction: 1, blendDuration: 0)
+}
+
 struct NotchHugShape: Shape {
     var bottomRadius: CGFloat = 24
     var topLift: CGFloat = 8
@@ -91,7 +118,7 @@ struct PressableIconButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
     }
 }
 
@@ -108,7 +135,7 @@ struct MintButtonStyle: ButtonStyle {
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
     }
 }
 
@@ -121,7 +148,21 @@ struct CompactTextButtonStyle: ButtonStyle {
             .padding(.vertical, 4)
             .notchHitTarget(Rectangle())
             .opacity(configuration.isPressed ? 0.7 : 1)
-            .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
+    }
+}
+
+struct NotchPressButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var pressedScale: CGFloat = 0.97
+    var pressedOpacity: Double = 0.9
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed && !reduceMotion ? pressedScale : 1)
+            .opacity(configuration.isPressed ? pressedOpacity : 1)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
     }
 }
 
