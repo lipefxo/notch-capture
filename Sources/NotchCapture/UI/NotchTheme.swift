@@ -3,14 +3,22 @@ import SwiftUI
 enum NotchTheme {
     static let width: CGFloat = 420
     static let maxHeight: CGFloat = 560
-    static let headerHeight: CGFloat = 70
-    static let mint = Color(red: 0.43, green: 0.91, blue: 0.74)
-    static let ink = Color(red: 0.025, green: 0.028, blue: 0.032)
-    static let graphite = Color(red: 0.095, green: 0.101, blue: 0.11)
-    static let raisedGraphite = Color(red: 0.135, green: 0.143, blue: 0.155)
-    static let hairline = Color.white.opacity(0.085)
-    static let secondaryText = Color.white.opacity(0.58)
-    static let tertiaryText = Color.white.opacity(0.36)
+    static let headerHeight: CGFloat = 62
+    static let mint = Color(red: 0.23, green: 0.78, blue: 0.50)
+    static let ink = Color(red: 0.022, green: 0.024, blue: 0.027)
+    static let graphite = Color(red: 0.070, green: 0.074, blue: 0.080)
+    static let raisedGraphite = Color(red: 0.110, green: 0.114, blue: 0.122)
+    static let field = Color(red: 0.065, green: 0.067, blue: 0.072)
+    static let control = Color.white.opacity(0.060)
+    static let selectedControl = Color.white.opacity(0.135)
+    static let selectedLedger = Color.white.opacity(0.055)
+    static let hoveredLedger = Color.white.opacity(0.028)
+    static let controlStroke = Color.white.opacity(0.075)
+    static let hairline = Color.white.opacity(0.065)
+    static let primaryText = Color.white.opacity(0.90)
+    static let secondaryText = Color.white.opacity(0.55)
+    static let tertiaryText = Color.white.opacity(0.39)
+    static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
 }
 
 struct NotchHugShape: Shape {
@@ -54,13 +62,13 @@ struct NotchHugShape: Shape {
 struct NotchSurfaceBackground: View {
     var body: some View {
         NotchHugShape(bottomRadius: 24)
-            .fill(NotchTheme.ink.opacity(0.96))
+            .fill(NotchTheme.ink.opacity(0.985))
             .background(.ultraThinMaterial, in: NotchHugShape(bottomRadius: 24))
             .overlay {
                 NotchHugShape(bottomRadius: 24)
                     .stroke(NotchTheme.hairline, lineWidth: 1)
             }
-            .shadow(color: .black.opacity(0.42), radius: 28, y: 16)
+            .shadow(color: .black.opacity(0.46), radius: 24, y: 14)
     }
 }
 
@@ -69,10 +77,11 @@ struct PressableIconButtonStyle: ButtonStyle {
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
+            .foregroundStyle(configuration.isPressed ? NotchTheme.primaryText : NotchTheme.secondaryText)
             .frame(width: 28, height: 28)
-            .background(configuration.isPressed ? Color.white.opacity(0.13) : Color.white.opacity(0.07))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
+            .background(configuration.isPressed ? Color.white.opacity(0.07) : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
             .animation(reduceMotion ? nil : .easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
@@ -98,18 +107,14 @@ struct LedgerSectionHeader: View {
     let count: Int
 
     var body: some View {
-        HStack(spacing: 7) {
-            Text(title.uppercased())
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.8)
-            Text("\(count)")
-                .font(.system(size: 9, weight: .semibold, design: .rounded))
-                .padding(.horizontal, 5)
-                .padding(.vertical, 2)
-                .background(Color.white.opacity(0.07))
-                .clipShape(Capsule())
+        HStack {
+            Text(title)
+                .font(.system(size: 11, weight: .regular))
+            Spacer()
         }
-        .foregroundStyle(NotchTheme.tertiaryText)
+        .foregroundStyle(NotchTheme.secondaryText)
+        .padding(.horizontal, 20)
+        .frame(height: 45)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(count) items")
     }

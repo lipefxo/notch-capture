@@ -155,6 +155,11 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    enum CaptureFeedback: Equatable {
+        case stayExpanded
+        case transientConfirmation
+    }
+
     struct Shortcut: Identifiable, Hashable {
         enum Action: String, Hashable {
             case captureSelection
@@ -198,7 +203,6 @@ final class AppViewModel: ObservableObject {
     @Published var items: [LedgerItem]
     @Published var selectedItemID: UUID?
     @Published var filter: InboxFilter = .all
-    @Published var searchText = ""
     @Published var composerText = ""
     @Published var confirmation: Confirmation?
     @Published var errorMessage: String?
@@ -248,7 +252,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var visibleItems: [LedgerItem] {
-        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let query = normalizedComposerText
         return items
             .filter(matchesFilter)
             .filter { item in
@@ -264,6 +268,10 @@ final class AppViewModel: ObservableObject {
 
     var pinnedItems: [LedgerItem] { visibleItems.filter(\.isPinned) }
     var unpinnedItems: [LedgerItem] { visibleItems.filter { !$0.isPinned } }
+
+    var composerHasQuery: Bool { !normalizedComposerText.isEmpty }
+    var composerHasMatches: Bool { composerHasQuery && !visibleItems.isEmpty }
+    var canAddComposerText: Bool { composerHasQuery && visibleItems.isEmpty }
 
     var todayItems: [LedgerItem] {
         unpinnedItems.filter { Calendar.current.isDateInToday($0.createdAt) }
@@ -287,19 +295,38 @@ final class AppViewModel: ObservableObject {
     }
 
     func submitComposer() {
-        let text = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = normalizedComposerText
         guard !text.isEmpty else {
-            errorMessage = "Type something to capture."
+            return
+        }
+        guard canAddComposerText else {
+            selectedItemID = visibleItems.first?.id
             return
         }
         errorMessage = nil
+        filter = .all
         hooks.onCaptureText(text)
         composerText = ""
     }
 
+    func showCaptureFeedback(
+        for item: LedgerItem,
+        feedback: CaptureFeedback,
+        destination: String = "Inbox"
+    ) {
+        errorMessage = nil
+        switch feedback {
+        case .stayExpanded:
+            confirmation = nil
+            surfaceState = .expanded
+        case .transientConfirmation:
+            confirmation = Confirmation(itemID: item.id, title: item.title, destination: destination)
+            surfaceState = .confirmation
+        }
+    }
+
     func showConfirmation(for item: LedgerItem, destination: String = "Inbox") {
-        confirmation = Confirmation(itemID: item.id, title: item.title, destination: destination)
-        surfaceState = .confirmation
+        showCaptureFeedback(for: item, feedback: .transientConfirmation, destination: destination)
     }
 
     func undoConfirmation() {
@@ -397,6 +424,10 @@ final class AppViewModel: ObservableObject {
         ownership == .companion || (ownership == .automatic && isNotchFlowRunning)
     }
 
+    private var normalizedComposerText: String {
+        composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private func matchesFilter(_ item: LedgerItem) -> Bool {
         switch filter {
         case .all:
@@ -422,37 +453,54 @@ final class AppViewModel: ObservableObject {
 
 extension AppViewModel {
     static var preview: AppViewModel {
+        let calendar = Calendar.current
+        let today = Date.now
+        let thumbnailURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+            .appendingPathComponent("Design/reference-thumbnail.png")
         let pinned = LedgerItem(
-            kind: .task,
-            title: "Send the revised capture flow",
-            detail: "Include the keyboard-first path and empty state.",
-            dueDate: .now,
-            listName: "Work",
-            sourceApp: "Safari",
+            title: "Review launch notes",
+            detail: "Selected from Safari",
+            createdAt: calendar.date(bySettingHour: 10, minute: 32, second: 0, of: today) ?? today,
             isPinned: true
+        )
+        let selectedTask = LedgerItem(
+            kind: .task,
+            title: "Book studio time",
+            createdAt: calendar.date(bySettingHour: 9, minute: 42, second: 0, of: today) ?? today,
+            dueDate: today
         )
         let model = AppViewModel(
             surfaceState: .expanded,
             items: [
                 pinned,
                 LedgerItem(
-                    title: "A calm place for the things worth keeping",
-                    detail: "The notch should feel like a pocket, not another inbox.",
-                    sourceApp: "Notes"
+                    title: "IMG_2147.jpg",
+                    createdAt: calendar.date(bySettingHour: 9, minute: 36, second: 0, of: today) ?? today,
+                    attachments: [
+                        LedgerAttachment(
+                            kind: .image,
+                            name: "IMG_2147.jpg",
+                            subtitle: "1.2 MB",
+                            previewURL: thumbnailURL
+                        )
+                    ]
                 ),
                 LedgerItem(
-                    title: "Notch interaction references",
-                    detail: "",
-                    listName: "Ideas",
+                    title: "cal.com/studio",
+                    createdAt: calendar.date(bySettingHour: 9, minute: 28, second: 0, of: today) ?? today,
                     attachments: [
-                        LedgerAttachment(kind: .link, name: "notchflow.app", subtitle: "Dynamic Island for your Mac"),
-                        LedgerAttachment(kind: .image, name: "notch-study.png", subtitle: "1.8 MB")
+                        LedgerAttachment(
+                            kind: .link,
+                            name: "cal.com/studio",
+                            previewURL: URL(string: "https://cal.com/studio")
+                        )
                     ]
-                )
+                ),
+                selectedTask
             ],
             accessibilityGranted: true
         )
-        model.selectedItemID = pinned.id
+        model.selectedItemID = selectedTask.id
         return model
     }
 }

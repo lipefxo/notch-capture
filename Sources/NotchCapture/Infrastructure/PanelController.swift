@@ -177,7 +177,7 @@ public final class PanelController: NSObject, ObservableObject {
             let height = max(36, geometry.safeAreaInsets.top + 6)
             size = CGSize(width: max(176, notchWidth + 24), height: height)
         case .confirmation:
-            size = CGSize(width: 380, height: 92)
+            size = CGSize(width: 300, height: 72)
         case .expanded, .dropTarget, .onboarding, .settings:
             size = CGSize(width: 420, height: min(560, geometry.screenFrame.height - 28))
         case .dormant, .screenshot:

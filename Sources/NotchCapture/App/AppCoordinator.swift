@@ -35,6 +35,11 @@ final class AppCoordinator {
     private var hotKeyManager: GlobalHotKeyManager?
     private var cancellables: Set<AnyCancellable> = []
     private var previousSurfaceState: AppViewModel.SurfaceState
+    private var permissionReturnState: AppViewModel.SurfaceState?
+    private var permissionLocalEventMonitor: Any?
+    private var permissionGlobalEventMonitor: Any?
+    private var permissionActivationObserver: NSObjectProtocol?
+    private var permissionRestoreTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) throws {
         self.defaults = defaults
@@ -192,6 +197,7 @@ final class AppCoordinator {
         hotKeyManager = nil
         occupancyService.stop()
         screenshotSelection.cancel()
+        clearPermissionSuspension()
         panelController.dismiss(restoringFocus: false)
     }
 
@@ -353,6 +359,7 @@ final class AppCoordinator {
     }
 
     private func handleHotKey(_ action: GlobalHotKeyAction) {
+        clearPermissionSuspension()
         switch action {
         case .captureSelection:
             captureCurrentSelection()
@@ -384,7 +391,7 @@ final class AppCoordinator {
     private func captureManualText(_ text: String) {
         do {
             let item = try repository.createItem(text: text, origin: .manual)
-            presentConfirmation(for: item)
+            presentCaptureFeedback(for: item, feedback: .stayExpanded)
         } catch {
             show(error)
         }
@@ -440,10 +447,19 @@ final class AppCoordinator {
     }
 
     private func presentConfirmation(for item: CaptureItem) {
+        presentCaptureFeedback(for: item, feedback: .transientConfirmation)
+    }
+
+    private func presentCaptureFeedback(
+        for item: CaptureItem,
+        feedback: AppViewModel.CaptureFeedback
+    ) {
         reloadFromStore()
         guard let ledger = viewModel.items.first(where: { $0.id == item.id }) else { return }
-        viewModel.showConfirmation(for: ledger)
-        synchronizePanel(with: .confirmation)
+        viewModel.showCaptureFeedback(for: ledger, feedback: feedback)
+        if feedback == .transientConfirmation {
+            synchronizePanel(with: .confirmation)
+        }
     }
 
     private func undoCapture(id: UUID?) {
@@ -653,6 +669,7 @@ final class AppCoordinator {
     }
 
     private func requestAccessibility() {
+        suspendForSystemPermissionPrompt()
         selectionService.requestAccessibilityAccess()
         pollAccessibilityStatus()
     }
@@ -662,14 +679,84 @@ final class AppCoordinator {
             guard let self else { return }
             for _ in 0..<20 {
                 viewModel.accessibilityGranted = selectionService.isAccessibilityTrusted
-                if viewModel.accessibilityGranted { return }
+                if viewModel.accessibilityGranted {
+                    schedulePermissionSurfaceRestore()
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(500))
             }
         }
     }
 
     private func requestScreenRecording() {
+        suspendForSystemPermissionPrompt()
         viewModel.screenRecordingGranted = screenCaptureService.requestPermission()
+        if viewModel.screenRecordingGranted {
+            schedulePermissionSurfaceRestore()
+        }
+    }
+
+    /// The notch panel intentionally sits above other notch utilities during an
+    /// explicit session. System-owned permission prompts use a lower window level,
+    /// so the panel must be removed for the duration of that modal interaction.
+    private func suspendForSystemPermissionPrompt() {
+        clearPermissionSuspension()
+        permissionReturnState = viewModel.surfaceState == .settings ? .settings : .expanded
+        panelController.dismiss(restoringFocus: false)
+
+        permissionLocalEventMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
+        ) { [weak self] event in
+            self?.schedulePermissionSurfaceRestore()
+            return event
+        }
+        permissionGlobalEventMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDown, .rightMouseDown]
+        ) { [weak self] _ in
+            self?.schedulePermissionSurfaceRestore()
+        }
+        permissionActivationObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification,
+            object: NSApp,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.schedulePermissionSurfaceRestore() }
+        }
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func schedulePermissionSurfaceRestore() {
+        permissionRestoreTask?.cancel()
+        permissionRestoreTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(650))
+            guard !Task.isCancelled, let self, let returnState = self.permissionReturnState else { return }
+
+            let ownPID = ProcessInfo.processInfo.processIdentifier
+            let appIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == ownPID
+            guard appIsFrontmost, NSApp.modalWindow == nil else { return }
+
+            self.clearPermissionSuspension()
+            self.viewModel.surfaceState = returnState
+            self.synchronizePanel(with: returnState)
+        }
+    }
+
+    private func clearPermissionSuspension() {
+        permissionRestoreTask?.cancel()
+        permissionRestoreTask = nil
+        permissionReturnState = nil
+        if let permissionLocalEventMonitor {
+            NSEvent.removeMonitor(permissionLocalEventMonitor)
+            self.permissionLocalEventMonitor = nil
+        }
+        if let permissionGlobalEventMonitor {
+            NSEvent.removeMonitor(permissionGlobalEventMonitor)
+            self.permissionGlobalEventMonitor = nil
+        }
+        if let permissionActivationObserver {
+            NotificationCenter.default.removeObserver(permissionActivationObserver)
+            self.permissionActivationObserver = nil
+        }
     }
 
     private func setLaunchAtLogin(_ enabled: Bool) {

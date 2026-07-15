@@ -3,18 +3,20 @@
 ## Comparison
 
 - Selected source: `Design/selected-hugged-ledger.png` (1487 × 1058)
-- Expanded implementation: `Design/qa/implementation-expanded.png` (420 × 560 points at 2×)
-- Confirmation implementation: `Design/qa/implementation-confirmation.png` (344 × 62 points at 2×)
-- Same-input comparison: `Design/qa/source-and-implementation.png`
+- User-supplied crop: `.context/attachments/8oYXJS/CleanShot 2026-07-15 at 16.55.02@2x.jpg`
+- Expanded implementation: `Design/qa/implementation-expanded-v3.png` (420 × 560 points at 2×)
+- Confirmation implementation: `Design/qa/implementation-confirmation-v3.png` (280 × 56 points at 2× inside a 300 × 72 panel)
+- Same-input comparison: `Design/qa/source-and-implementation-v3.png`
 - Environment: native AppKit `NSPanel` hosting SwiftUI, macOS 26.5.2, 2560 × 1440 display
 
 ## QA history
 
-1. The first internal render exposed AppKit-backed controls as placeholders and did not lay out the lazy feed. Replaced the synthetic render with a capture of the live `NSHostingView` backing the actual panel.
-2. Simplified the top title to “Inbox,” retained the centered notch-hug connector, and selected a preview row so the requested inline actions are visible.
-3. Compared the selected direction and both implemented surfaces together. Geometry, hierarchy, graphite glass treatment, mint accent, quick capture, filters, grouped ledger, inline controls, and compact Undo confirmation align with the target.
-4. Verified the companion label remains legible without competing with the title. All body text and controls remain inside the 420 × 560 surface with no clipping or horizontal overflow.
-5. Verified keyboard focus, accessible labels/hints, Reduce Motion-aware press feedback, and dark high-contrast hierarchy in code and in the rendered surface.
+1. The original implementation drifted into a card-heavy, mint-accented dashboard treatment. Rebuilt it as the source's flat graphite ledger with a black header, restrained gray controls, section separators, and edge-to-edge rows.
+2. Matched the source hierarchy and copy: “Inbox,” the 60-point Quick capture field, neutral All/Tasks/filter controls, Pinned and Today sections, reference task data, an image attachment, and a link row.
+3. Preserved the selected direction's centered notch-hug connector and exposed the requested inline completion, pin, tag, and trash controls only on the selected task row.
+4. A second comparison exposed an unbounded filter icon, locale-dependent timestamps, an under-emphasized completion action, and an oversized confirmation. Fixed all four before the final render.
+5. Compared the selected direction and final native surfaces in one image. Typography, spacing, graphite colors, imagery, copy, SF Symbols, row geometry, and the mint interaction accent now match the reference closely at the intended panel size.
+6. Verified all body text and controls remain inside the 420 × 560 surface without clipping or horizontal overflow. Keyboard focus, accessible labels and hints, Reduce Motion behavior, and increased-contrast hierarchy remain implemented.
 
 ## Coexistence evidence
 
@@ -24,6 +26,6 @@
 
 ## Result
 
-The native implementation faithfully carries the selected visual direction while adding the requested companion status, inline task controls, real data states, and notch ownership behavior.
+The native implementation now faithfully carries the selected hugged-ledger direction while retaining functional capture controls, real data states, inline task actions, and notch ownership behavior.
 
 final result: passed
