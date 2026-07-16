@@ -174,6 +174,65 @@ final class CaptureDataTests: XCTestCase {
         }
     }
 
+    func testUpdatingTextPreservesExactContentAndSynchronizesTags() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let home = try repository.createTag(name: "Home")
+        let item = try repository.createItem(
+            text: "Old content @Work",
+            origin: .manual,
+            tagNames: ["Work"]
+        )
+        let work = try XCTUnwrap(item.tags.first)
+        let updatedAt = Date(timeIntervalSinceReferenceDate: 42_000)
+        let edited = "  First line  \n\nSecond line @home @New @new"
+
+        try repository.updateText(item, text: edited, now: updatedAt)
+
+        XCTAssertEqual(item.text, edited)
+        XCTAssertEqual(item.updatedAt, updatedAt)
+        XCTAssertEqual(Set(item.tags.map(\.id)), Set([home.id, try XCTUnwrap(
+            repository.fetchTags().first(where: { $0.normalizedName == "new" })
+        ).id]))
+        XCTAssertFalse(item.tags.contains(where: { $0.id == work.id }))
+        XCTAssertTrue(try repository.fetchTags().contains(where: { $0.id == work.id }))
+    }
+
+    func testUpdatingTextRejectsEmptyTextWithoutChangingTextOnlyItem() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let item = try repository.createItem(
+            text: "Keep this @Work",
+            origin: .manual,
+            tagNames: ["Work"]
+        )
+        let originalTagIDs = item.tags.map(\.id)
+        let originalUpdatedAt = item.updatedAt
+
+        XCTAssertThrowsError(try repository.updateText(item, text: " \n ")) { error in
+            guard case ItemRepositoryError.emptyCapture = error else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+        }
+
+        XCTAssertEqual(item.text, "Keep this @Work")
+        XCTAssertEqual(item.tags.map(\.id), originalTagIDs)
+        XCTAssertEqual(item.updatedAt, originalUpdatedAt)
+    }
+
+    func testAttachmentBackedItemCanBeUpdatedToEmptyText() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let url = try XCTUnwrap(URL(string: "https://example.com"))
+        let item = try repository.createItem(from: .mixed(text: "A caption", urls: [url]), origin: .drop)
+
+        try repository.updateText(item, text: "")
+
+        XCTAssertTrue(item.text.isEmpty)
+        XCTAssertEqual(item.attachments.count, 1)
+        XCTAssertTrue(item.tags.isEmpty)
+    }
+
     func testAttachmentStoreRejectsTraversal() throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temporary) }

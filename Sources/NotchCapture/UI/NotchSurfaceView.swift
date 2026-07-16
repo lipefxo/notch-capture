@@ -1,53 +1,146 @@
 import SwiftUI
 
+struct SurfaceChromeMetrics: Equatable {
+    let size: CGSize
+    let bottomRadius: CGFloat
+    let shadowOpacity: Double
+    let shadowRadius: CGFloat
+    let shadowY: CGFloat
+
+    static func resolve(for state: AppViewModel.SurfaceState) -> Self? {
+        switch state {
+        case .dormant, .screenshot:
+            nil
+        case .collapsed:
+            Self(
+                size: CGSize(width: 178, height: 34),
+                bottomRadius: 16,
+                shadowOpacity: 0.36,
+                shadowRadius: 16,
+                shadowY: 8
+            )
+        case .confirmation:
+            Self(
+                size: CGSize(width: 280, height: 56),
+                bottomRadius: 24,
+                shadowOpacity: 0.46,
+                shadowRadius: 24,
+                shadowY: 14
+            )
+        case .expanded, .drop:
+            Self(
+                size: CGSize(width: NotchTheme.width, height: NotchTheme.maxHeight),
+                bottomRadius: 22,
+                shadowOpacity: 0.46,
+                shadowRadius: 24,
+                shadowY: 14
+            )
+        case .onboarding:
+            Self(
+                size: CGSize(width: NotchTheme.width, height: 500),
+                bottomRadius: 24,
+                shadowOpacity: 0.46,
+                shadowRadius: 24,
+                shadowY: 14
+            )
+        case .settings:
+            Self(
+                size: CGSize(width: NotchTheme.width, height: NotchTheme.maxHeight),
+                bottomRadius: 24,
+                shadowOpacity: 0.46,
+                shadowRadius: 24,
+                shadowY: 14
+            )
+        }
+    }
+}
+
 struct NotchSurfaceView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @State private var displayedState: AppViewModel.SurfaceState
+    @State private var displayedState: AppViewModel.SurfaceState?
+    @State private var chromeMetrics: SurfaceChromeMetrics?
     @State private var activeTransition: AnyTransition = .opacity
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
-        _displayedState = State(initialValue: viewModel.surfaceState)
+        _displayedState = State(
+            initialValue: SurfaceChromeMetrics.resolve(for: viewModel.surfaceState) == nil
+                ? nil
+                : viewModel.surfaceState
+        )
+        _chromeMetrics = State(initialValue: SurfaceChromeMetrics.resolve(for: viewModel.surfaceState))
     }
 
     var body: some View {
         ZStack(alignment: .top) {
-            Group {
-                switch displayedState {
-                case .dormant:
-                    EmptyView()
-                case .collapsed:
-                    CollapsedPillView(viewModel: viewModel)
-                case .confirmation:
-                    ConfirmationView(viewModel: viewModel)
-                case .expanded, .drop:
-                    ExpandedInboxView(viewModel: viewModel)
-                case .screenshot:
-                    ScreenshotStateView(viewModel: viewModel)
-                case .onboarding:
-                    OnboardingView(viewModel: viewModel)
-                case .settings:
-                    SettingsView(viewModel: viewModel)
+            if let displayedState, let metrics = chromeMetrics {
+                ZStack(alignment: .top) {
+                    NotchSurfaceBackground(
+                        bottomRadius: metrics.bottomRadius,
+                        shadowOpacity: metrics.shadowOpacity,
+                        shadowRadius: metrics.shadowRadius,
+                        shadowY: metrics.shadowY
+                    )
+
+                    surfaceContent(for: displayedState)
+                        .id(contentIdentity(for: displayedState))
+                        .transition(activeTransition)
+                        .clipShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
                 }
+                .frame(width: metrics.size.width, height: metrics.size.height, alignment: .top)
+                .contentShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
             }
-            .id(contentIdentity(for: displayedState))
-            .transition(activeTransition)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
         .onChange(of: viewModel.surfaceState) { oldState, newState in
+            // AppKit owns the retreat to hidden states. Keeping the last visible
+            // surface mounted prevents the shrinking panel from becoming empty.
+            guard let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else { return }
+
             if isDropOnlyTransition(from: oldState, to: newState) {
                 displayedState = newState
+                chromeMetrics = newMetrics
                 return
             }
 
-            activeTransition = transition(from: oldState, to: newState)
+            if displayedState == newState {
+                chromeMetrics = newMetrics
+                return
+            }
+
+            let visibleOldState = displayedState ?? oldState
+            activeTransition = transition(from: visibleOldState, to: newState)
             withAnimation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content) {
                 displayedState = newState
             }
+            withAnimation(reduceMotion ? NotchMotion.reducedMotion : chromeAnimation(
+                from: visibleOldState,
+                to: newState
+            )) {
+                chromeMetrics = newMetrics
+            }
         }
         .preferredColorScheme(.dark)
+    }
+
+    @ViewBuilder
+    private func surfaceContent(for state: AppViewModel.SurfaceState) -> some View {
+        switch state {
+        case .dormant, .screenshot:
+            EmptyView()
+        case .collapsed:
+            CollapsedPillView(viewModel: viewModel)
+        case .confirmation:
+            ConfirmationView(viewModel: viewModel)
+        case .expanded, .drop:
+            ExpandedInboxView(viewModel: viewModel)
+        case .onboarding:
+            OnboardingView(viewModel: viewModel)
+        case .settings:
+            SettingsView(viewModel: viewModel)
+        }
     }
 
     private func isDropOnlyTransition(
@@ -78,14 +171,14 @@ struct NotchSurfaceView: View {
 
         if oldState == .expanded && newState == .settings {
             return .asymmetric(
-                insertion: .opacity.combined(with: .offset(x: 8)),
-                removal: .opacity.combined(with: .offset(x: -8))
+                insertion: .opacity.combined(with: .offset(x: 12)),
+                removal: .opacity.combined(with: .offset(x: -12))
             )
         }
         if oldState == .settings && newState == .expanded {
             return .asymmetric(
-                insertion: .opacity.combined(with: .offset(x: -8)),
-                removal: .opacity.combined(with: .offset(x: 8))
+                insertion: .opacity.combined(with: .offset(x: -12)),
+                removal: .opacity.combined(with: .offset(x: 12))
             )
         }
         if newState == .confirmation {
@@ -96,6 +189,21 @@ struct NotchSurfaceView: View {
         }
 
         return .opacity.combined(with: .offset(y: -4))
+    }
+
+    private func chromeAnimation(
+        from oldState: AppViewModel.SurfaceState,
+        to newState: AppViewModel.SurfaceState
+    ) -> Animation {
+        guard let oldMetrics = SurfaceChromeMetrics.resolve(for: oldState),
+              let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else {
+            return NotchMotion.content
+        }
+        let oldArea = oldMetrics.size.width * oldMetrics.size.height
+        let newArea = newMetrics.size.width * newMetrics.size.height
+        if newArea > oldArea { return NotchMotion.surfaceExpansion.animation }
+        if newArea < oldArea { return NotchMotion.surfaceContraction.animation }
+        return NotchMotion.content
     }
 }
 
@@ -119,7 +227,6 @@ struct CollapsedPillView: View {
                     .foregroundStyle(NotchTheme.tertiaryText)
             }
             .frame(width: 178, height: 34)
-            .background(NotchTheme.ink.opacity(0.98))
             .overlay(alignment: .bottom) {
                 Capsule()
                     .fill(isHovered ? NotchTheme.mint.opacity(0.65) : Color.white.opacity(0.1))
@@ -127,9 +234,7 @@ struct CollapsedPillView: View {
                     .scaleEffect(x: isHovered ? 1 : 22 / 38)
                     .padding(.bottom, 3)
             }
-            .clipShape(NotchHugShape(bottomRadius: 16))
             .contentShape(NotchHugShape(bottomRadius: 16))
-            .shadow(color: .black.opacity(0.36), radius: 16, y: 8)
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.94))
         .notchHitTarget(NotchHugShape(bottomRadius: 16))
@@ -165,7 +270,6 @@ struct ScreenshotStateView: View {
         }
         .padding(.horizontal, 18)
         .frame(width: 360, height: 64)
-        .background(NotchSurfaceBackground())
         .accessibilityElement(children: .contain)
     }
 }

@@ -329,13 +329,20 @@ final class ItemRepository {
         return true
     }
 
-    func updateText(_ item: CaptureItem, text: String) throws {
+    func updateText(_ item: CaptureItem, text: String, now: Date = .now) throws {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !item.attachments.isEmpty else {
             throw ItemRepositoryError.emptyCapture
         }
-        item.text = text
-        item.touch()
-        try modelContext.save()
+        do {
+            let parsed = CaptureTagParser.parse(text)
+            item.text = text
+            item.tags = try resolveTags(named: parsed.tagNames, now: now)
+            item.touch(at: now)
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
     }
 
     func setKind(_ kind: CaptureItemKind, for item: CaptureItem) throws {

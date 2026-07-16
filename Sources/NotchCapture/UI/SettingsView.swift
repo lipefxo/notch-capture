@@ -24,8 +24,6 @@ struct SettingsView: View {
             .background(NotchTheme.graphite)
         }
         .frame(width: NotchTheme.width, height: NotchTheme.maxHeight)
-        .background(NotchSurfaceBackground())
-        .clipShape(NotchHugShape(bottomRadius: 24))
         .onExitCommand { viewModel.openExpanded() }
         .alert("Rename Folder", isPresented: renameAlertBinding) {
             TextField("Folder name", text: $renameFolderName)

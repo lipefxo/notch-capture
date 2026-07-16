@@ -93,38 +93,35 @@ final class AppViewModelTests: XCTestCase {
 
     func testReturnCreatesStandaloneTagWithoutAddingHyphens() {
         var createdTag: String?
+        var capturedItem: String?
         var hooks = AppViewModel.Hooks()
         hooks.onCreateTag = { createdTag = $0 }
+        hooks.onCaptureText = { text, _ in capturedItem = text }
         let viewModel = AppViewModel(hooks: hooks)
         viewModel.composerText = "@work"
 
         viewModel.handleComposerReturn()
         XCTAssertEqual(createdTag, "work")
+        XCTAssertNil(capturedItem)
         XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertTrue(viewModel.tagSuggestions.isEmpty)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
     }
 
-    func testReturnWhitespaceFallbackCommitsTagThenCreatesItem() {
+    func testReturnCommitsExistingTagThenCreatesItem() {
         let work = AppViewModel.TagSummary(name: "work")
         var captured: String?
         var hooks = AppViewModel.Hooks()
         hooks.onCaptureText = { text, _ in captured = text }
         let viewModel = AppViewModel(tags: [work], hooks: hooks)
         let activeTag = "Do this new thing at @work"
-        viewModel.composerText = activeTag + " "
+        viewModel.composerText = activeTag
 
-        viewModel.composerTextDidChange(
-            from: activeTag,
-            to: activeTag + " ",
-            submittedByReturnKey: true
-        )
+        viewModel.handleComposerReturn()
         XCTAssertEqual(viewModel.composerText, activeTag + " ")
         XCTAssertNil(captured)
 
-        viewModel.composerTextDidChange(
-            from: activeTag + " ",
-            to: activeTag + "  ",
-            submittedByReturnKey: true
-        )
+        viewModel.handleComposerReturn()
         XCTAssertEqual(captured, activeTag)
         XCTAssertEqual(viewModel.composerText, "")
     }
@@ -546,6 +543,220 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.items.count, 2)
         XCTAssertTrue(viewModel.items[1].isTrashed)
         XCTAssertTrue(trashedIDs.isEmpty)
+    }
+
+    func testInlineEditingSavesExactTextAndSuppressesRowCommandsAndReordering() {
+        let home = AppViewModel.TagSummary(name: "Home")
+        let item = AppViewModel.LedgerItem(
+            title: "Original",
+            text: "Original @Home",
+            tags: [home]
+        )
+        var persisted: (UUID, String)?
+        var hooks = AppViewModel.Hooks()
+        hooks.onUpdateText = { id, text in
+            persisted = (id, text)
+            return nil
+        }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [item],
+            tags: [home],
+            hooks: hooks
+        )
+
+        viewModel.beginEditing(item)
+
+        XCTAssertEqual(viewModel.itemEditSession?.originalText, "Original @Home")
+        XCTAssertEqual(viewModel.itemEditSession?.draft, "Original @Home")
+        XCTAssertEqual(viewModel.keyboardFocus, .itemEditor)
+        XCTAssertEqual(viewModel.selectedItemID, item.id)
+        XCTAssertFalse(viewModel.canReorderVisibleItems)
+        XCTAssertFalse(viewModel.performSelectedRowKeyboardCommand(.toggleCompletion))
+
+        let edited = "First line\n\nSecond line @Home"
+        viewModel.updateEditingDraft(edited)
+        XCTAssertTrue(viewModel.saveEditing())
+
+        XCTAssertEqual(persisted?.0, item.id)
+        XCTAssertEqual(persisted?.1, edited)
+        XCTAssertNil(viewModel.itemEditSession)
+        XCTAssertEqual(viewModel.keyboardFocus, .selectedRow)
+        XCTAssertEqual(viewModel.items[0].text, edited)
+        XCTAssertEqual(viewModel.items[0].title, "First line")
+        XCTAssertEqual(viewModel.items[0].detail, "Second line @Home")
+        XCTAssertEqual(viewModel.items[0].tags, [home])
+    }
+
+    func testInlineEditingCancelAndFailuresKeepStoredContentSafe() {
+        let item = AppViewModel.LedgerItem(title: "Original")
+        var persistedTexts: [String] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onUpdateText = { _, text in
+            persistedTexts.append(text)
+            return text == "Rejected" ? "Could not save." : nil
+        }
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [item], hooks: hooks)
+
+        viewModel.beginEditing(item)
+        viewModel.updateEditingDraft("Changed")
+        viewModel.cancelEditing()
+        XCTAssertEqual(viewModel.items[0].text, "Original")
+        XCTAssertTrue(persistedTexts.isEmpty)
+
+        viewModel.beginEditing(item)
+        viewModel.updateEditingDraft(" \n ")
+        XCTAssertFalse(viewModel.saveEditing())
+        XCTAssertNotNil(viewModel.itemEditSession)
+        XCTAssertEqual(viewModel.keyboardFocus, .itemEditor)
+        XCTAssertTrue(persistedTexts.isEmpty)
+
+        viewModel.updateEditingDraft("Rejected")
+        XCTAssertFalse(viewModel.saveEditing())
+        XCTAssertEqual(viewModel.errorMessage, "Could not save.")
+        XCTAssertEqual(viewModel.itemEditSession?.draft, "Rejected")
+        XCTAssertEqual(viewModel.items[0].text, "Original")
+    }
+
+    func testDismissalRequestsCancelOnEscapeAndSaveOnExternalClick() {
+        let item = AppViewModel.LedgerItem(title: "Original")
+        var persistedTexts: [String] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onUpdateText = { _, text in
+            persistedTexts.append(text)
+            return nil
+        }
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [item], hooks: hooks)
+
+        viewModel.beginEditing(item)
+        viewModel.updateEditingDraft("Cancelled")
+        viewModel.handleDismissalRequest(.escape)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertNil(viewModel.itemEditSession)
+        XCTAssertTrue(persistedTexts.isEmpty)
+
+        viewModel.beginEditing(item)
+        viewModel.updateEditingDraft("Saved outside")
+        viewModel.handleDismissalRequest(.externalClick)
+        XCTAssertEqual(persistedTexts, ["Saved outside"])
+        XCTAssertNil(viewModel.itemEditSession)
+        XCTAssertNotEqual(viewModel.surfaceState, .expanded)
+
+        hooks.onUpdateText = { _, _ in "Could not save." }
+        let failingViewModel = AppViewModel(surfaceState: .expanded, items: [item], hooks: hooks)
+        failingViewModel.beginEditing(item)
+        failingViewModel.updateEditingDraft("Unsaved outside")
+        failingViewModel.handleDismissalRequest(.externalClick)
+        XCTAssertEqual(failingViewModel.surfaceState, .expanded)
+        XCTAssertEqual(failingViewModel.itemEditSession?.draft, "Unsaved outside")
+        XCTAssertEqual(failingViewModel.errorMessage, "Could not save.")
+    }
+
+    func testEscapeClearsClickedTagFilterBeforeDismissing() {
+        let home = AppViewModel.TagSummary(name: "Home")
+        let tagged = AppViewModel.LedgerItem(title: "Tagged", tags: [home])
+        let untagged = AppViewModel.LedgerItem(title: "Untagged")
+        var dismissalCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onDismiss = { dismissalCount += 1 }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [tagged, untagged],
+            tags: [home],
+            hooks: hooks
+        )
+
+        viewModel.search(for: home)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [tagged.id])
+
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertEqual(Set(viewModel.visibleItems.map(\.id)), Set([tagged.id, untagged.id]))
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+        XCTAssertEqual(dismissalCount, 0)
+
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertNotEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(dismissalCount, 1)
+    }
+
+    func testEscapeClearsPlainTextSearchBeforeDismissing() {
+        var dismissalCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onDismiss = { dismissalCount += 1 }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [
+                AppViewModel.LedgerItem(title: "Launch plan"),
+                AppViewModel.LedgerItem(title: "Dinner")
+            ],
+            hooks: hooks
+        )
+        viewModel.composerText = "launch"
+        XCTAssertEqual(viewModel.visibleItems.map(\.title), ["Launch plan"])
+
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertEqual(Set(viewModel.visibleItems.map(\.title)), Set(["Launch plan", "Dinner"]))
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+        XCTAssertEqual(dismissalCount, 0)
+    }
+
+    func testEscapeDismissesAutocompleteBeforeClearingItsQuery() {
+        let work = AppViewModel.TagSummary(name: "Work")
+        let viewModel = AppViewModel(surfaceState: .expanded, tags: [work])
+        viewModel.composerText = "@wo"
+        XCTAssertFalse(viewModel.tagSuggestions.isEmpty)
+
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertEqual(viewModel.composerText, "@wo")
+        XCTAssertTrue(viewModel.tagSuggestions.isEmpty)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+    }
+
+    func testEscapeReturnsFromFolderBeforeDismissing() {
+        let folder = AppViewModel.FolderSummary(name: "Projects")
+        var dismissalCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onDismiss = { dismissalCount += 1 }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            folders: [folder],
+            hooks: hooks
+        )
+        viewModel.openFolder(folder)
+
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertTrue(viewModel.isAtRoot)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+        XCTAssertEqual(dismissalCount, 0)
+    }
+
+    func testExternalClickDismissesWithAnActiveQuery() {
+        var dismissalCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onDismiss = { dismissalCount += 1 }
+        let viewModel = AppViewModel(surfaceState: .expanded, hooks: hooks)
+        viewModel.composerText = "launch"
+
+        viewModel.handleDismissalRequest(.externalClick)
+
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertNotEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(dismissalCount, 1)
     }
 
     func testCompletedTasksRemainOnAllForTwentyFourHours() {
@@ -985,5 +1196,94 @@ final class LedgerReorderSessionTests: XCTestCase {
         XCTAssertEqual(moves.count, 1)
         XCTAssertEqual(moves.first?.0, moving.id)
         XCTAssertEqual(moves.first?.1, folder.id)
+    }
+
+    func testLandingResolverUsesCommittedRowFrameForReorder() {
+        let itemID = UUID()
+        let source = CGRect(x: 0, y: 80, width: 420, height: 48)
+        let destination = CGRect(x: 0, y: 240, width: 420, height: 48)
+        let target = LedgerReorderTarget(
+            targetID: UUID(),
+            placement: .after,
+            destinationPinned: false
+        )
+
+        let landing = LedgerDragLandingResolver.landing(
+            for: .reorder(target),
+            itemID: itemID,
+            sourceFrame: source,
+            regions: [.row(itemID): destination]
+        )
+
+        XCTAssertEqual(landing, .reorder(destination))
+        XCTAssertEqual(landing.targetPosition, CGPoint(x: 165, y: 264))
+    }
+
+    func testLandingResolverUsesFolderCenter() {
+        let itemID = UUID()
+        let folderID = UUID()
+        let folderFrame = CGRect(x: 0, y: 30, width: 420, height: 50)
+
+        let landing = LedgerDragLandingResolver.landing(
+            for: .folder(folderID),
+            itemID: itemID,
+            sourceFrame: .zero,
+            regions: [.folder(folderID): folderFrame]
+        )
+
+        XCTAssertEqual(landing, .folder(folderFrame))
+        XCTAssertEqual(landing.targetPosition, CGPoint(x: 210, y: 55))
+    }
+
+    func testLandingResolverCancelsToCapturedSourceFrame() {
+        let source = CGRect(x: 8, y: 120, width: 420, height: 48)
+
+        XCTAssertEqual(
+            LedgerDragLandingResolver.landing(
+                for: nil,
+                itemID: UUID(),
+                sourceFrame: source,
+                regions: [:]
+            ),
+            .cancel(source)
+        )
+    }
+
+    func testProjectedRelativeVelocityHandlesZeroDistanceAndClamps() {
+        XCTAssertEqual(
+            LedgerDragLandingResolver.projectedRelativeVelocity(
+                velocity: CGSize(width: 900, height: -400),
+                from: CGPoint(x: 20, y: 20),
+                to: CGPoint(x: 20, y: 20)
+            ),
+            0
+        )
+        XCTAssertEqual(
+            LedgerDragLandingResolver.projectedRelativeVelocity(
+                velocity: CGSize(width: 2_000, height: 0),
+                from: .zero,
+                to: CGPoint(x: 100, y: 0)
+            ),
+            1
+        )
+        XCTAssertEqual(
+            LedgerDragLandingResolver.projectedRelativeVelocity(
+                velocity: CGSize(width: -2_000, height: 0),
+                from: .zero,
+                to: CGPoint(x: 100, y: 0)
+            ),
+            -1
+        )
+    }
+
+    func testLandingCleanupRejectsAStaleGeneration() {
+        XCTAssertTrue(LedgerDragLandingResolver.shouldCleanUp(
+            completionGeneration: 8,
+            currentGeneration: 8
+        ))
+        XCTAssertFalse(LedgerDragLandingResolver.shouldCleanUp(
+            completionGeneration: 7,
+            currentGeneration: 8
+        ))
     }
 }

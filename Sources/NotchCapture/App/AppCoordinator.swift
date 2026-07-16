@@ -134,7 +134,9 @@ final class AppCoordinator {
 
         configureHooks()
         configureStateSynchronization()
-        configureOccupancy()
+        if !previewMode {
+            configureOccupancy()
+        }
     }
 
     private nonisolated static func requestedPreviewState() -> AppViewModel.SurfaceState {
@@ -165,7 +167,9 @@ final class AppCoordinator {
             }
         }
 
-        occupancyService.refresh()
+        if !previewMode {
+            occupancyService.refresh()
+        }
         reloadFromStore()
         synchronizePanel(with: viewModel.surfaceState)
 #if DEBUG
@@ -206,7 +210,7 @@ final class AppCoordinator {
         occupancyService.stop()
         screenshotSelection.cancel()
         clearPermissionSuspension()
-        panelController.dismiss(restoringFocus: false)
+        panelController.dismiss(restoringFocus: false, animated: false)
     }
 
     private func configureHooks() {
@@ -225,6 +229,9 @@ final class AppCoordinator {
         }
         hooks.onToggleComplete = { [weak self] id in
             self?.toggleComplete(id: id)
+        }
+        hooks.onUpdateText = { [weak self] id, text in
+            self?.updateText(text, for: id)
         }
         hooks.onTogglePin = { [weak self] id in
             self?.togglePin(id: id)
@@ -303,8 +310,8 @@ final class AppCoordinator {
         }
         viewModel.hooks = hooks
 
-        panelController.onRequestDismiss = { [weak self] in
-            self?.viewModel.dismiss()
+        panelController.onRequestDismiss = { [weak self] reason in
+            self?.viewModel.handleDismissalRequest(reason)
         }
     }
 
@@ -529,6 +536,20 @@ final class AppCoordinator {
             try repository.setCompleted(!item.isCompleted, for: item)
             reloadFromStore()
         } catch { show(error) }
+    }
+
+    private func updateText(_ text: String, for id: UUID) -> String? {
+        guard let item = findItem(id) else {
+            return ItemRepositoryError.itemNotFound(id).localizedDescription
+        }
+        do {
+            try repository.updateText(item, text: text)
+            reloadFromStore()
+            return nil
+        } catch {
+            reloadFromStore()
+            return error.localizedDescription
+        }
     }
 
     private func togglePin(id: UUID) {
@@ -829,7 +850,7 @@ final class AppCoordinator {
     private func suspendForSystemPermissionPrompt() {
         clearPermissionSuspension()
         permissionReturnState = viewModel.surfaceState == .settings ? .settings : .expanded
-        panelController.dismiss(restoringFocus: false)
+        panelController.dismiss(restoringFocus: false, animated: false)
 
         permissionLocalEventMonitor = NSEvent.addLocalMonitorForEvents(
             matching: [.leftMouseDown, .rightMouseDown, .keyDown]
@@ -1069,6 +1090,7 @@ final class AppCoordinator {
             kind: item.kind == .task ? .task : .note,
             title: item.displayTitle,
             detail: detail,
+            text: item.text,
             searchableText: CaptureTagParser.removingTagMentions(
                 in: item.text,
                 matching: item.tags.map(\.name)

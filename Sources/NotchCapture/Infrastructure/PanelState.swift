@@ -40,11 +40,13 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
     var nominalSize: CGSize {
         switch self {
         case .collapsed:
-            CGSize(width: 176, height: 36)
+            CGSize(width: 178, height: 34)
         case .confirmation:
-            CGSize(width: 300, height: 72)
-        case .expanded, .dropTarget, .onboarding, .settings:
+            CGSize(width: 280, height: 56)
+        case .expanded, .dropTarget, .settings:
             CGSize(width: 420, height: 560)
+        case .onboarding:
+            CGSize(width: 420, height: 500)
         case .dormant, .screenshot:
             .zero
         }

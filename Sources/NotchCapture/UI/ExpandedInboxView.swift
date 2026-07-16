@@ -60,7 +60,40 @@ struct LedgerReorderSession: Equatable {
     }
 }
 
+struct LedgerDragPresentation: Equatable {
+    enum Phase: Equatable {
+        case dragging
+        case settling(LedgerDragLanding)
+    }
+
+    let item: AppViewModel.LedgerItem
+    let sourceFrame: CGRect
+    let grabOffset: CGSize
+    var position: CGPoint
+    var phase: Phase
+    var releaseVelocity: CGSize
+    var scale: CGFloat
+    var opacity: Double
+    let generation: Int
+}
+
+enum LedgerDragLanding: Equatable {
+    case reorder(CGRect)
+    case folder(CGRect)
+    case cancel(CGRect)
+
+    var targetPosition: CGPoint {
+        switch self {
+        case let .folder(frame):
+            CGPoint(x: frame.midX, y: frame.midY)
+        case let .reorder(frame), let .cancel(frame):
+            LedgerDragLandingResolver.rowPreviewPosition(in: frame)
+        }
+    }
+}
+
 private struct LedgerInsertionIndicator: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let placement: AppViewModel.ReorderPlacement?
 
     var body: some View {
@@ -74,6 +107,7 @@ private struct LedgerInsertionIndicator: View {
                     .transition(.opacity)
             }
         }
+        .animation(reduceMotion ? nil : NotchMotion.insertion, value: placement)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -81,6 +115,7 @@ private struct LedgerInsertionIndicator: View {
 
 private struct LedgerDragPreview: View {
     let item: AppViewModel.LedgerItem
+    let phase: LedgerDragPresentation.Phase
 
     var body: some View {
         HStack(spacing: 10) {
@@ -101,30 +136,35 @@ private struct LedgerDragPreview: View {
                 .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
         }
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .shadow(color: .black.opacity(0.38), radius: 12, y: 7)
+        .shadow(
+            color: .black.opacity(phase == .dragging ? 0.52 : 0.38),
+            radius: phase == .dragging ? 18 : 12,
+            y: phase == .dragging ? 11 : 7
+        )
     }
 }
 
-private struct IridescentTagLabel: View {
+private struct TonalTagLabel: View {
     let name: String
     let count: Int?
     let colorSeed: Double
     var compact = false
 
     private var gradient: LinearGradient {
-        NotchTheme.tagIridescence(seed: colorSeed)
+        NotchTheme.tagTonalGradient(seed: colorSeed)
     }
 
     var body: some View {
         HStack(spacing: compact ? 4 : 5) {
             Text("@\(name)")
+                .font(.system(size: compact ? 9.5 : 10.5, weight: .medium, design: .monospaced))
+                .foregroundStyle(gradient)
             if let count {
                 Text("\(count)")
-                    .opacity(0.62)
+                    .font(.system(size: compact ? 9.5 : 10.5, weight: .medium))
+                    .foregroundStyle(NotchTheme.secondaryText)
             }
         }
-        .font(.system(size: compact ? 9.5 : 10.5, weight: .medium))
-        .foregroundStyle(gradient)
         .frame(height: compact ? 20 : 28)
         .notchHitTarget(Rectangle())
     }
@@ -185,6 +225,59 @@ struct LedgerDragResolver {
     }
 }
 
+struct LedgerDragLandingResolver {
+    static func landing(
+        for destination: LedgerDragDestination?,
+        itemID: UUID,
+        sourceFrame: CGRect,
+        regions: [LedgerDragRegion: CGRect]
+    ) -> LedgerDragLanding {
+        switch destination {
+        case .reorder:
+            guard let rowFrame = regions[.row(itemID)] else {
+                return .cancel(sourceFrame)
+            }
+            return .reorder(rowFrame)
+        case let .folder(folderID):
+            guard let folderFrame = regions[.folder(folderID)] else {
+                return .cancel(sourceFrame)
+            }
+            return .folder(folderFrame)
+        case nil:
+            return .cancel(sourceFrame)
+        }
+    }
+
+    static func livePreviewPosition(pointer: CGPoint, grabOffset: CGSize) -> CGPoint {
+        CGPoint(
+            x: pointer.x - grabOffset.width + 165,
+            y: pointer.y - min(grabOffset.height, 48) + 24
+        )
+    }
+
+    static func rowPreviewPosition(in frame: CGRect) -> CGPoint {
+        CGPoint(x: frame.minX + 165, y: frame.minY + 24)
+    }
+
+    static func projectedRelativeVelocity(
+        velocity: CGSize,
+        from currentPosition: CGPoint,
+        to targetPosition: CGPoint
+    ) -> Double {
+        let remaining = CGVector(
+            dx: targetPosition.x - currentPosition.x,
+            dy: targetPosition.y - currentPosition.y
+        )
+        let numerator = velocity.width * remaining.dx + velocity.height * remaining.dy
+        let denominator = max(remaining.dx * remaining.dx + remaining.dy * remaining.dy, 1)
+        return min(max(numerator / denominator, -1), 1)
+    }
+
+    static func shouldCleanUp(completionGeneration: Int, currentGeneration: Int) -> Bool {
+        completionGeneration == currentGeneration
+    }
+}
+
 private struct LedgerDragRegionPreferenceKey: PreferenceKey {
     static let defaultValue: [LedgerDragRegion: CGRect] = [:]
 
@@ -215,12 +308,12 @@ struct ExpandedInboxView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @FocusState private var focusedField: Field?
-    @Namespace private var filterSelection
     @GestureState private var isReorderGestureActive = false
     @State private var reorderSession: LedgerReorderSession?
     @State private var dragRegions: [LedgerDragRegion: CGRect] = [:]
-    @State private var dragLocation: CGPoint?
-    @State private var dragGrabOffset: CGSize?
+    @State private var dragPresentation: LedgerDragPresentation?
+    @State private var dragGeneration = 0
+    @State private var navigationDirection: CGFloat = 1
     @State private var isCreatingFolder = false
     @State private var folderBeingRenamed: AppViewModel.FolderSummary?
     @State private var renameFolderName = ""
@@ -234,7 +327,9 @@ struct ExpandedInboxView: View {
     private let floatingGlassHeight: CGFloat = 134
     private let ledgerBottomClearance: CGFloat = 96
 
-    private var draggedItemID: UUID? { reorderSession?.draggedItemID }
+    private var draggedItemID: UUID? {
+        reorderSession?.draggedItemID ?? dragPresentation?.item.id
+    }
     private var reorderTarget: LedgerReorderTarget? { reorderSession?.reorderTarget }
     private var targetedFolderID: UUID? { reorderSession?.targetedFolderID }
     private var previewVisibleItems: [AppViewModel.LedgerItem] {
@@ -246,18 +341,6 @@ struct ExpandedInboxView: View {
     private var previewUnpinnedItems: [AppViewModel.LedgerItem] {
         previewVisibleItems.filter { !$0.isPinned }
     }
-    private var draggedItem: AppViewModel.LedgerItem? {
-        guard let draggedItemID else { return nil }
-        return viewModel.items.first { $0.id == draggedItemID }
-    }
-    private var dragPreviewPosition: CGPoint? {
-        guard let dragLocation, let dragGrabOffset else { return nil }
-        return CGPoint(
-            x: dragLocation.x - dragGrabOffset.width + 165,
-            y: dragLocation.y - min(dragGrabOffset.height, 48) + 24
-        )
-    }
-
     private enum Field {
         case unifiedInput
     }
@@ -266,15 +349,14 @@ struct ExpandedInboxView: View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
-                filterBar
                 ledgerBody
+                    .id(viewModel.browseLocation)
+                    .transition(navigationTransition)
             }
 
             floatingComposer
         }
         .frame(width: NotchTheme.width, height: NotchTheme.maxHeight)
-        .background(NotchSurfaceBackground())
-        .clipShape(NotchHugShape(bottomRadius: 22))
         .overlay {
             if viewModel.surfaceState == .drop {
                 DropTargetOverlay()
@@ -285,6 +367,10 @@ struct ExpandedInboxView: View {
             viewModel.acceptDrop(providers)
         }
         .onExitCommand {
+            if viewModel.itemEditSession != nil {
+                viewModel.cancelEditing()
+                return
+            }
             if !viewModel.tagSuggestions.isEmpty {
                 viewModel.dismissTagAutocomplete()
                 return
@@ -293,10 +379,14 @@ struct ExpandedInboxView: View {
                 resetReorderState()
                 return
             }
+            if viewModel.composerHasQuery {
+                viewModel.handleDismissalRequest(.escape)
+                return
+            }
             if viewModel.isAtRoot {
                 viewModel.dismiss()
             } else {
-                navigate { viewModel.openRoot() }
+                navigate(forward: false) { viewModel.openRoot() }
             }
         }
         .onAppear { focusComposer() }
@@ -314,21 +404,18 @@ struct ExpandedInboxView: View {
             }
         }
         .onChange(of: viewModel.keyboardFocus) { _, focus in
-            if focus == .selectedRow {
+            if focus == .selectedRow || focus == .itemEditor {
                 focusedField = nil
             }
         }
         .onChange(of: viewModel.composerText) { oldValue, newValue in
-            let event = NSApp.currentEvent
-            let isReturnKey = event?.type == .keyDown && (event?.keyCode == 36 || event?.keyCode == 76)
-            viewModel.composerTextDidChange(
-                from: oldValue,
-                to: newValue,
-                submittedByReturnKey: isReturnKey
-            )
+            viewModel.composerTextDidChange(from: oldValue, to: newValue)
         }
         .onChange(of: isReorderGestureActive) { wasActive, isActive in
-            if wasActive, !isActive, reorderSession != nil, dragLocation != nil {
+            if wasActive,
+               !isActive,
+               reorderSession != nil,
+               dragPresentation?.phase == .dragging {
                 resetReorderState()
             }
         }
@@ -432,6 +519,7 @@ struct ExpandedInboxView: View {
             VStack(spacing: 6) {
                 if !viewModel.tagSuggestions.isEmpty {
                     tagAutocomplete
+                        .transition(tagAutocompleteTransition)
                 }
                 captureField
             }
@@ -492,7 +580,7 @@ struct ExpandedInboxView: View {
             HStack(spacing: 12) {
                 if !viewModel.isAtRoot {
                     Button {
-                        navigate { viewModel.openRoot() }
+                        navigate(forward: false) { viewModel.openRoot() }
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 11, weight: .semibold))
@@ -509,6 +597,8 @@ struct ExpandedInboxView: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                inboxFilterMenu
 
                 if viewModel.isAtRoot {
                     Button {
@@ -547,6 +637,7 @@ struct ExpandedInboxView: View {
                 }
 
                 Button {
+                    guard viewModel.saveEditing() else { return }
                     viewModel.beginScreenshot()
                 } label: {
                     Image(systemName: "viewfinder")
@@ -558,6 +649,7 @@ struct ExpandedInboxView: View {
                 .accessibilityLabel("Capture a screen region")
 
                 Button {
+                    guard viewModel.saveEditing() else { return }
                     viewModel.surfaceState = .settings
                 } label: {
                     Image(systemName: "gearshape")
@@ -575,13 +667,60 @@ struct ExpandedInboxView: View {
         .background(NotchTheme.ink)
     }
 
-    private func navigate(_ update: () -> Void) {
+    private var inboxFilterMenu: some View {
+        Menu {
+            ForEach(AppViewModel.InboxFilter.allCases) { filter in
+                Button {
+                    viewModel.filter = filter
+                } label: {
+                    Label(
+                        filter.rawValue,
+                        systemImage: viewModel.filter == filter ? "checkmark" : filter.systemImage
+                    )
+                }
+            }
+        } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 13, weight: .regular))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .buttonStyle(
+            PressableIconButtonStyle(
+                idleForeground: viewModel.filter == .all
+                    ? NotchTheme.secondaryText
+                    : NotchTheme.primaryText
+            )
+        )
+        .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.filter)
+        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .help("Inbox filter: \(viewModel.filter.rawValue)")
+        .accessibilityLabel("Inbox filter: \(viewModel.filter.rawValue)")
+    }
+
+    private func navigate(forward: Bool, _ update: () -> Void) {
+        guard viewModel.saveEditing() else { return }
+        navigationDirection = forward ? 1 : -1
         if reduceMotion {
             update()
         } else {
-            withAnimation(NotchMotion.filter, update)
+            withAnimation(NotchMotion.navigation, update)
         }
         resetReorderState()
+    }
+
+    private var navigationTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .opacity.animation(NotchMotion.reducedMotion)
+        }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .offset(x: 12 * navigationDirection))
+                .animation(NotchMotion.navigation),
+            removal: .opacity
+                .combined(with: .offset(x: -12 * navigationDirection))
+                .animation(NotchMotion.navigation)
+        )
     }
 
     private func beginRenaming(_ folder: AppViewModel.FolderSummary) {
@@ -624,6 +763,10 @@ struct ExpandedInboxView: View {
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
+                .onKeyPress(.return) {
+                    viewModel.handleComposerReturn()
+                    return .handled
+                }
                 .onKeyPress(.tab) {
                     viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
                 }
@@ -659,7 +802,6 @@ struct ExpandedInboxView: View {
                 }
                 .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .keyboardShortcut(.return, modifiers: .command)
                 .help(
                     viewModel.canCreateStandaloneTag
                         ? "Create this tag group"
@@ -693,8 +835,7 @@ struct ExpandedInboxView: View {
                             .font(.system(size: 10, weight: .medium))
                             .foregroundStyle(suggestionGradient(suggestion))
                             .frame(width: 16)
-                        Text(suggestionLabel(suggestion))
-                            .font(.system(size: 11.5, weight: .medium))
+                        suggestionLabel(suggestion)
                             .foregroundStyle(suggestionGradient(suggestion))
                             .lineLimit(1)
                         Spacer()
@@ -727,6 +868,19 @@ struct ExpandedInboxView: View {
         .accessibilityLabel("Tag suggestions")
     }
 
+    private var tagAutocompleteTransition: AnyTransition {
+        guard !reduceMotion else {
+            return .opacity.animation(NotchMotion.reducedMotion)
+        }
+        return .asymmetric(
+            insertion: .opacity
+                .combined(with: .scale(scale: 0.98, anchor: .bottom))
+                .combined(with: .offset(y: 6))
+                .animation(NotchMotion.insertion),
+            removal: .opacity.animation(NotchMotion.removal)
+        )
+    }
+
     private func suggestionIcon(_ suggestion: AppViewModel.TagSuggestion) -> String {
         switch suggestion {
         case .existing: "at"
@@ -734,19 +888,26 @@ struct ExpandedInboxView: View {
         }
     }
 
-    private func suggestionLabel(_ suggestion: AppViewModel.TagSuggestion) -> String {
+    @ViewBuilder
+    private func suggestionLabel(_ suggestion: AppViewModel.TagSuggestion) -> some View {
         switch suggestion {
-        case let .existing(group): "@\(group.name)"
-        case let .create(name): "Create @\(name)"
+        case let .existing(group):
+            Text("@\(group.name)")
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
+        case let .create(name):
+            Text("Create ")
+                .font(.system(size: 11.5, weight: .medium))
+            + Text("@\(name)")
+                .font(.system(size: 11.5, weight: .medium, design: .monospaced))
         }
     }
 
     private func suggestionGradient(_ suggestion: AppViewModel.TagSuggestion) -> LinearGradient {
         switch suggestion {
         case let .existing(group):
-            NotchTheme.tagIridescence(seed: group.tag.colorSeed)
+            NotchTheme.tagTonalGradient(seed: group.tag.colorSeed)
         case .create:
-            NotchTheme.tagIridescence(seed: 0)
+            NotchTheme.tagTonalGradient(seed: 0)
         }
     }
 
@@ -839,110 +1000,18 @@ struct ExpandedInboxView: View {
         return "Type to search \(viewModel.isAtRoot ? "all items" : viewModel.captureDestinationName). If no item matches, press Return to add a new thought."
     }
 
-    private var filterBar: some View {
-        HStack(spacing: 8) {
-            filterButton(.all, width: 64)
-            filterButton(.tasks, width: 76)
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .fill(NotchTheme.control)
-                if ![.all, .tasks].contains(viewModel.filter) {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(NotchTheme.selectedControl)
-                        .matchedGeometryEffect(id: "selected-filter", in: filterSelection)
-                }
-                RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
-
-                Menu {
-                    ForEach([AppViewModel.InboxFilter.due, .completed, .archive, .trash]) { filter in
-                        Button {
-                            viewModel.filter = filter
-                        } label: {
-                            Label(filter.rawValue, systemImage: filter.systemImage)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "slider.horizontal.3")
-                        .font(.system(size: 12, weight: .regular))
-                        .frame(width: 64, height: 34)
-                        .foregroundStyle(
-                            [.all, .tasks].contains(viewModel.filter)
-                                ? NotchTheme.secondaryText
-                                : NotchTheme.primaryText
-                        )
-                        .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
-            .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            .accessibilityLabel("More inbox filters")
-            }
-            .frame(width: 64, height: 34)
-
-            if ![.all, .tasks].contains(viewModel.filter) {
-                Text(viewModel.filter.rawValue)
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(NotchTheme.secondaryText)
-            }
-
-            Spacer()
-        }
-        .padding(.horizontal, 18)
-        .frame(height: 50)
-        .background(NotchTheme.ink)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(NotchTheme.hairline).frame(height: 1)
-        }
-        .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.filter)
-    }
-
-    private func filterButton(_ filter: AppViewModel.InboxFilter, width: CGFloat) -> some View {
-        Button {
-            viewModel.filter = filter
-        } label: {
-            Text(filter.rawValue)
-                .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(viewModel.filter == filter ? NotchTheme.primaryText : NotchTheme.secondaryText)
-                .frame(width: width, height: 34)
-                .background {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 9, style: .continuous)
-                            .fill(NotchTheme.control)
-                        if viewModel.filter == filter {
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(NotchTheme.selectedControl)
-                                .matchedGeometryEffect(id: "selected-filter", in: filterSelection)
-                        }
-                    }
-                }
-                .overlay {
-                    RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-                .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        }
-        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.98, pressedOpacity: 0.92))
-        .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
-        .accessibilityAddTraits(viewModel.filter == filter ? .isSelected : [])
-    }
-
     private var dropTransition: AnyTransition {
         guard !reduceMotion else {
             return .opacity.animation(NotchMotion.reducedMotion)
         }
         return .asymmetric(
-            insertion: .opacity
-                .combined(with: .scale(scale: 0.985))
-                .animation(NotchMotion.dropEnter),
+            insertion: .identity,
             removal: .opacity.animation(NotchMotion.dropExit)
         )
     }
 
     private func focusComposer() {
+        guard viewModel.saveEditing() else { return }
         viewModel.focusComposer()
         Task { @MainActor in
             focusedField = .unifiedInput
@@ -996,9 +1065,12 @@ struct ExpandedInboxView: View {
         .coordinateSpace(name: "ledger-feed")
         .onPreferenceChange(LedgerDragRegionPreferenceKey.self) { dragRegions = $0 }
         .overlay(alignment: .topLeading) {
-            if let draggedItem, let dragPreviewPosition {
-                LedgerDragPreview(item: draggedItem)
-                    .position(dragPreviewPosition)
+            if let presentation = dragPresentation {
+                LedgerDragPreview(item: presentation.item, phase: presentation.phase)
+                    .scaleEffect(reduceMotion ? 1 : presentation.scale)
+                    .opacity(presentation.opacity)
+                    .position(presentation.position)
+                    .transition(.opacity.animation(NotchMotion.removal))
                     .allowsHitTesting(false)
                     .accessibilityHidden(true)
             }
@@ -1044,50 +1116,41 @@ struct ExpandedInboxView: View {
     }
 
     private var tagShelf: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Tags")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(NotchTheme.tertiaryText)
-                .textCase(.uppercase)
-                .tracking(0.7)
-                .padding(.horizontal, 20)
-
-            ScrollView(.horizontal) {
-                HStack(spacing: 18) {
-                    ForEach(viewModel.visibleTagGroups) { group in
-                        Button {
+        ScrollView(.horizontal) {
+            HStack(spacing: 18) {
+                ForEach(viewModel.visibleTagGroups) { group in
+                    Button {
+                        viewModel.search(for: group.tag)
+                        focusComposer()
+                    } label: {
+                        TonalTagLabel(
+                            name: group.name,
+                            count: group.count,
+                            colorSeed: group.tag.colorSeed
+                        )
+                    }
+                    .buttonStyle(NotchPressButtonStyle())
+                    .contextMenu {
+                        Button("Search @\(group.name)") {
                             viewModel.search(for: group.tag)
                             focusComposer()
-                        } label: {
-                            IridescentTagLabel(
-                                name: group.name,
-                                count: group.count,
-                                colorSeed: group.tag.colorSeed
-                            )
                         }
-                        .buttonStyle(NotchPressButtonStyle())
-                        .contextMenu {
-                            Button("Search @\(group.name)") {
-                                viewModel.search(for: group.tag)
-                                focusComposer()
-                            }
-                            Button("Rename Tag") {
-                                renameTagName = group.name
-                                tagBeingRenamed = group.tag
-                            }
-                            Divider()
-                            Button("Delete Tag", role: .destructive) {
-                                tagPendingDeletion = group.tag
-                            }
+                        Button("Rename Tag") {
+                            renameTagName = group.name
+                            tagBeingRenamed = group.tag
                         }
-                        .accessibilityLabel("Tag \(group.name), \(group.count) \(group.count == 1 ? "item" : "items")")
-                        .accessibilityHint("Searches for this tag")
+                        Divider()
+                        Button("Delete Tag", role: .destructive) {
+                            tagPendingDeletion = group.tag
+                        }
                     }
+                    .accessibilityLabel("Tag \(group.name), \(group.count) \(group.count == 1 ? "item" : "items")")
+                    .accessibilityHint("Searches for this tag")
                 }
-                .padding(.horizontal, 20)
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, 20)
         }
+        .scrollIndicators(.hidden)
         .padding(.vertical, 12)
         .overlay(alignment: .bottom) {
             Rectangle().fill(NotchTheme.hairline).frame(height: 1).padding(.leading, 20)
@@ -1100,7 +1163,7 @@ struct ExpandedInboxView: View {
             itemCount: viewModel.matchingItemCount(in: folder.id),
             isDropTarget: targetedFolderID == folder.id,
             reduceMotion: reduceMotion,
-            onOpen: { navigate { viewModel.openFolder(folder) } },
+            onOpen: { navigate(forward: true) { viewModel.openFolder(folder) } },
             onRename: { beginRenaming(folder) },
             onDelete: { folderPendingDeletion = folder }
         )
@@ -1113,17 +1176,23 @@ struct ExpandedInboxView: View {
             draggableRow(item)
         } else {
             LedgerRowView(item: item, viewModel: viewModel)
+                .transition(completionRemovalTransition(for: item))
         }
     }
 
     private func draggableRow(_ item: AppViewModel.LedgerItem) -> some View {
         let target = reorderTarget?.targetID == item.id ? reorderTarget : nil
+        let isDragSource = dragPresentation?.item.id == item.id
         return LedgerRowView(item: item, viewModel: viewModel)
-            .opacity(draggedItemID == item.id && dragLocation != nil ? 0.20 : 1)
+            .opacity(isDragSource ? 0.18 : 1)
             .overlay {
                 LedgerInsertionIndicator(placement: target?.placement)
             }
             .ledgerDragRegion(.row(item.id))
+            .animation(
+                reduceMotion ? nil : NotchMotion.dragLanding.animation,
+                value: isDragSource
+            )
             .accessibilityActions {
                 if viewModel.canMoveUp(item) {
                     Button("Move up") {
@@ -1136,22 +1205,24 @@ struct ExpandedInboxView: View {
                     }
                 }
             }
+            .transition(completionRemovalTransition(for: item))
     }
 
-    private func commitMoveToFolder(itemID: UUID, folderID: UUID) {
-        guard let item = viewModel.items.first(where: { $0.id == itemID }) else {
-            resetReorderState()
-            return
+    private func completionRemovalTransition(for item: AppViewModel.LedgerItem) -> AnyTransition {
+        guard !reduceMotion else {
+            return .opacity.animation(NotchMotion.reducedMotion)
         }
-        let update = {
-            viewModel.move(item, to: folderID)
-            reorderSession = nil
-        }
-        if reduceMotion {
-            update()
-        } else {
-            withAnimation(NotchMotion.reorder, update)
-        }
+        return .modifier(
+            active: LedgerCompletionExitModifier(
+                progress: 1,
+                wasCompleted: item.isCompleted
+            ),
+            identity: LedgerCompletionExitModifier(
+                progress: 0,
+                wasCompleted: item.isCompleted
+            )
+        )
+        .animation(NotchMotion.completionExit)
     }
 
     private func reorderSectionHeader(title: String, count: Int, isPinned: Bool) -> some View {
@@ -1220,20 +1291,78 @@ struct ExpandedInboxView: View {
                               if case .row = region { return frame.contains(value.startLocation) }
                               return false
                           }),
-                          case let .row(itemID) = source.key else { return }
+                          case let .row(itemID) = source.key,
+                          let item = viewModel.items.first(where: { $0.id == itemID }) else { return }
                     reorderSession = LedgerReorderSession(draggedItemID: itemID)
-                    dragGrabOffset = CGSize(
-                        width: value.startLocation.x - source.value.minX,
-                        height: value.startLocation.y - source.value.minY
+                    beginDrag(
+                        item: item,
+                        sourceFrame: source.value,
+                        grabOffset: CGSize(
+                            width: value.startLocation.x - source.value.minX,
+                            height: value.startLocation.y - source.value.minY
+                        ),
+                        pointer: value.location
                     )
                 }
 
-                dragLocation = value.location
+                updateDragPosition(value.location)
                 applyDragDestination(dragDestination(at: value.location))
             }
             .onEnded { value in
-                finishReorder(at: value.location)
+                finishReorder(at: value.location, velocity: value.velocity)
             }
+    }
+
+    private func beginDrag(
+        item: AppViewModel.LedgerItem,
+        sourceFrame: CGRect,
+        grabOffset: CGSize,
+        pointer: CGPoint
+    ) {
+        dragGeneration &+= 1
+        let generation = dragGeneration
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            dragPresentation = LedgerDragPresentation(
+                item: item,
+                sourceFrame: sourceFrame,
+                grabOffset: grabOffset,
+                position: LedgerDragLandingResolver.livePreviewPosition(
+                    pointer: pointer,
+                    grabOffset: grabOffset
+                ),
+                phase: .dragging,
+                releaseVelocity: .zero,
+                scale: reduceMotion ? 1 : 0.985,
+                opacity: 1,
+                generation: generation
+            )
+        }
+
+        guard !reduceMotion else { return }
+        Task { @MainActor in
+            await Task.yield()
+            guard dragPresentation?.generation == generation,
+                  dragPresentation?.phase == .dragging else { return }
+            withAnimation(NotchMotion.dragLift.animation) {
+                dragPresentation?.scale = 1
+            }
+        }
+    }
+
+    private func updateDragPosition(_ location: CGPoint) {
+        guard var presentation = dragPresentation,
+              presentation.phase == .dragging else { return }
+        presentation.position = LedgerDragLandingResolver.livePreviewPosition(
+            pointer: location,
+            grabOffset: presentation.grabOffset
+        )
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            dragPresentation = presentation
+        }
     }
 
     private func dragDestination(at location: CGPoint) -> LedgerDragDestination? {
@@ -1257,32 +1386,71 @@ struct ExpandedInboxView: View {
         }
     }
 
-    private func finishReorder(at location: CGPoint) {
-        let destination = dragDestination(at: location)
-        switch destination {
-        case let .reorder(target):
-            commitReorder(target)
-        case let .folder(folderID):
-            if let draggedItemID {
-                commitMoveToFolder(itemID: draggedItemID, folderID: folderID)
-            } else {
-                resetReorderState()
-            }
-        case nil:
-            resetReorderState()
-        }
-        dragLocation = nil
-        dragGrabOffset = nil
-    }
-
-    private func commitReorder(_ target: LedgerReorderTarget) {
-        guard let draggedItemID = reorderSession?.draggedItemID else {
+    private func finishReorder(at location: CGPoint, velocity: CGSize) {
+        guard var presentation = dragPresentation,
+              presentation.phase == .dragging else {
             resetReorderState()
             return
         }
+
+        let destination = dragDestination(at: location)
+        let landing = LedgerDragLandingResolver.landing(
+            for: destination,
+            itemID: presentation.item.id,
+            sourceFrame: presentation.sourceFrame,
+            regions: dragRegions
+        )
+
+        switch destination {
+        case let .reorder(target):
+            commitReorder(itemID: presentation.item.id, target: target)
+        case let .folder(folderID):
+            commitMoveToFolder(item: presentation.item, folderID: folderID)
+        case nil:
+            reorderSession = nil
+        }
+
+        presentation.phase = .settling(landing)
+        presentation.releaseVelocity = velocity
+        let relativeVelocity = LedgerDragLandingResolver.projectedRelativeVelocity(
+            velocity: velocity,
+            from: presentation.position,
+            to: landing.targetPosition
+        )
+        let generation = presentation.generation
+
+        if reduceMotion {
+            dragPresentation = presentation
+            withAnimation(NotchMotion.reducedMotion, completionCriteria: .logicallyComplete) {
+                dragPresentation?.opacity = 0
+            } completion: {
+                completeDragLanding(generation: generation)
+            }
+            return
+        }
+
+        withAnimation(
+            NotchMotion.landing(initialVelocity: relativeVelocity),
+            completionCriteria: .logicallyComplete
+        ) {
+            presentation.position = landing.targetPosition
+            presentation.scale = switch landing {
+            case .folder: 0.94
+            case .reorder, .cancel: 0.985
+            }
+            if case .folder = landing {
+                presentation.opacity = 0
+            }
+            dragPresentation = presentation
+        } completion: {
+            completeDragLanding(generation: generation)
+        }
+    }
+
+    private func commitReorder(itemID: UUID, target: LedgerReorderTarget) {
         let update = {
             _ = viewModel.reorder(
-                itemID: draggedItemID,
+                itemID: itemID,
                 relativeTo: target.targetID,
                 placement: target.placement,
                 destinationPinned: target.destinationPinned
@@ -1294,6 +1462,26 @@ struct ExpandedInboxView: View {
         } else {
             withAnimation(NotchMotion.reorder, update)
         }
+    }
+
+    private func commitMoveToFolder(item: AppViewModel.LedgerItem, folderID: UUID) {
+        let update = {
+            viewModel.move(item, to: folderID)
+            reorderSession = nil
+        }
+        if reduceMotion {
+            update()
+        } else {
+            withAnimation(NotchMotion.reorder, update)
+        }
+    }
+
+    private func completeDragLanding(generation: Int) {
+        guard LedgerDragLandingResolver.shouldCleanUp(
+            completionGeneration: generation,
+            currentGeneration: dragPresentation?.generation ?? dragGeneration
+        ) else { return }
+        dragPresentation = nil
     }
 
     private func previewReorder(_ target: LedgerReorderTarget) {
@@ -1339,9 +1527,9 @@ struct ExpandedInboxView: View {
     }
 
     private func resetReorderState() {
+        dragGeneration &+= 1
         reorderSession = nil
-        dragLocation = nil
-        dragGrabOffset = nil
+        dragPresentation = nil
     }
 
     private var dropTargetBinding: Binding<Bool> {
@@ -1472,10 +1660,10 @@ private struct FolderLedgerRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.86))
-        .scaleEffect(isDropTarget && !reduceMotion ? 1.006 : 1)
+        .scaleEffect(isDropTarget && !reduceMotion ? 1.01 : 1)
         .onHover { isHovered = $0 }
         .animation(reduceMotion ? nil : NotchMotion.hover, value: isHovered)
-        .animation(reduceMotion ? nil : NotchMotion.hover, value: isDropTarget)
+        .animation(reduceMotion ? nil : NotchMotion.filter, value: isDropTarget)
         .contextMenu {
             Button("Open Folder", action: onOpen)
             Button("Rename Folder", action: onRename)
@@ -1490,50 +1678,300 @@ private struct FolderLedgerRow: View {
     }
 }
 
+struct LedgerCompletionRevealGeometry {
+    static let originX: CGFloat = 30
+
+    static func revealFrame(in rect: CGRect, progress: CGFloat) -> CGRect {
+        guard rect.width > 0, rect.height > 0 else { return .zero }
+
+        let clampedProgress = min(max(progress, 0), 1)
+        let origin = min(max(rect.minX + originX, rect.minX), rect.maxX)
+        guard clampedProgress > 0 else {
+            return CGRect(x: origin, y: rect.midY, width: 0, height: 0)
+        }
+
+        let extent = rect.width * clampedProgress
+        if extent <= rect.height || rect.width <= rect.height {
+            let diameter = min(extent, rect.width, rect.height)
+            let proposedX = origin - (diameter / 2)
+            let x = min(max(proposedX, rect.minX), rect.maxX - diameter)
+            return CGRect(
+                x: x,
+                y: rect.midY - (diameter / 2),
+                width: diameter,
+                height: diameter
+            )
+        }
+
+        let stretch = (extent - rect.height) / (rect.width - rect.height)
+        let initialLeft = min(max(origin - (rect.height / 2), rect.minX), rect.maxX)
+        let initialRight = min(max(origin + (rect.height / 2), rect.minX), rect.maxX)
+        let left = initialLeft + ((rect.minX - initialLeft) * stretch)
+        let right = initialRight + ((rect.maxX - initialRight) * stretch)
+        return CGRect(x: left, y: rect.minY, width: right - left, height: rect.height)
+    }
+}
+
+private struct LedgerCompletionRevealMask: Shape {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let revealFrame = LedgerCompletionRevealGeometry.revealFrame(
+            in: rect,
+            progress: progress
+        )
+        guard revealFrame.width > 0, revealFrame.height > 0 else { return Path() }
+        return RoundedRectangle(
+            cornerRadius: min(revealFrame.width, revealFrame.height) / 2,
+            style: .continuous
+        )
+        .path(in: revealFrame)
+    }
+}
+
+private struct LedgerCompletionFrontHighlightMask: Shape {
+    var progress: CGFloat
+
+    var animatableData: CGFloat {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let clampedProgress = min(max(progress, 0), 1)
+        guard clampedProgress > 0, clampedProgress < 0.999 else { return Path() }
+        let revealFrame = LedgerCompletionRevealGeometry.revealFrame(
+            in: rect,
+            progress: clampedProgress
+        )
+        let highlightFrame = CGRect(
+            x: revealFrame.maxX - 12,
+            y: rect.minY,
+            width: 24,
+            height: rect.height
+        )
+        return Path(highlightFrame.intersection(rect))
+    }
+}
+
+private struct LedgerCompletionFrontHighlight: View {
+    var progress: CGFloat
+
+    var body: some View {
+        NotchTheme.completionWash
+            .mask {
+                LedgerCompletionFrontHighlightMask(progress: progress)
+                    .fill(.white)
+            }
+            .blur(radius: 4)
+            .clipped()
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct LedgerCompletionExitModifier: ViewModifier {
+    let progress: Double
+    let wasCompleted: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if wasCompleted {
+            content
+                .mask {
+                    LedgerCompletionRevealMask(progress: 1 - CGFloat(progress))
+                        .fill(.white)
+                }
+                .scaleEffect(1 - (0.015 * progress))
+                .opacity(1 - pow(progress, 3))
+        } else {
+            content
+                .background {
+                    ZStack {
+                        NotchTheme.completedLedger
+                        NotchTheme.completionWash
+                    }
+                    .mask {
+                        LedgerCompletionRevealMask(progress: CGFloat(progress))
+                            .fill(.white)
+                    }
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+                }
+                .overlay {
+                    LedgerCompletionFrontHighlight(progress: CGFloat(progress))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+                .scaleEffect(1 - (0.015 * progress))
+                .opacity(1 - pow(progress, 3))
+        }
+    }
+}
+
 private struct LedgerRowView: View {
     let item: AppViewModel.LedgerItem
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isEditorFocused: Bool
     @State private var isHovered = false
+    @State private var completionRevealProgress: CGFloat
 
     private var isSelected: Bool { viewModel.selectedItemID == item.id }
+    private var isEditing: Bool { viewModel.itemEditSession?.itemID == item.id }
     private var showsActions: Bool { isHovered || isSelected }
     private var isAttachmentOnly: Bool {
-        item.attachments.count == 1 && item.detail.isEmpty && item.kind == .note && item.tags.isEmpty
+        item.text.isEmpty && item.attachments.count == 1 && item.tags.isEmpty
+    }
+
+    init(item: AppViewModel.LedgerItem, viewModel: AppViewModel) {
+        self.item = item
+        _viewModel = ObservedObject(wrappedValue: viewModel)
+        _completionRevealProgress = State(initialValue: item.isCompleted ? 1 : 0)
     }
 
     var body: some View {
-        Group {
-            if isAttachmentOnly, let attachment = item.attachments.first {
-                AttachmentLedgerRow(
-                    item: item,
-                    attachment: attachment,
-                    timeFormat: viewModel.timeFormat,
-                    searchLocation: viewModel.isShowingGlobalSearchResults
-                        ? (item.folderName ?? "Inbox")
-                        : nil
-                )
-            } else {
-                textRow
+        ZStack {
+            completionBackgroundLayer
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+
+            if !reduceMotion {
+                LedgerCompletionFrontHighlight(progress: completionRevealProgress)
+            }
+
+            interactionBackgroundLayer
+
+            rowContent(
+                completedPresentation: isEditing && item.isCompleted,
+                isInteractive: true
+            )
+
+            if !isEditing {
+                completedContentLayer
             }
         }
-        .background(isSelected ? NotchTheme.selectedLedger : (isHovered ? NotchTheme.hoveredLedger : Color.clear))
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .onChange(of: item.isCompleted) { _, isCompleted in
+            let animation = reduceMotion
+                ? NotchMotion.reducedMotion
+                : (isCompleted ? NotchMotion.completionReveal : NotchMotion.completionRetract)
+            withAnimation(animation) {
+                completionRevealProgress = isCompleted ? 1 : 0
+            }
+        }
+        .task(id: isEditing) {
+            isEditorFocused = isEditing
+        }
+        .onChange(of: isEditorFocused) { wasFocused, isFocused in
+            guard wasFocused, !isFocused, isEditing else { return }
+            Task { @MainActor in
+                await Task.yield()
+                guard isEditing else { return }
+                if !viewModel.saveEditing(resumeRowFocus: false) {
+                    isEditorFocused = true
+                }
+            }
+        }
         .contextMenu { rowActions }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
+        .accessibilityActions {
+            if !item.text.isEmpty {
+                Button("Edit") { viewModel.beginEditing(item) }
+            }
+        }
     }
 
-    private var textRow: some View {
+    @ViewBuilder
+    private func rowContent(completedPresentation: Bool, isInteractive: Bool) -> some View {
+        if isAttachmentOnly, let attachment = item.attachments.first {
+            AttachmentLedgerRow(
+                item: item,
+                attachment: attachment,
+                timeFormat: viewModel.timeFormat,
+                searchLocation: viewModel.isShowingGlobalSearchResults
+                    ? (item.folderName ?? "Inbox")
+                    : nil,
+                completedPresentation: completedPresentation,
+                isInteractive: isInteractive
+            )
+        } else {
+            textRow(
+                completedPresentation: completedPresentation,
+                isInteractive: isInteractive
+            )
+        }
+    }
+
+    @ViewBuilder
+    private var completionBackgroundLayer: some View {
+        if reduceMotion {
+            NotchTheme.completedLedger
+                .opacity(Double(completionRevealProgress))
+        } else {
+            NotchTheme.completedLedger
+                .mask {
+                    LedgerCompletionRevealMask(progress: completionRevealProgress)
+                        .fill(.white)
+                }
+        }
+    }
+
+    @ViewBuilder
+    private var interactionBackgroundLayer: some View {
+        if isSelected {
+            NotchTheme.selectedLedger
+        } else if isHovered {
+            NotchTheme.hoveredLedger
+        }
+    }
+
+    @ViewBuilder
+    private var completedContentLayer: some View {
+        if reduceMotion {
+            rowContent(completedPresentation: true, isInteractive: false)
+                .opacity(Double(completionRevealProgress))
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        } else {
+            rowContent(completedPresentation: true, isInteractive: false)
+                .mask {
+                    LedgerCompletionRevealMask(progress: completionRevealProgress)
+                        .fill(.white)
+                }
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func textRow(completedPresentation: Bool, isInteractive: Bool) -> some View {
         HStack(spacing: 11) {
-            leadingControl
+            leadingControl(
+                completedPresentation: completedPresentation,
+                isInteractive: isInteractive
+            )
 
-            selectionContent
+            selectionContent(
+                completedPresentation: completedPresentation,
+                isInteractive: isInteractive
+            )
 
-            trailingContent
-                .layoutPriority(1)
+            if isInteractive {
+                trailingContent
+                    .layoutPriority(1)
+            } else {
+                Color.clear
+                    .frame(width: 112, height: 38)
+                    .layoutPriority(1)
+            }
         }
         .padding(.horizontal, 20)
         .frame(minHeight: item.detail.isEmpty ? 56 : 66)
@@ -1545,57 +1983,138 @@ private struct LedgerRowView: View {
         }
     }
 
-    private var selectionContent: some View {
+    @ViewBuilder
+    private func selectionContent(completedPresentation: Bool, isInteractive: Bool) -> some View {
+        if isInteractive {
+            selectionContentLayout(
+                completedPresentation: completedPresentation,
+                isInteractive: true
+            )
+            .contentShape(Rectangle())
+            .onTapGesture(count: 1) {
+                guard !isEditing else { return }
+                viewModel.select(item)
+            }
+        } else {
+            selectionContentLayout(
+                completedPresentation: completedPresentation,
+                isInteractive: false
+            )
+        }
+    }
+
+    private func selectionContentLayout(
+        completedPresentation: Bool,
+        isInteractive: Bool
+    ) -> some View {
         HStack(spacing: 11) {
             if item.displaysAttachmentPrefix {
-                prefixIcon
+                prefixIcon(completedPresentation: completedPresentation)
             }
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(item.title)
-                    .font(.system(size: 12.5, weight: .regular))
-                    .foregroundStyle(item.isCompleted ? NotchTheme.secondaryText : NotchTheme.primaryText)
-                    .strikethrough(item.isCompleted, color: NotchTheme.secondaryText)
-                    .lineLimit(2)
-
-                if let subtitle {
-                    Text(subtitle)
-                        .font(.system(size: 10.5, weight: .regular))
-                        .foregroundStyle(item.dueDate != nil && item.detail.isEmpty ? NotchTheme.dueAccent : NotchTheme.secondaryText)
-                    .lineLimit(2)
-                }
-
-                if !item.tags.isEmpty {
-                    ScrollView(.horizontal) {
-                        HStack(spacing: 10) {
-                            ForEach(item.tags) { tag in
-                                Button {
-                                    viewModel.search(for: tag)
-                                } label: {
-                                    IridescentTagLabel(
-                                        name: tag.name,
-                                        count: nil,
-                                        colorSeed: tag.colorSeed,
-                                        compact: true
-                                    )
-                                }
-                                .buttonStyle(.plain)
-                                .help("Search @\(tag.name)")
-                                .accessibilityLabel("Search tag \(tag.name)")
-                            }
-                        }
-                    }
-                    .scrollIndicators(.hidden)
-                }
+            if isEditing {
+                inlineEditor
+            } else {
+                displayText(
+                    completedPresentation: completedPresentation,
+                    isInteractive: isInteractive
+                )
             }
 
             Spacer(minLength: 8)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            viewModel.select(item)
+    }
+
+    @ViewBuilder
+    private func displayText(completedPresentation: Bool, isInteractive: Bool) -> some View {
+        if isInteractive {
+            displayTextLayout(completedPresentation: completedPresentation, isInteractive: true)
+                .contentShape(Rectangle())
+                .highPriorityGesture(
+                    TapGesture(count: 2).onEnded {
+                        viewModel.beginEditing(item)
+                    }
+                )
+        } else {
+            displayTextLayout(completedPresentation: completedPresentation, isInteractive: false)
         }
+    }
+
+    private func displayTextLayout(
+        completedPresentation: Bool,
+        isInteractive: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            titleText(completedPresentation: completedPresentation, isInteractive: isInteractive)
+            .font(.system(size: 12.5, weight: .regular))
+            .foregroundStyle(completedPresentation ? NotchTheme.secondaryText : NotchTheme.primaryText)
+            .strikethrough(completedPresentation, color: NotchTheme.secondaryText)
+            .lineLimit(2)
+
+            if let subtitle {
+                Text(subtitle)
+                    .font(.system(size: 10.5, weight: .regular))
+                    .foregroundStyle(
+                        completedPresentation
+                            ? NotchTheme.tertiaryText
+                            : (item.dueDate != nil && item.detail.isEmpty
+                                ? NotchTheme.dueAccent
+                                : NotchTheme.secondaryText)
+                    )
+                    .lineLimit(2)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func titleText(completedPresentation: Bool, isInteractive: Bool) -> some View {
+        if isInteractive {
+            InlineTagTitleText(title: item.title, tags: item.tags) { tag in
+                viewModel.search(for: tag)
+            }
+        } else {
+            Text(InlineTagTitleFormatter.attributedTitle(
+                item.title,
+                tags: item.tags,
+                includesLinks: false
+            ))
+        }
+    }
+
+    private var completionStateAnimation: Animation {
+        if reduceMotion { return NotchMotion.reducedMotion }
+        return item.isCompleted ? NotchMotion.completion : NotchMotion.completionReopen
+    }
+
+    private var inlineEditor: some View {
+        TextField("", text: editingDraft, axis: .vertical)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12.5, weight: .regular))
+            .foregroundStyle(NotchTheme.primaryText)
+            .multilineTextAlignment(.leading)
+            .lineLimit(1...4)
+            .focused($isEditorFocused)
+            .onKeyPress(.return, phases: .down) { press in
+                guard !press.modifiers.contains(.shift) else { return .ignored }
+                _ = viewModel.saveEditing()
+                return .handled
+            }
+            .onExitCommand {
+                viewModel.cancelEditing()
+            }
+            .accessibilityLabel("Edit item content")
+            .accessibilityHint("Press Return to save, Shift-Return for a new line, or Escape to cancel")
+    }
+
+    private var editingDraft: Binding<String> {
+        Binding(
+            get: {
+                guard viewModel.itemEditSession?.itemID == item.id else { return item.text }
+                return viewModel.itemEditSession?.draft ?? item.text
+            },
+            set: { viewModel.updateEditingDraft($0) }
+        )
     }
 
     private var trailingContent: some View {
@@ -1616,10 +2135,12 @@ private struct LedgerRowView: View {
         .animation(reduceMotion ? nil : NotchMotion.hover, value: showsActions)
     }
 
-    private var prefixIcon: some View {
+    private func prefixIcon(completedPresentation: Bool) -> some View {
         Image(systemName: "note.text")
             .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(NotchTheme.secondaryText)
+            .foregroundStyle(
+                completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+            )
             .frame(width: 32, height: 32)
             .background(NotchTheme.control)
             .overlay {
@@ -1630,28 +2151,51 @@ private struct LedgerRowView: View {
     }
 
     @ViewBuilder
-    private var leadingControl: some View {
+    private func leadingControl(completedPresentation: Bool, isInteractive: Bool) -> some View {
         if item.isPinned && !showsActions {
             Image(systemName: "pin")
                 .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(NotchTheme.secondaryText)
+                .foregroundStyle(
+                    completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+                )
                 .frame(width: 20, height: 28)
                 .accessibilityLabel("Pinned")
-        } else {
+        } else if isInteractive {
             Button {
                 viewModel.toggleComplete(item)
             } label: {
-                Image(systemName: item.isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 16, weight: .light))
-                    .foregroundStyle(item.isCompleted ? NotchTheme.mint : NotchTheme.secondaryText)
-                    .frame(width: 20, height: 28)
-                    .notchHitTarget(Rectangle())
+                completionControlVisual(completedPresentation: completedPresentation)
             }
             .buttonStyle(NotchPressButtonStyle(pressedScale: 0.94, pressedOpacity: 0.82))
             .notchHitTarget(Rectangle())
             .help(item.isCompleted ? "Mark incomplete" : "Complete")
             .accessibilityLabel(item.isCompleted ? "Mark incomplete" : "Complete item")
+        } else {
+            completionControlVisual(completedPresentation: completedPresentation)
         }
+    }
+
+    private func completionControlVisual(completedPresentation: Bool) -> some View {
+        ZStack {
+            Image(systemName: "circle")
+                .opacity(completedPresentation ? 0 : 1)
+                .scaleEffect(symbolScale(isVisible: !item.isCompleted))
+
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(NotchTheme.mint)
+                .opacity(completedPresentation ? 1 : 0)
+                .scaleEffect(symbolScale(isVisible: item.isCompleted))
+        }
+        .font(.system(size: 12, weight: .light))
+        .foregroundStyle(NotchTheme.secondaryText)
+        .frame(width: 20, height: 28)
+        .notchHitTarget(Rectangle())
+        .animation(completionStateAnimation, value: item.isCompleted)
+    }
+
+    private func symbolScale(isVisible: Bool) -> CGFloat {
+        guard !reduceMotion else { return 1 }
+        return isVisible ? 1 : 0.78
     }
 
     private var subtitle: String? {
@@ -1688,6 +2232,15 @@ private struct LedgerRowView: View {
 
     @ViewBuilder
     private var rowActions: some View {
+        Button {
+            viewModel.beginEditing(item)
+        } label: {
+            Label("Edit", systemImage: "pencil")
+        }
+        .disabled(item.text.isEmpty)
+
+        Divider()
+
         Button {
             viewModel.toggleComplete(item)
         } label: {
@@ -1783,17 +2336,37 @@ private struct AttachmentLedgerRow: View {
     let attachment: AppViewModel.LedgerAttachment
     let timeFormat: AppViewModel.TimeFormat
     let searchLocation: String?
+    let completedPresentation: Bool
+    let isInteractive: Bool
 
+    @ViewBuilder
     var body: some View {
-        Button {
-            if let url = attachment.previewURL {
-                NSWorkspace.shared.open(url)
+        if isInteractive {
+            Button {
+                if let url = attachment.previewURL {
+                    NSWorkspace.shared.open(url)
+                }
+            } label: {
+                rowLabel
             }
-        } label: {
-            HStack(spacing: 12) {
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.88))
+            .notchHitTarget(Rectangle())
+            .disabled(attachment.previewURL == nil)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Attachment: \(attachment.name)")
+            .accessibilityHint("Opens the captured attachment")
+        } else {
+            rowLabel
+        }
+    }
+
+    private var rowLabel: some View {
+        HStack(spacing: 12) {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .regular))
-                    .foregroundStyle(NotchTheme.secondaryText)
+                    .foregroundStyle(
+                        completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+                    )
                     .frame(width: 20)
 
                 if attachment.kind == .image || attachment.kind == .screenshot {
@@ -1812,12 +2385,19 @@ private struct AttachmentLedgerRow: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(attachment.name)
                         .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(NotchTheme.primaryText)
+                        .foregroundStyle(
+                            completedPresentation ? NotchTheme.secondaryText : NotchTheme.primaryText
+                        )
+                        .strikethrough(completedPresentation, color: NotchTheme.secondaryText)
                         .lineLimit(1)
                     if let detail = attachment.subtitle {
                         Text(detail)
                             .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(NotchTheme.secondaryText)
+                            .foregroundStyle(
+                                completedPresentation
+                                    ? NotchTheme.tertiaryText
+                                    : NotchTheme.secondaryText
+                            )
                             .lineLimit(1)
                     }
                     if let searchLocation {
@@ -1835,24 +2415,19 @@ private struct AttachmentLedgerRow: View {
 
                 Image(systemName: "chevron.right")
                     .font(.system(size: 10, weight: .regular))
-                    .foregroundStyle(NotchTheme.secondaryText)
-            }
-            .padding(.horizontal, 20)
-            .frame(minHeight: attachment.kind == .image || attachment.kind == .screenshot ? 64 : 56)
-            .overlay(alignment: .bottom) {
-                Rectangle()
-                    .fill(NotchTheme.hairline)
-                    .frame(height: 1)
-                    .padding(.leading, 20)
-            }
-            .notchHitTarget(Rectangle())
+                    .foregroundStyle(
+                        completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+                    )
         }
-        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.88))
+        .padding(.horizontal, 20)
+        .frame(minHeight: attachment.kind == .image || attachment.kind == .screenshot ? 64 : 56)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchTheme.hairline)
+                .frame(height: 1)
+                .padding(.leading, 20)
+        }
         .notchHitTarget(Rectangle())
-        .disabled(attachment.previewURL == nil)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Attachment: \(attachment.name)")
-        .accessibilityHint("Opens the captured attachment")
     }
 
     private var symbol: String {
@@ -1920,7 +2495,7 @@ private struct EmptyInboxView: View {
             Text(isSearching ? "No matches" : emptyTitle)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(NotchTheme.primaryText)
-            Text(isSearching ? "Press Return to add “\(query)” to \(folderName ?? "Inbox")." : emptyDetail)
+            Text(isSearching ? "Press Return to add to \(folderName ?? "Inbox")." : emptyDetail)
                 .font(.system(size: 10, weight: .regular))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -2005,23 +2580,41 @@ private struct InlineErrorView: View {
 }
 
 private struct DropTargetOverlay: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var contentIsSettled = false
+
     var body: some View {
-        VStack(spacing: 10) {
-            Image(systemName: "arrow.down.doc")
-                .font(.system(size: 24, weight: .light))
-            Text("Drop to capture")
-                .font(.system(size: 14, weight: .medium))
-            Text("Files, images, links, or text")
-                .font(.system(size: 10.5, weight: .regular))
-                .foregroundStyle(NotchTheme.secondaryText)
+        ZStack {
+            NotchTheme.ink.opacity(0.97)
+
+            VStack(spacing: 10) {
+                Image(systemName: "arrow.down.doc")
+                    .font(.system(size: 24, weight: .light))
+                Text("Drop to capture")
+                    .font(.system(size: 14, weight: .medium))
+                Text("Files, images, links, or text")
+                    .font(.system(size: 10.5, weight: .regular))
+                    .foregroundStyle(NotchTheme.secondaryText)
+            }
+            .foregroundStyle(NotchTheme.primaryText)
+            .opacity(contentIsSettled ? 1 : 0)
+            .scaleEffect(reduceMotion || contentIsSettled ? 1 : 0.985)
+            .animation(
+                reduceMotion ? NotchMotion.reducedMotion : NotchMotion.dropEnter,
+                value: contentIsSettled
+            )
         }
-        .foregroundStyle(NotchTheme.primaryText)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(NotchTheme.ink.opacity(0.97))
         .overlay {
             RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(NotchTheme.controlStroke, style: StrokeStyle(lineWidth: 1, dash: [5, 5]))
                 .padding(12)
+        }
+        .onAppear {
+            Task { @MainActor in
+                await Task.yield()
+                contentIsSettled = true
+            }
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel("Drop files, images, links, or text to capture")

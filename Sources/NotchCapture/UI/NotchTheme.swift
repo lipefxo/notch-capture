@@ -1,6 +1,32 @@
 import SwiftUI
 
 enum NotchTheme {
+    private struct TagPaletteAnchor {
+        let red: Double
+        let green: Double
+        let blue: Double
+
+        var color: Color {
+            Color(red: red, green: green, blue: blue)
+        }
+
+        func lightened(by amount: Double) -> Color {
+            Color(
+                red: red + ((1 - red) * amount),
+                green: green + ((1 - green) * amount),
+                blue: blue + ((1 - blue) * amount)
+            )
+        }
+
+        func darkened(by amount: Double) -> Color {
+            Color(
+                red: red * (1 - amount),
+                green: green * (1 - amount),
+                blue: blue * (1 - amount)
+            )
+        }
+    }
+
     static let width: CGFloat = 420
     static let maxHeight: CGFloat = 560
     static let headerHeight: CGFloat = 62
@@ -13,68 +39,139 @@ enum NotchTheme {
     static let selectedControl = Color.white.opacity(0.135)
     static let selectedLedger = Color.white.opacity(0.055)
     static let hoveredLedger = Color.white.opacity(0.028)
+    static let completedLedger = mint.opacity(0.045)
+    static let completionWash = mint.opacity(0.10)
     static let controlStroke = Color.white.opacity(0.075)
     static let hairline = Color.white.opacity(0.065)
     static let primaryText = Color.white.opacity(0.90)
     static let secondaryText = Color.white.opacity(0.55)
     static let tertiaryText = Color.white.opacity(0.39)
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
-    static let iridescenceColors = [
-        Color(red: 0.31, green: 0.89, blue: 1.00),
-        Color(red: 0.46, green: 0.42, blue: 1.00),
-        Color(red: 0.93, green: 0.34, blue: 0.94),
-        Color(red: 1.00, green: 0.42, blue: 0.55),
-        Color(red: 1.00, green: 0.78, blue: 0.30),
-        Color(red: 0.28, green: 0.94, blue: 0.65),
+    private static let tagPaletteAnchors = [
+        TagPaletteAnchor(red: 0.31, green: 0.89, blue: 1.00),
+        TagPaletteAnchor(red: 0.46, green: 0.42, blue: 1.00),
+        TagPaletteAnchor(red: 0.93, green: 0.34, blue: 0.94),
+        TagPaletteAnchor(red: 1.00, green: 0.42, blue: 0.55),
+        TagPaletteAnchor(red: 1.00, green: 0.78, blue: 0.30),
+        TagPaletteAnchor(red: 0.28, green: 0.94, blue: 0.65),
     ]
-    static let composerIridescence = Gradient(colors: iridescenceColors + [iridescenceColors[0]])
+    private static let composerIridescenceColors = tagPaletteAnchors.map(\.color)
+    static let composerIridescence = Gradient(
+        colors: composerIridescenceColors + [composerIridescenceColors[0]]
+    )
 
-    static func tagIridescence(seed: Double) -> LinearGradient {
+    static func tagPaletteIndex(seed: Double) -> Int {
         let normalized = seed - floor(seed)
-        let startIndex = Int(normalized * Double(iridescenceColors.count)) % iridescenceColors.count
-        let colors = (0..<3).map { iridescenceColors[(startIndex + $0) % iridescenceColors.count] }
+        return Int(normalized * Double(tagPaletteAnchors.count)) % tagPaletteAnchors.count
+    }
+
+    static func tagTonalGradient(seed: Double) -> LinearGradient {
+        let normalized = seed - floor(seed)
+        let anchor = tagPaletteAnchors[tagPaletteIndex(seed: seed)]
         let reversesDirection = normalized >= 0.5
         return LinearGradient(
-            colors: colors,
+            colors: [
+                anchor.lightened(by: 0.22),
+                anchor.color,
+                anchor.darkened(by: 0.16),
+            ],
             startPoint: reversesDirection ? .bottomLeading : .topLeading,
             endPoint: reversesDirection ? .topTrailing : .bottomTrailing
         )
     }
+
+    static func tagAccent(seed: Double) -> Color {
+        tagPaletteAnchors[tagPaletteIndex(seed: seed)].color
+    }
+}
+
+struct NotchSpringProfile: Equatable, Sendable {
+    let perceptualDuration: TimeInterval
+    let bounce: Double
+
+    var animation: Animation {
+        .spring(duration: perceptualDuration, bounce: bounce)
+    }
 }
 
 enum NotchMotion {
-    static let surfaceExpansionDuration: TimeInterval = 0.22
-    static let surfaceContractionDuration: TimeInterval = 0.16
-    static let contentDuration: TimeInterval = 0.16
-    static let onboardingDuration: TimeInterval = 0.20
-    static let filterDuration: TimeInterval = 0.15
+    static let surfaceExpansion = NotchSpringProfile(perceptualDuration: 0.42, bounce: 0)
+    static let surfaceContraction = NotchSpringProfile(perceptualDuration: 0.34, bounce: 0)
+    static let surfaceHide = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
+    static let contentMorph = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
+    static let selection = NotchSpringProfile(perceptualDuration: 0.22, bounce: 0)
+    static let reorderDisplacement = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
+    static let dragLift = NotchSpringProfile(perceptualDuration: 0.20, bounce: 0)
+    static let dragLanding = NotchSpringProfile(perceptualDuration: 0.34, bounce: 0)
+    static let onboardingSpring = NotchSpringProfile(perceptualDuration: 0.36, bounce: 0)
+    static let confirmationSpring = NotchSpringProfile(perceptualDuration: 0.32, bounce: 0)
+    static let completionSpring = NotchSpringProfile(perceptualDuration: 0.16, bounce: 0)
+
+    // Compatibility aliases for policy tests and callers that reason about the
+    // perceptual pace without constructing a SwiftUI animation.
+    static let surfaceExpansionDuration = surfaceExpansion.perceptualDuration
+    static let surfaceContractionDuration = surfaceContraction.perceptualDuration
+    static let contentDuration = contentMorph.perceptualDuration
+    static let onboardingDuration = onboardingSpring.perceptualDuration
+    static let filterDuration = selection.perceptualDuration
     static let controlPressDuration: TimeInterval = 0.12
     static let hoverDuration: TimeInterval = 0.08
-    static let dropEnterDuration: TimeInterval = 0.14
-    static let dropExitDuration: TimeInterval = 0.10
+    static let insertionDuration: TimeInterval = 0.18
+    static let removalDuration: TimeInterval = 0.14
+    static let idleRevealDuration: TimeInterval = 0.18
+    static let stagingDelay: TimeInterval = 0.04
     static let composerFocusDuration: TimeInterval = 0.18
     static let composerIridescenceCycleDuration: TimeInterval = 10
-    static let reducedMotionDuration: TimeInterval = 0.10
+    static let reducedMotionDuration: TimeInterval = 0.12
+    static let completionRevealDuration: TimeInterval = 0.30
+    static let completionRetractDuration: TimeInterval = 0.16
+    static let completionReopenDuration = completionRetractDuration
+    static let completionExitDuration: TimeInterval = 0.16
 
     static func easeOut(duration: TimeInterval) -> Animation {
         .timingCurve(0.23, 1, 0.32, 1, duration: duration)
     }
 
-    static let content = easeOut(duration: contentDuration)
-    static let onboarding = easeOut(duration: onboardingDuration)
-    static let filter = easeOut(duration: filterDuration)
+    static let content = contentMorph.animation
+    static let navigation = contentMorph.animation
+    static let onboarding = onboardingSpring.animation
+    static let confirmation = confirmationSpring.animation
+    static let filter = selection.animation
     static let controlPress = easeOut(duration: controlPressDuration)
     static let hover = easeOut(duration: hoverDuration)
-    static let dropEnter = easeOut(duration: dropEnterDuration)
-    static let dropExit = easeOut(duration: dropExitDuration)
+    static let insertion = easeOut(duration: insertionDuration)
+    static let removal = easeOut(duration: removalDuration)
+    static let dropEnter = selection.animation
+    static let dropExit = removal
     static let composerFocus = easeOut(duration: composerFocusDuration)
     static let reducedMotion = easeOut(duration: reducedMotionDuration)
-    static let reorder = Animation.spring(response: 0.32, dampingFraction: 1, blendDuration: 0)
+    static let reorder = reorderDisplacement.animation
+    static let completion = completionSpring.animation
+    static let completionReopen = easeOut(duration: completionReopenDuration)
+    static let completionReveal = easeOut(duration: completionRevealDuration)
+    static let completionRetract = easeOut(duration: completionRetractDuration)
+    static let completionExit = easeOut(duration: completionExitDuration)
+
+    static func landing(initialVelocity: Double) -> Animation {
+        .interpolatingSpring(
+            duration: dragLanding.perceptualDuration,
+            bounce: dragLanding.bounce,
+            initialVelocity: min(1, max(-1, initialVelocity))
+        )
+    }
 }
 
 struct NotchHugShape: Shape {
     var bottomRadius: CGFloat = 24
     var topLift: CGFloat = 8
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(bottomRadius, topLift) }
+        set {
+            bottomRadius = newValue.first
+            topLift = newValue.second
+        }
+    }
 
     func path(in rect: CGRect) -> Path {
         let topY = rect.minY + topLift
@@ -111,15 +208,19 @@ struct NotchHugShape: Shape {
 }
 
 struct NotchSurfaceBackground: View {
+    var bottomRadius: CGFloat = 24
+    var shadowOpacity: Double = 0.46
+    var shadowRadius: CGFloat = 24
+    var shadowY: CGFloat = 14
+
     var body: some View {
-        NotchHugShape(bottomRadius: 24)
+        // No backdrop material here: a Material under .shadow compiles to a
+        // CABackdropLayer that escapes the shape mask and the surface's layout
+        // offset, washing out the desktop as a misplaced rectangle. Behind
+        // near-opaque ink it was invisible anyway.
+        NotchHugShape(bottomRadius: bottomRadius)
             .fill(NotchTheme.ink.opacity(0.985))
-            .background(.ultraThinMaterial, in: NotchHugShape(bottomRadius: 24))
-            .overlay {
-                NotchHugShape(bottomRadius: 24)
-                    .stroke(NotchTheme.hairline, lineWidth: 1)
-            }
-            .shadow(color: .black.opacity(0.46), radius: 24, y: 14)
+            .shadow(color: .black.opacity(shadowOpacity), radius: shadowRadius, y: shadowY)
     }
 }
 
@@ -133,10 +234,11 @@ extension View {
 
 struct PressableIconButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    var idleForeground: Color = NotchTheme.secondaryText
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundStyle(configuration.isPressed ? NotchTheme.primaryText : NotchTheme.secondaryText)
+            .foregroundStyle(configuration.isPressed ? NotchTheme.primaryText : idleForeground)
             .frame(width: 28, height: 28)
             .background(configuration.isPressed ? Color.white.opacity(0.07) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
