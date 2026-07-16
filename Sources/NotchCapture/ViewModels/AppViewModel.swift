@@ -76,6 +76,7 @@ final class AppViewModel: ObservableObject {
     enum KeyboardFocus: Equatable {
         case composer
         case selectedRow
+        case itemEditor
         case none
     }
 
@@ -167,6 +168,7 @@ final class AppViewModel: ObservableObject {
     struct LedgerItem: Identifiable, Hashable {
         var id: UUID
         var kind: ItemKind
+        var text: String
         var title: String
         var detail: String
         var searchableText: String
@@ -189,6 +191,7 @@ final class AppViewModel: ObservableObject {
             kind: ItemKind = .note,
             title: String,
             detail: String = "",
+            text: String? = nil,
             searchableText: String? = nil,
             createdAt: Date = .now,
             dueDate: Date? = nil,
@@ -206,6 +209,7 @@ final class AppViewModel: ObservableObject {
         ) {
             self.id = id
             self.kind = kind
+            self.text = text ?? [title, detail].filter { !$0.isEmpty }.joined(separator: "\n")
             self.title = title
             self.detail = detail
             self.searchableText = searchableText ?? CaptureTagParser.removingTagMentions(
@@ -268,6 +272,12 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    struct ItemEditSession: Equatable {
+        let itemID: UUID
+        let originalText: String
+        var draft: String
+    }
+
     enum CaptureFeedback: Equatable {
         case stayExpanded
         case transientConfirmation
@@ -293,6 +303,7 @@ final class AppViewModel: ObservableObject {
         var onUndoCapture: (UUID?) -> Void = { _ in }
         var onConfirmationPauseChanged: (Bool, TimeInterval) -> Void = { _, _ in }
         var onToggleComplete: (UUID) -> Void = { _ in }
+        var onUpdateText: (UUID, String) -> String? = { _, _ in nil }
         var onTogglePin: (UUID) -> Void = { _ in }
         var onReorder: ([ItemOrderAssignment]) -> Void = { _ in }
         var onArchive: (UUID) -> Void = { _ in }
@@ -328,6 +339,7 @@ final class AppViewModel: ObservableObject {
     @Published var filter: InboxFilter = .all
     @Published var composerText = ""
     @Published var confirmation: Confirmation?
+    @Published var itemEditSession: ItemEditSession?
     @Published var errorMessage: String?
     @Published var folders: [FolderSummary]
     @Published var tags: [TagSummary]
@@ -374,6 +386,7 @@ final class AppViewModel: ObservableObject {
     ) {
         self.surfaceState = surfaceState
         self.items = items
+        self.itemEditSession = nil
         self.folders = folders
         self.tags = tags
         self.ownership = ownership
@@ -431,7 +444,9 @@ final class AppViewModel: ObservableObject {
     var captureDestinationName: String { currentFolder?.name ?? "Inbox" }
     var isAtRoot: Bool { browseLocation == .root }
     var isShowingGlobalSearchResults: Bool { isAtRoot && composerHasQuery }
-    var canReorderVisibleItems: Bool { !isShowingGlobalSearchResults }
+    var canReorderVisibleItems: Bool {
+        !isShowingGlobalSearchResults && itemEditSession == nil
+    }
     var hasVisibleContent: Bool {
         !visibleTagGroups.isEmpty || !visibleFolders.isEmpty || !visibleItems.isEmpty
     }
@@ -497,6 +512,7 @@ final class AppViewModel: ObservableObject {
     }
 
     func dismiss() {
+        itemEditSession = nil
         clearSelection()
         composerText = ""
         errorMessage = nil
@@ -530,21 +546,14 @@ final class AppViewModel: ObservableObject {
         composerText = ""
     }
 
-    func composerTextDidChange(
-        from oldValue: String,
-        to newValue: String,
-        submittedByReturnKey: Bool = false
-    ) {
+    func composerTextDidChange(from oldValue: String, to newValue: String) {
         selectedTagSuggestionIndex = 0
         isTagAutocompleteDismissed = false
         let appendedWhitespace = newValue.hasPrefix(oldValue) &&
             newValue.dropFirst(oldValue.count).count == 1 &&
             newValue.last?.isWhitespace == true
         guard appendedWhitespace else { return }
-        if submittedByReturnKey {
-            composerText = oldValue
-            handleComposerReturn()
-        } else if CaptureTagParser.activeTagFragment(in: oldValue) != nil {
+        if CaptureTagParser.activeTagFragment(in: oldValue) != nil {
             composerText = oldValue + "-"
         }
     }
@@ -634,6 +643,87 @@ final class AppViewModel: ObservableObject {
         keyboardFocus = .composer
     }
 
+    func beginEditing(_ item: LedgerItem) {
+        guard !item.text.isEmpty else { return }
+        selectedItemID = item.id
+        keyboardFocus = .itemEditor
+        errorMessage = nil
+        itemEditSession = ItemEditSession(
+            itemID: item.id,
+            originalText: item.text,
+            draft: item.text
+        )
+    }
+
+    func updateEditingDraft(_ draft: String) {
+        guard var session = itemEditSession else { return }
+        session.draft = draft
+        itemEditSession = session
+    }
+
+    @discardableResult
+    func saveEditing(resumeRowFocus: Bool = true) -> Bool {
+        guard let session = itemEditSession,
+              let item = items.first(where: { $0.id == session.itemID }) else {
+            itemEditSession = nil
+            return true
+        }
+        guard !session.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !item.attachments.isEmpty else {
+            errorMessage = ItemRepositoryError.emptyCapture.localizedDescription
+            selectedItemID = session.itemID
+            keyboardFocus = .itemEditor
+            return false
+        }
+
+        errorMessage = nil
+        if let persistenceError = hooks.onUpdateText(session.itemID, session.draft) {
+            errorMessage = persistenceError
+            selectedItemID = session.itemID
+            keyboardFocus = .itemEditor
+            return false
+        }
+
+        applyEditedText(session.draft, to: session.itemID)
+        itemEditSession = nil
+        if resumeRowFocus {
+            selectedItemID = session.itemID
+            keyboardFocus = .selectedRow
+        } else if keyboardFocus == .itemEditor {
+            keyboardFocus = .none
+        }
+        return true
+    }
+
+    func cancelEditing() {
+        guard let session = itemEditSession else { return }
+        itemEditSession = nil
+        selectedItemID = session.itemID
+        keyboardFocus = .selectedRow
+        errorMessage = nil
+    }
+
+    func handleDismissalRequest(_ reason: PanelDismissalReason) {
+        switch reason {
+        case .escape:
+            if itemEditSession != nil {
+                cancelEditing()
+            } else if !tagSuggestions.isEmpty {
+                dismissTagAutocomplete()
+            } else if composerHasQuery {
+                clearComposerQuery()
+            } else if !isAtRoot {
+                openRoot()
+                focusComposer()
+            } else {
+                dismiss()
+            }
+        case .externalClick where itemEditSession != nil:
+            if saveEditing() { dismiss() }
+        case .externalClick, .automatic:
+            dismiss()
+        }
+    }
+
     func select(_ item: LedgerItem) {
         guard selectedItemID != item.id else {
             clearSelection()
@@ -711,9 +801,16 @@ final class AppViewModel: ObservableObject {
     }
 
     func toggleComplete(_ item: LedgerItem) {
-        mutateItem(item.id) {
-            $0.isCompleted.toggle()
-            $0.completedAt = $0.isCompleted ? .now : nil
+        let willComplete = !item.isCompleted
+        let animation = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? NotchMotion.reducedMotion
+            : (willComplete ? NotchMotion.completion : NotchMotion.completionReopen)
+
+        withAnimation(animation) {
+            mutateItem(item.id) {
+                $0.isCompleted.toggle()
+                $0.completedAt = $0.isCompleted ? .now : nil
+            }
         }
         hooks.onToggleComplete(item.id)
     }
@@ -1061,9 +1158,53 @@ final class AppViewModel: ObservableObject {
         mutation(&items[index])
     }
 
+    private func applyEditedText(_ text: String, to itemID: UUID) {
+        guard let itemIndex = items.firstIndex(where: { $0.id == itemID }) else { return }
+        let parsed = CaptureTagParser.parse(text)
+        var resolvedTags: [TagSummary] = []
+
+        for proposedName in parsed.tagNames {
+            let normalized = CaptureTagParser.normalize(proposedName)
+            if let existing = tags.first(where: { CaptureTagParser.normalize($0.name) == normalized }) {
+                resolvedTags.append(existing)
+            } else {
+                let created = TagSummary(name: CaptureTagParser.normalizedDisplayName(proposedName))
+                tags.append(created)
+                resolvedTags.append(created)
+            }
+        }
+
+        let lines = text
+            .split(whereSeparator: \Character.isNewline)
+            .map(String.init)
+            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let attachments = items[itemIndex].attachments
+        let title = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? attachments.first?.name
+            ?? "Untitled capture"
+
+        items[itemIndex].text = text
+        items[itemIndex].title = title
+        items[itemIndex].detail = lines.dropFirst().joined(separator: "\n")
+        items[itemIndex].tags = resolvedTags
+        items[itemIndex].searchableText = CaptureTagParser.removingTagMentions(
+            in: text,
+            matching: resolvedTags.map(\.name)
+        )
+    }
+
     private func clearSelection() {
         selectedItemID = nil
         keyboardFocus = .none
+    }
+
+    private func clearComposerQuery() {
+        clearSelection()
+        composerText = ""
+        selectedTagSuggestionIndex = 0
+        isTagAutocompleteDismissed = false
+        errorMessage = nil
+        keyboardFocus = .composer
     }
 }
 
@@ -1086,7 +1227,7 @@ extension AppViewModel {
         )
         let selectedTask = LedgerItem(
             kind: .task,
-            title: "Book studio time",
+            title: "Book studio time @Lipe",
             createdAt: calendar.date(bySettingHour: 9, minute: 42, second: 0, of: today) ?? today,
             dueDate: today,
             tags: [lipeTag]
@@ -1104,6 +1245,7 @@ extension AppViewModel {
                 ),
                 LedgerItem(
                     title: "IMG_2147.jpg",
+                    text: "",
                     createdAt: calendar.date(bySettingHour: 9, minute: 36, second: 0, of: today) ?? today,
                     attachments: [
                         LedgerAttachment(
@@ -1116,6 +1258,7 @@ extension AppViewModel {
                 ),
                 LedgerItem(
                     title: "cal.com/studio",
+                    text: "",
                     createdAt: calendar.date(bySettingHour: 9, minute: 28, second: 0, of: today) ?? today,
                     attachments: [
                         LedgerAttachment(

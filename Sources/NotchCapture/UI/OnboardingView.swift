@@ -4,6 +4,8 @@ struct OnboardingView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var navigationDirection: CGFloat = 1
+    @State private var supportingContentIsVisible = false
+    @State private var stagingGeneration = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -23,10 +25,9 @@ struct OnboardingView: View {
             onboardingFooter
         }
         .frame(width: NotchTheme.width, height: 500)
-        .background(NotchSurfaceBackground())
-        .clipShape(NotchHugShape(bottomRadius: 24))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture setup")
+        .onAppear { stageSupportingContent() }
     }
 
     private var onboardingHeader: some View {
@@ -71,6 +72,10 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
                 .frame(maxWidth: 290)
+                .onboardingSupportingMotion(
+                    isVisible: supportingContentIsVisible,
+                    reduceMotion: reduceMotion
+                )
 
             HStack(spacing: 8) {
                 ShortcutKeycap(value: "⌃⇧Space")
@@ -79,6 +84,10 @@ struct OnboardingView: View {
                     .foregroundStyle(NotchTheme.secondaryText)
             }
             .padding(.top, 4)
+            .onboardingSupportingMotion(
+                isVisible: supportingContentIsVisible,
+                reduceMotion: reduceMotion
+            )
             Spacer()
         }
         .padding(.horizontal, 30)
@@ -102,6 +111,10 @@ struct OnboardingView: View {
                 .multilineTextAlignment(.center)
                 .lineSpacing(3)
                 .frame(maxWidth: 300)
+                .onboardingSupportingMotion(
+                    isVisible: supportingContentIsVisible,
+                    reduceMotion: reduceMotion
+                )
 
             HStack(spacing: 6) {
                 Image(systemName: "checkmark.circle.fill")
@@ -113,6 +126,10 @@ struct OnboardingView: View {
             .frame(height: 30)
             .background(NotchTheme.mint.opacity(0.08))
             .clipShape(Capsule())
+            .onboardingSupportingMotion(
+                isVisible: supportingContentIsVisible,
+                reduceMotion: reduceMotion
+            )
             Spacer()
         }
         .padding(.horizontal, 30)
@@ -128,6 +145,10 @@ struct OnboardingView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(NotchTheme.secondaryText)
                     .lineSpacing(3)
+                    .onboardingSupportingMotion(
+                        isVisible: supportingContentIsVisible,
+                        reduceMotion: reduceMotion
+                    )
             }
 
             OnboardingPermissionRow(
@@ -137,6 +158,10 @@ struct OnboardingView: View {
                 isGranted: viewModel.accessibilityGranted,
                 action: viewModel.hooks.onRequestAccessibility
             )
+            .onboardingSupportingMotion(
+                isVisible: supportingContentIsVisible,
+                reduceMotion: reduceMotion
+            )
 
             OnboardingPermissionRow(
                 title: "Screen Recording",
@@ -145,11 +170,19 @@ struct OnboardingView: View {
                 isGranted: viewModel.screenRecordingGranted,
                 action: viewModel.hooks.onRequestScreenRecording
             )
+            .onboardingSupportingMotion(
+                isVisible: supportingContentIsVisible,
+                reduceMotion: reduceMotion
+            )
 
             Toggle("Launch at login", isOn: $viewModel.launchAtLogin)
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .font(.system(size: 11, weight: .medium))
+                .onboardingSupportingMotion(
+                    isVisible: supportingContentIsVisible,
+                    reduceMotion: reduceMotion
+                )
             Spacer()
         }
         .padding(.horizontal, 28)
@@ -205,6 +238,7 @@ struct OnboardingView: View {
 
     private func move(to page: Int) {
         navigationDirection = page >= viewModel.onboardingPage ? 1 : -1
+        hideSupportingContent()
         if reduceMotion {
             withAnimation(NotchMotion.reducedMotion) {
                 viewModel.onboardingPage = page
@@ -214,6 +248,7 @@ struct OnboardingView: View {
                 viewModel.onboardingPage = page
             }
         }
+        stageSupportingContent()
     }
 
     private var pageTransition: AnyTransition {
@@ -222,6 +257,48 @@ struct OnboardingView: View {
             insertion: .opacity.combined(with: .offset(x: 12 * navigationDirection)),
             removal: .opacity.combined(with: .offset(x: -12 * navigationDirection))
         )
+    }
+
+    private func hideSupportingContent() {
+        stagingGeneration &+= 1
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            supportingContentIsVisible = false
+        }
+    }
+
+    private func stageSupportingContent() {
+        hideSupportingContent()
+        let generation = stagingGeneration
+        Task { @MainActor in
+            await Task.yield()
+            guard generation == stagingGeneration else { return }
+            supportingContentIsVisible = true
+        }
+    }
+}
+
+private struct OnboardingSupportingMotion: ViewModifier {
+    let isVisible: Bool
+    let reduceMotion: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(isVisible ? 1 : 0)
+            .offset(y: reduceMotion || isVisible ? 0 : 3)
+            .animation(
+                reduceMotion
+                    ? NotchMotion.reducedMotion
+                    : NotchMotion.onboarding.delay(NotchMotion.stagingDelay),
+                value: isVisible
+            )
+    }
+}
+
+private extension View {
+    func onboardingSupportingMotion(isVisible: Bool, reduceMotion: Bool) -> some View {
+        modifier(OnboardingSupportingMotion(isVisible: isVisible, reduceMotion: reduceMotion))
     }
 }
 

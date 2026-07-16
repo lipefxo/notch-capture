@@ -22,29 +22,41 @@ struct ParsedTagText: Equatable, Sendable {
     var isTagOnly: Bool { text.isEmpty && !tagNames.isEmpty }
 }
 
+struct CaptureTagMention: Equatable {
+    let name: String
+    let range: Range<String.Index>
+}
+
 enum CaptureTagParser {
     private static let expression = try! NSRegularExpression(
         pattern: #"(?<!\S)@([\p{L}\p{N}_-]+)"#
     )
 
     static func parse(_ input: String) -> ParsedTagText {
-        let range = NSRange(input.startIndex..., in: input)
-        let matches = expression.matches(in: input, range: range)
         var names: [String] = []
         var seen: Set<String> = []
 
-        for match in matches {
-            guard let nameRange = Range(match.range(at: 1), in: input) else { continue }
-            let name = String(input[nameRange])
-            let normalized = normalize(name)
+        for mention in mentions(in: input) {
+            let normalized = normalize(mention.name)
             guard !normalized.isEmpty, seen.insert(normalized).inserted else { continue }
-            names.append(name)
+            names.append(mention.name)
         }
 
         return ParsedTagText(
             text: removingTagMentions(in: input),
             tagNames: names
         )
+    }
+
+    static func mentions(in input: String) -> [CaptureTagMention] {
+        let range = NSRange(input.startIndex..., in: input)
+        return expression.matches(in: input, range: range).compactMap { match in
+            guard let tokenRange = Range(match.range(at: 0), in: input),
+                  let nameRange = Range(match.range(at: 1), in: input) else {
+                return nil
+            }
+            return CaptureTagMention(name: String(input[nameRange]), range: tokenRange)
+        }
     }
 
     /// Removes intentional tag tokens while leaving emails and unmatched mentions untouched.

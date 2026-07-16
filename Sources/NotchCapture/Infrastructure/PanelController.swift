@@ -5,46 +5,123 @@ import SwiftUI
 struct PanelTransitionPolicy: Equatable {
     enum Kind: Equatable {
         case immediate
+        case reveal
         case expand
         case contract
+        case hide
+        case reducedFade
+    }
+
+    enum Opacity: Equatable {
+        case unchanged
+        case reveal
+        case hide
     }
 
     let kind: Kind
-    let duration: TimeInterval
+    let spring: NotchSpringProfile?
+    let opacity: Opacity
+    let fadeDuration: TimeInterval
+
+    var duration: TimeInterval {
+        spring?.perceptualDuration ?? fadeDuration
+    }
 
     var animatesFrame: Bool {
-        kind != .immediate && duration > 0
+        spring != nil
+    }
+
+    var animatesOpacity: Bool {
+        opacity != .unchanged && fadeDuration > 0
+    }
+
+    var ordersOutOnCompletion: Bool {
+        opacity == .hide
     }
 
     static func resolve(
         from oldState: PanelState,
         to newState: PanelState,
         wasVisible: Bool,
-        reduceMotion: Bool
+        reduceMotion: Bool,
+        animated: Bool = true
     ) -> Self {
-        guard newState.isVisible, !reduceMotion else {
-            return Self(kind: .immediate, duration: 0)
+        guard animated else { return .immediate }
+        guard oldState != newState || !wasVisible else { return .immediate }
+
+        if !newState.isVisible {
+            guard newState != .screenshot, wasVisible else { return .immediate }
+            if reduceMotion {
+                return Self(
+                    kind: .reducedFade,
+                    spring: nil,
+                    opacity: .hide,
+                    fadeDuration: NotchMotion.reducedMotionDuration
+                )
+            }
+            return Self(
+                kind: .hide,
+                spring: NotchMotion.surfaceHide,
+                opacity: .hide,
+                fadeDuration: NotchMotion.surfaceHide.perceptualDuration
+            )
         }
-        guard oldState != newState || !wasVisible else {
-            return Self(kind: .immediate, duration: 0)
+
+        if reduceMotion {
+            return wasVisible
+                ? .immediate
+                : Self(
+                    kind: .reducedFade,
+                    spring: nil,
+                    opacity: .reveal,
+                    fadeDuration: NotchMotion.reducedMotionDuration
+                )
         }
 
         if !wasVisible {
             return newState == .collapsed
-                ? Self(kind: .immediate, duration: 0)
-                : Self(kind: .expand, duration: NotchMotion.surfaceExpansionDuration)
+                ? Self(
+                    kind: .reveal,
+                    spring: nil,
+                    opacity: .reveal,
+                    fadeDuration: NotchMotion.idleRevealDuration
+                )
+                : Self(
+                    kind: .expand,
+                    spring: NotchMotion.surfaceExpansion,
+                    opacity: .reveal,
+                    fadeDuration: NotchMotion.insertionDuration
+                )
         }
 
+        let recoveringFromHide = !oldState.isVisible && wasVisible
         let oldArea = oldState.nominalSize.width * oldState.nominalSize.height
         let newArea = newState.nominalSize.width * newState.nominalSize.height
         if newArea > oldArea {
-            return Self(kind: .expand, duration: NotchMotion.surfaceExpansionDuration)
+            return Self(
+                kind: .expand,
+                spring: NotchMotion.surfaceExpansion,
+                opacity: recoveringFromHide ? .reveal : .unchanged,
+                fadeDuration: recoveringFromHide ? NotchMotion.insertionDuration : 0
+            )
         }
         if newArea < oldArea {
-            return Self(kind: .contract, duration: NotchMotion.surfaceContractionDuration)
+            return Self(
+                kind: .contract,
+                spring: NotchMotion.surfaceContraction,
+                opacity: .unchanged,
+                fadeDuration: 0
+            )
         }
-        return Self(kind: .immediate, duration: 0)
+        return .immediate
     }
+
+    private static let immediate = Self(
+        kind: .immediate,
+        spring: nil,
+        opacity: .unchanged,
+        fadeDuration: 0
+    )
 }
 
 struct PanelDismissalEventPolicy {
@@ -65,12 +142,30 @@ struct PanelDismissalEventPolicy {
     }
 }
 
+/// Transparent margin reserved around the rendered surface inside the panel
+/// window. The SwiftUI shell paints its own drop shadow (up to 24pt of blur
+/// offset 14pt downward); without this apron the shadow clips square at the
+/// window edge and reads as a rectangular frame around the rounded chrome.
+/// The gaussian tail of a 24pt blur stays visible (~1 brightness level on a
+/// white desktop) out to roughly 2.3 sigma, so the apron must comfortably
+/// exceed 56pt — plus the 14pt downward offset on the bottom edge.
+enum PanelShadowApron {
+    static let horizontal: CGFloat = 64
+    static let bottom: CGFloat = 80
+}
+
+public enum PanelDismissalReason: Equatable {
+    case escape
+    case externalClick
+    case automatic
+}
+
 @MainActor
 public final class PanelController: NSObject, ObservableObject {
     public typealias ContentFactory = @MainActor (PanelState) -> AnyView
 
     @Published public private(set) var state: PanelState = .dormant
-    public var onRequestDismiss: (@MainActor () -> Void)?
+    public var onRequestDismiss: (@MainActor (PanelDismissalReason) -> Void)?
 
     public let panel: NotchPanel
 
@@ -127,7 +222,7 @@ public final class PanelController: NSObject, ObservableObject {
         }
 
         let oldState = state
-        let wasVisible = panel.isVisible && oldState.isVisible
+        let wasVisible = panel.isVisible
         guard oldState != newState || !wasVisible else { return }
         confirmationDismissalTask?.cancel()
 
@@ -157,6 +252,7 @@ public final class PanelController: NSObject, ObservableObject {
                 ? panelFrame(for: .collapsed) ?? targetFrame
                 : targetFrame
             panel.setFrame(sourceFrame, display: false)
+            panel.alphaValue = transition.opacity == .reveal ? 0 : 1
         }
 
         if activate && newState.acceptsKeyboardInput {
@@ -191,9 +287,8 @@ public final class PanelController: NSObject, ObservableObject {
 #if DEBUG
     /// Captures the live hosted panel without requiring Screen Recording permission.
     public func writeSnapshot(to destination: URL) throws {
-        guard state.isVisible, let contentView = panel.contentView else {
-            throw PanelSnapshotError.surfaceUnavailable
-        }
+        guard state.isVisible else { throw PanelSnapshotError.panelHidden(state) }
+        guard let contentView = panel.contentView else { throw PanelSnapshotError.missingContentView }
         panel.displayIfNeeded()
         contentView.needsLayout = true
         contentView.layoutSubtreeIfNeeded()
@@ -202,7 +297,7 @@ public final class PanelController: NSObject, ObservableObject {
         let bounds = contentView.bounds
         guard !bounds.isEmpty,
               let representation = contentView.bitmapImageRepForCachingDisplay(in: bounds) else {
-            throw PanelSnapshotError.surfaceUnavailable
+            throw PanelSnapshotError.emptySurface(bounds)
         }
         contentView.cacheDisplay(in: bounds, to: representation)
         guard let png = representation.representation(using: .png, properties: [:]) else {
@@ -217,8 +312,8 @@ public final class PanelController: NSObject, ObservableObject {
 #endif
 
     /// Removes every window and hit target owned by this controller.
-    public func dismiss(restoringFocus: Bool = true) {
-        transitionToHiddenState(.dormant)
+    public func dismiss(restoringFocus: Bool = true, animated: Bool = true) {
+        transitionToHiddenState(.dormant, animated: animated)
         if restoringFocus {
             restorePreviousApplication()
         } else {
@@ -252,7 +347,10 @@ public final class PanelController: NSObject, ObservableObject {
         panel.isOpaque = false
         panel.backgroundColor = .clear
         panel.sharingType = .readOnly
-        panel.hasShadow = true
+        // The persistent SwiftUI shell owns its shape-aware shadow. AppKit's
+        // window shadow follows the rectangular panel bounds and leaks a square
+        // frame around the rounded Dynamic Island chrome.
+        panel.hasShadow = false
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.animationBehavior = .none
@@ -267,14 +365,41 @@ public final class PanelController: NSObject, ObservableObject {
         ]
     }
 
-    private func transitionToHiddenState(_ hiddenState: PanelState) {
+    private func transitionToHiddenState(_ hiddenState: PanelState, animated: Bool = true) {
+        guard state != hiddenState else { return }
         confirmationDismissalTask?.cancel()
         confirmationDismissalTask = nil
+        let oldState = state
+        let wasVisible = panel.isVisible
+        let transition = PanelTransitionPolicy.resolve(
+            from: oldState,
+            to: hiddenState,
+            wasVisible: wasVisible,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            animated: animated
+        )
+
         transitionGeneration += 1
+        let generation = transitionGeneration
         state = hiddenState
-        panel.ignoresMouseEvents = false
-        panel.orderOut(nil)
+        panel.permitsKeyWindow = false
+        panel.ignoresMouseEvents = true
         removeDismissalMonitors()
+
+        guard wasVisible, transition.kind != .immediate,
+              let collapsedFrame = panelFrame(for: .collapsed) else {
+            panel.orderOut(nil)
+            panel.alphaValue = 1
+            panel.ignoresMouseEvents = false
+            return
+        }
+
+        animatePanel(
+            to: transition.animatesFrame ? collapsedFrame : panel.frame,
+            transition: transition,
+            generation: generation,
+            restoreHitTesting: false
+        )
     }
 
     private func panelFrame(for state: PanelState) -> CGRect? {
@@ -296,6 +421,8 @@ public final class PanelController: NSObject, ObservableObject {
         }
 
         guard size.width > 0, size.height > 0 else { return nil }
+        size.width += PanelShadowApron.horizontal * 2
+        size.height += PanelShadowApron.bottom
         return geometry.panelFrame(for: size)
     }
 
@@ -305,20 +432,56 @@ public final class PanelController: NSObject, ObservableObject {
         generation: Int,
         restoreHitTesting: Bool
     ) {
-        guard transition.animatesFrame, panel.frame != targetFrame else {
+        let changesFrame = transition.animatesFrame && panel.frame != targetFrame
+        guard changesFrame || transition.animatesOpacity else {
             panel.setFrame(targetFrame, display: true)
+            panel.alphaValue = 1
             if restoreHitTesting { panel.ignoresMouseEvents = false }
             return
         }
 
+        var animations = panel.animations
+        var animationDuration = transition.fadeDuration
+        if let profile = transition.spring {
+            let spring = CASpringAnimation(
+                perceptualDuration: profile.perceptualDuration,
+                bounce: CGFloat(profile.bounce)
+            )
+            spring.duration = spring.settlingDuration
+            animations[NSAnimatablePropertyKey("frame")] = spring
+            animationDuration = max(animationDuration, spring.settlingDuration)
+        }
+        if transition.animatesOpacity {
+            let fade = CABasicAnimation()
+            fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            animations[NSAnimatablePropertyKey("alphaValue")] = fade
+        }
+        panel.animations = animations
+
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = transition.duration
+            context.duration = animationDuration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
-            panel.animator().setFrame(targetFrame, display: true)
+            if changesFrame {
+                panel.animator().setFrame(targetFrame, display: true)
+            }
+            switch transition.opacity {
+            case .unchanged:
+                break
+            case .reveal:
+                panel.animator().alphaValue = 1
+            case .hide:
+                panel.animator().alphaValue = 0
+            }
         } completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, self.transitionGeneration == generation else { return }
-                if restoreHitTesting { self.panel.ignoresMouseEvents = false }
+                if transition.ordersOutOnCompletion {
+                    self.panel.orderOut(nil)
+                    self.panel.alphaValue = 1
+                    self.panel.ignoresMouseEvents = false
+                } else if restoreHitTesting {
+                    self.panel.ignoresMouseEvents = false
+                }
             }
         }
     }
@@ -360,7 +523,7 @@ public final class PanelController: NSObject, ObservableObject {
                        eventWindow: event.window,
                        panel: self.panel
                    ) {
-                    self.requestDismissal()
+                    self.requestDismissal(reason: .escape)
                     return nil
                 }
                 return event
@@ -375,7 +538,7 @@ public final class PanelController: NSObject, ObservableObject {
                       PanelDismissalEventPolicy.shouldDismissForExternalClick(
                           hasVisibleAuxiliaryWindow: self.hasVisibleAuxiliaryWindow
                       ) else { return }
-                self.requestDismissal()
+                self.requestDismissal(reason: .externalClick)
             }
         }
     }
@@ -402,13 +565,13 @@ public final class PanelController: NSObject, ObservableObject {
         confirmationDismissalTask = Task { [weak self] in
             try? await Task.sleep(for: .seconds(max(0, delay)))
             guard !Task.isCancelled else { return }
-            self?.requestDismissal()
+            self?.requestDismissal(reason: .automatic)
         }
     }
 
-    private func requestDismissal() {
+    private func requestDismissal(reason: PanelDismissalReason) {
         if let onRequestDismiss {
-            onRequestDismiss()
+            onRequestDismiss(reason)
         } else {
             dismiss()
         }
@@ -417,12 +580,16 @@ public final class PanelController: NSObject, ObservableObject {
 
 #if DEBUG
 private enum PanelSnapshotError: LocalizedError {
-    case surfaceUnavailable
+    case panelHidden(PanelState)
+    case missingContentView
+    case emptySurface(CGRect)
     case encodingFailed
 
     var errorDescription: String? {
         switch self {
-        case .surfaceUnavailable: "The rendered notch surface is unavailable."
+        case let .panelHidden(state): "The rendered notch surface is hidden (\(state.rawValue))."
+        case .missingContentView: "The rendered notch surface has no content view."
+        case let .emptySurface(bounds): "The rendered notch surface has invalid bounds: \(bounds)."
         case .encodingFailed: "The rendered notch surface could not be encoded."
         }
     }

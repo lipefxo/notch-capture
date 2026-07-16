@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import SwiftUI
 import XCTest
 @testable import NotchCapture
 
@@ -50,6 +51,22 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.kind, .expand)
         XCTAssertEqual(policy.duration, NotchMotion.surfaceExpansionDuration)
         XCTAssertTrue(policy.animatesFrame)
+        XCTAssertEqual(policy.opacity, .reveal)
+        XCTAssertEqual(policy.spring, NotchMotion.surfaceExpansion)
+    }
+
+    func testHiddenCollapsedSurfaceUsesRestrainedReveal() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .dormant,
+            to: .collapsed,
+            wasVisible: false,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .reveal)
+        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertEqual(policy.opacity, .reveal)
+        XCTAssertEqual(policy.fadeDuration, NotchMotion.idleRevealDuration)
     }
 
     func testExpandedSurfaceContractsToCollapsedPill() {
@@ -62,6 +79,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
 
         XCTAssertEqual(policy.kind, .contract)
         XCTAssertEqual(policy.duration, NotchMotion.surfaceContractionDuration)
+        XCTAssertEqual(policy.spring, NotchMotion.surfaceContraction)
     }
 
     func testSameSizeContentNavigationDoesNotResizeWindow() {
@@ -88,7 +106,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.duration, 0)
     }
 
-    func testDormantDestinationNeverAnimates() {
+    func testNotchFlowHandoffMorphsAndFadesBeforeOrderingOut() {
         let policy = PanelTransitionPolicy.resolve(
             from: .expanded,
             to: .dormant,
@@ -96,8 +114,64 @@ final class PanelTransitionPolicyTests: XCTestCase {
             reduceMotion: false
         )
 
+        XCTAssertEqual(policy.kind, .hide)
+        XCTAssertEqual(policy.spring, NotchMotion.surfaceHide)
+        XCTAssertEqual(policy.opacity, .hide)
+        XCTAssertTrue(policy.animatesFrame)
+        XCTAssertTrue(policy.ordersOutOnCompletion)
+    }
+
+    func testReducedMotionHideUsesOpacityOnly() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .dormant,
+            wasVisible: true,
+            reduceMotion: true
+        )
+
+        XCTAssertEqual(policy.kind, .reducedFade)
+        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertEqual(policy.opacity, .hide)
+        XCTAssertEqual(policy.fadeDuration, NotchMotion.reducedMotionDuration)
+    }
+
+    func testScreenshotSelectionIsImmediate() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .screenshot,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
         XCTAssertEqual(policy.kind, .immediate)
         XCTAssertFalse(policy.animatesFrame)
+        XCTAssertFalse(policy.ordersOutOnCompletion)
+    }
+
+    func testExplicitlyNonAnimatedDismissalIsImmediate() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .dormant,
+            wasVisible: true,
+            reduceMotion: false,
+            animated: false
+        )
+
+        XCTAssertEqual(policy.kind, .immediate)
+        XCTAssertFalse(policy.animatesOpacity)
+    }
+
+    func testReopeningDuringPendingPhysicalHideRetargetsLivePanel() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .dormant,
+            to: .expanded,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(policy.kind, .expand)
+        XCTAssertEqual(policy.spring, NotchMotion.surfaceExpansion)
+        XCTAssertEqual(policy.opacity, .reveal)
     }
 
     func testDuplicateVisibleTargetDoesNotAnimate() {
@@ -110,6 +184,138 @@ final class PanelTransitionPolicyTests: XCTestCase {
 
         XCTAssertEqual(policy.kind, .immediate)
         XCTAssertFalse(policy.animatesFrame)
+    }
+}
+
+final class SurfaceChromeMetricsTests: XCTestCase {
+    func testVisibleSurfaceGeometryMatchesThePersistentShell() throws {
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .collapsed)).size,
+            CGSize(width: 178, height: 34)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .confirmation)).size,
+            CGSize(width: 280, height: 56)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .expanded)).size,
+            CGSize(width: 420, height: 560)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .onboarding)).size,
+            CGSize(width: 420, height: 500)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .settings)).size,
+            CGSize(width: 420, height: 560)
+        )
+    }
+
+    func testHiddenStatesDoNotReplaceTheLastVisibleChrome() {
+        XCTAssertNil(SurfaceChromeMetrics.resolve(for: .dormant))
+        XCTAssertNil(SurfaceChromeMetrics.resolve(for: .screenshot))
+    }
+}
+
+final class NotchMotionTokenTests: XCTestCase {
+    func testCriticallyDampedProfilesKeepTheirPerceptualDurations() {
+        let profiles: [(NotchSpringProfile, TimeInterval)] = [
+            (NotchMotion.surfaceExpansion, 0.42),
+            (NotchMotion.surfaceContraction, 0.34),
+            (NotchMotion.surfaceHide, 0.30),
+            (NotchMotion.contentMorph, 0.30),
+            (NotchMotion.selection, 0.22),
+            (NotchMotion.reorderDisplacement, 0.30),
+            (NotchMotion.dragLift, 0.20),
+            (NotchMotion.dragLanding, 0.34),
+            (NotchMotion.onboardingSpring, 0.36),
+            (NotchMotion.confirmationSpring, 0.32),
+            (NotchMotion.completionSpring, 0.16),
+        ]
+
+        for (profile, duration) in profiles {
+            XCTAssertEqual(profile.perceptualDuration, duration)
+            XCTAssertEqual(profile.bounce, 0)
+        }
+    }
+
+    func testFastEaseOutDurationsRemainResponsive() {
+        XCTAssertEqual(NotchMotion.hoverDuration, 0.08)
+        XCTAssertEqual(NotchMotion.controlPressDuration, 0.12)
+        XCTAssertEqual(NotchMotion.insertionDuration, 0.18)
+        XCTAssertEqual(NotchMotion.removalDuration, 0.14)
+        XCTAssertEqual(NotchMotion.reducedMotionDuration, 0.12)
+        XCTAssertEqual(NotchMotion.completionRevealDuration, 0.30)
+        XCTAssertEqual(NotchMotion.completionRetractDuration, 0.16)
+        XCTAssertEqual(NotchMotion.completionReopenDuration, 0.16)
+        XCTAssertEqual(NotchMotion.completionExitDuration, 0.16)
+        XCTAssertEqual(NotchMotion.completionSpring.bounce, 0)
+        XCTAssertLessThanOrEqual(NotchMotion.completionExitDuration, 0.25)
+    }
+}
+
+final class LedgerCompletionRevealGeometryTests: XCTestCase {
+    private let rowRect = CGRect(x: 0, y: 0, width: 420, height: 56)
+
+    func testRevealStartsAtCheckboxAndBloomsAroundItsOrigin() {
+        let initial = LedgerCompletionRevealGeometry.revealFrame(
+            in: rowRect,
+            progress: 0
+        )
+        XCTAssertEqual(initial.midX, LedgerCompletionRevealGeometry.originX)
+        XCTAssertEqual(initial.midY, rowRect.midY)
+        XCTAssertEqual(initial.width, 0)
+        XCTAssertEqual(initial.height, 0)
+
+        let bloomProgress = 28 / rowRect.width
+        let bloom = LedgerCompletionRevealGeometry.revealFrame(
+            in: rowRect,
+            progress: bloomProgress
+        )
+        XCTAssertEqual(bloom.midX, LedgerCompletionRevealGeometry.originX, accuracy: 0.001)
+        XCTAssertEqual(bloom.midY, rowRect.midY, accuracy: 0.001)
+        XCTAssertEqual(bloom.width, bloom.height, accuracy: 0.001)
+    }
+
+    func testRevealWidthGrowsMonotonicallyAndFinishesAcrossTheRow() {
+        let frames = stride(from: CGFloat.zero, through: 1, by: 0.1).map {
+            LedgerCompletionRevealGeometry.revealFrame(in: rowRect, progress: $0)
+        }
+
+        for pair in zip(frames, frames.dropFirst()) {
+            XCTAssertLessThanOrEqual(pair.0.width, pair.1.width)
+        }
+        XCTAssertEqual(frames.last, rowRect)
+    }
+
+    func testRevealClampsProgressAndCoversEverySupportedRowHeight() {
+        XCTAssertEqual(
+            LedgerCompletionRevealGeometry.revealFrame(in: rowRect, progress: -1).width,
+            0
+        )
+        XCTAssertEqual(
+            LedgerCompletionRevealGeometry.revealFrame(in: rowRect, progress: 2),
+            rowRect
+        )
+
+        for height: CGFloat in [56, 64, 66] {
+            let rect = CGRect(x: 0, y: 0, width: 420, height: height)
+            XCTAssertEqual(
+                LedgerCompletionRevealGeometry.revealFrame(in: rect, progress: 1),
+                rect
+            )
+        }
+    }
+}
+
+@MainActor
+final class PanelChromeTests: XCTestCase {
+    func testRoundedShellDoesNotReceiveARectangularWindowShadow() {
+        let controller = PanelController(automaticDismissalEnabled: false) { _ in
+            AnyView(EmptyView())
+        }
+
+        XCTAssertFalse(controller.panel.hasShadow)
     }
 }
 
