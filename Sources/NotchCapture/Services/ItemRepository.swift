@@ -153,23 +153,45 @@ final class ItemRepository {
         guard !name.isEmpty, name.allSatisfy(CaptureTagParser.isTagCharacter) else {
             throw ItemRepositoryError.invalidTagName
         }
-        if let destination = try fetchTags().first(where: {
-            $0.id != tag.id && $0.normalizedName == normalized
-        }) {
-            for item in tag.items where !item.tags.contains(where: { $0.id == destination.id }) {
-                item.tags.append(destination)
+        do {
+            let originalName = tag.name
+            let linkedItems = Array(tag.items)
+            if let destination = try fetchTags().first(where: {
+                $0.id != tag.id && $0.normalizedName == normalized
+            }) {
+                for item in linkedItems {
+                    item.text = CaptureTagParser.replacingTagMentions(
+                        in: item.text,
+                        matching: originalName,
+                        with: destination.name
+                    )
+                    if !item.tags.contains(where: { $0.id == destination.id }) {
+                        item.tags.append(destination)
+                    }
+                    item.touch(at: now)
+                }
+                modelContext.delete(tag)
+                destination.updatedAt = now
+                try modelContext.save()
+                return destination
+            }
+            for item in linkedItems {
+                item.text = CaptureTagParser.replacingTagMentions(
+                    in: item.text,
+                    matching: originalName,
+                    with: name
+                )
                 item.touch(at: now)
             }
-            modelContext.delete(tag)
-            destination.updatedAt = now
+            tag.name = name
+            tag.normalizedName = normalized
+            tag.updatedAt = now
             try modelContext.save()
-            return destination
+            return tag
+        } catch {
+            modelContext.rollback()
+            throw error
         }
-        tag.name = name
-        tag.normalizedName = normalized
-        tag.updatedAt = now
-        try modelContext.save()
-        return tag
     }
 
     func deleteTag(_ tag: CaptureTag, now: Date = .now) throws {
@@ -262,9 +284,12 @@ final class ItemRepository {
             case let .list(id):
                 belongs = item.list?.id == id && !item.isArchived && !item.isTrashed
             }
+            let searchableText = CaptureTagParser.removingTagMentions(
+                in: item.text,
+                matching: item.tags.map(\.name)
+            )
             let textMatches = query.text.isEmpty ||
-                item.text.localizedCaseInsensitiveContains(query.text) ||
-                item.displayTitle.localizedCaseInsensitiveContains(query.text) ||
+                searchableText.localizedCaseInsensitiveContains(query.text) ||
                 item.attachments.contains {
                     $0.originalFilename.localizedCaseInsensitiveContains(query.text)
                 }

@@ -431,7 +431,7 @@ final class AppCoordinator {
             let payload: CapturePayload = if let url = CaptureURLParser.url(from: parsed.text) {
                 .url(url)
             } else {
-                .text(parsed.text)
+                .text(text)
             }
             let item = try repository.createItem(
                 from: payload,
@@ -1069,6 +1069,10 @@ final class AppCoordinator {
             kind: item.kind == .task ? .task : .note,
             title: item.displayTitle,
             detail: detail,
+            searchableText: CaptureTagParser.removingTagMentions(
+                in: item.text,
+                matching: item.tags.map(\.name)
+            ),
             createdAt: item.createdAt,
             dueDate: item.dueDate,
             folderID: item.list?.id,

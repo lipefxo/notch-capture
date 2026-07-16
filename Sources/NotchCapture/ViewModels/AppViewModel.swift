@@ -169,6 +169,7 @@ final class AppViewModel: ObservableObject {
         var kind: ItemKind
         var title: String
         var detail: String
+        var searchableText: String
         var createdAt: Date
         var dueDate: Date?
         var folderID: UUID?
@@ -188,6 +189,7 @@ final class AppViewModel: ObservableObject {
             kind: ItemKind = .note,
             title: String,
             detail: String = "",
+            searchableText: String? = nil,
             createdAt: Date = .now,
             dueDate: Date? = nil,
             folderID: UUID? = nil,
@@ -206,6 +208,10 @@ final class AppViewModel: ObservableObject {
             self.kind = kind
             self.title = title
             self.detail = detail
+            self.searchableText = searchableText ?? CaptureTagParser.removingTagMentions(
+                in: [title, detail].filter { !$0.isEmpty }.joined(separator: "\n"),
+                matching: tags.map(\.name)
+            )
             self.createdAt = createdAt
             self.dueDate = dueDate
             self.folderID = folderID
@@ -524,10 +530,21 @@ final class AppViewModel: ObservableObject {
         composerText = ""
     }
 
-    func composerTextDidChange(from oldValue: String, to newValue: String) {
+    func composerTextDidChange(
+        from oldValue: String,
+        to newValue: String,
+        submittedByReturnKey: Bool = false
+    ) {
         selectedTagSuggestionIndex = 0
         isTagAutocompleteDismissed = false
-        if newValue == oldValue + " ", CaptureTagParser.activeTagFragment(in: oldValue) != nil {
+        let appendedWhitespace = newValue.hasPrefix(oldValue) &&
+            newValue.dropFirst(oldValue.count).count == 1 &&
+            newValue.last?.isWhitespace == true
+        guard appendedWhitespace else { return }
+        if submittedByReturnKey {
+            composerText = oldValue
+            handleComposerReturn()
+        } else if CaptureTagParser.activeTagFragment(in: oldValue) != nil {
             composerText = oldValue + "-"
         }
     }
@@ -975,8 +992,7 @@ final class AppViewModel: ObservableObject {
 
     private func matchesQuery(_ item: LedgerItem, query: ParsedTagText) -> Bool {
         let textMatches = query.text.isEmpty ||
-            item.title.localizedCaseInsensitiveContains(query.text) ||
-            item.detail.localizedCaseInsensitiveContains(query.text) ||
+            item.searchableText.localizedCaseInsensitiveContains(query.text) ||
             item.attachments.contains { $0.name.localizedCaseInsensitiveContains(query.text) }
         guard textMatches else { return false }
         guard !query.tagNames.isEmpty else { return true }

@@ -319,7 +319,13 @@ struct ExpandedInboxView: View {
             }
         }
         .onChange(of: viewModel.composerText) { oldValue, newValue in
-            viewModel.composerTextDidChange(from: oldValue, to: newValue)
+            let event = NSApp.currentEvent
+            let isReturnKey = event?.type == .keyDown && (event?.keyCode == 36 || event?.keyCode == 76)
+            viewModel.composerTextDidChange(
+                from: oldValue,
+                to: newValue,
+                submittedByReturnKey: isReturnKey
+            )
         }
         .onChange(of: isReorderGestureActive) { wasActive, isActive in
             if wasActive, !isActive, reorderSession != nil, dragLocation != nil {
@@ -618,10 +624,6 @@ struct ExpandedInboxView: View {
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
-                .onKeyPress(.return) {
-                    viewModel.handleComposerReturn()
-                    return .handled
-                }
                 .onKeyPress(.tab) {
                     viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
                 }

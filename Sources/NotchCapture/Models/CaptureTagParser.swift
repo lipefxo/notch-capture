@@ -41,23 +41,42 @@ enum CaptureTagParser {
             names.append(name)
         }
 
-        let mutable = NSMutableString(string: input)
-        for match in matches.reversed() {
-            mutable.replaceCharacters(in: match.range, with: "")
-        }
-
-        let cleanedLines = (mutable as String)
-            .components(separatedBy: .newlines)
-            .map(cleanLine)
-        var first = 0
-        var last = cleanedLines.count
-        while first < last && cleanedLines[first].isEmpty { first += 1 }
-        while last > first && cleanedLines[last - 1].isEmpty { last -= 1 }
-
         return ParsedTagText(
-            text: cleanedLines[first..<last].joined(separator: "\n"),
+            text: removingTagMentions(in: input),
             tagNames: names
         )
+    }
+
+    /// Removes intentional tag tokens while leaving emails and unmatched mentions untouched.
+    /// When `tagNames` is nil, every recognized tag token is removed.
+    static func removingTagMentions(in input: String, matching tagNames: [String]? = nil) -> String {
+        let normalizedNames = tagNames.map { Set($0.map(normalize)) }
+        let mutable = NSMutableString(string: input)
+        let range = NSRange(input.startIndex..., in: input)
+        let matches = expression.matches(in: input, range: range)
+        for match in matches.reversed() {
+            guard normalizedNames == nil || normalizedNames?.contains(normalizedName(in: input, match: match)) == true else {
+                continue
+            }
+            mutable.replaceCharacters(in: match.range, with: "")
+        }
+        return cleanedText(mutable as String)
+    }
+
+    /// Rewrites occurrences of one attached tag without changing surrounding prose.
+    static func replacingTagMentions(
+        in input: String,
+        matching tagName: String,
+        with replacementName: String
+    ) -> String {
+        let target = normalize(tagName)
+        let mutable = NSMutableString(string: input)
+        let range = NSRange(input.startIndex..., in: input)
+        let matches = expression.matches(in: input, range: range)
+        for match in matches.reversed() where normalizedName(in: input, match: match) == target {
+            mutable.replaceCharacters(in: match.range, with: "@\(replacementName)")
+        }
+        return mutable as String
     }
 
     static func normalize(_ name: String) -> String {
@@ -92,5 +111,19 @@ enum CaptureTagParser {
     private static func cleanLine(_ line: String) -> String {
         line.replacingOccurrences(of: #"[\t ]+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func normalizedName(in input: String, match: NSTextCheckingResult) -> String {
+        guard let range = Range(match.range(at: 1), in: input) else { return "" }
+        return normalize(String(input[range]))
+    }
+
+    private static func cleanedText(_ input: String) -> String {
+        let cleanedLines = input.components(separatedBy: .newlines).map(cleanLine)
+        var first = 0
+        var last = cleanedLines.count
+        while first < last && cleanedLines[first].isEmpty { first += 1 }
+        while last > first && cleanedLines[last - 1].isEmpty { last -= 1 }
+        return cleanedLines[first..<last].joined(separator: "\n")
     }
 }

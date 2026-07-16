@@ -25,6 +25,22 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.visibleItems.isEmpty)
     }
 
+    func testInlineTagNamesDoNotLeakIntoPlainSearchButUnlinkedMentionsDo() {
+        let home = AppViewModel.TagSummary(name: "Home")
+        let tagged = AppViewModel.LedgerItem(
+            title: "Buy supplies for @home",
+            tags: [home]
+        )
+        let captured = AppViewModel.LedgerItem(title: "Copied message about @home")
+        let viewModel = AppViewModel(items: [tagged, captured], tags: [home])
+
+        viewModel.composerText = "home"
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [captured.id])
+
+        viewModel.composerText = "@HOME"
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [tagged.id])
+    }
+
     func testTagShelfCountsFollowFiltersAndKeepsStandaloneUnderAll() {
         let lipe = AppViewModel.TagSummary(name: "Lipe")
         let standalone = AppViewModel.TagSummary(name: "Standalone")
@@ -84,6 +100,54 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.handleComposerReturn()
         XCTAssertEqual(createdTag, "work")
+        XCTAssertEqual(viewModel.composerText, "")
+    }
+
+    func testReturnWhitespaceFallbackCommitsTagThenCreatesItem() {
+        let work = AppViewModel.TagSummary(name: "work")
+        var captured: String?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureText = { text, _ in captured = text }
+        let viewModel = AppViewModel(tags: [work], hooks: hooks)
+        let activeTag = "Do this new thing at @work"
+        viewModel.composerText = activeTag + " "
+
+        viewModel.composerTextDidChange(
+            from: activeTag,
+            to: activeTag + " ",
+            submittedByReturnKey: true
+        )
+        XCTAssertEqual(viewModel.composerText, activeTag + " ")
+        XCTAssertNil(captured)
+
+        viewModel.composerTextDidChange(
+            from: activeTag + " ",
+            to: activeTag + "  ",
+            submittedByReturnKey: true
+        )
+        XCTAssertEqual(captured, activeTag)
+        XCTAssertEqual(viewModel.composerText, "")
+    }
+
+    func testEmbeddedNewTagIsNotPersistedUntilTheItemSubmits() {
+        var createdStandaloneTag: String?
+        var capturedItem: String?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCreateTag = { createdStandaloneTag = $0 }
+        hooks.onCaptureText = { text, _ in capturedItem = text }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.composerText = "Plan the weekend for @home"
+
+        viewModel.handleComposerReturn()
+
+        XCTAssertEqual(viewModel.composerText, "Plan the weekend for @home ")
+        XCTAssertNil(createdStandaloneTag)
+        XCTAssertNil(capturedItem)
+
+        viewModel.handleComposerReturn()
+
+        XCTAssertEqual(capturedItem, "Plan the weekend for @home")
+        XCTAssertNil(createdStandaloneTag)
         XCTAssertEqual(viewModel.composerText, "")
     }
 

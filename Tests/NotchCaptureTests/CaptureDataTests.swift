@@ -16,6 +16,21 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(CaptureTagParser.parse("Bare @").tagNames, [])
         XCTAssertEqual(CaptureTagParser.activeTagFragment(in: "Plan @Product"), "Product")
         XCTAssertNil(CaptureTagParser.activeTagFragment(in: "lipe@example"))
+        XCTAssertEqual(
+            CaptureTagParser.removingTagMentions(
+                in: "Send @Lipe to @Home at lipe@example.com",
+                matching: ["lipe"]
+            ),
+            "Send to @Home at lipe@example.com"
+        )
+        XCTAssertEqual(
+            CaptureTagParser.replacingTagMentions(
+                in: "Ask @LIPE, not lipe@example.com or @Home",
+                matching: "lipe",
+                with: "People"
+            ),
+            "Ask @People, not lipe@example.com or @Home"
+        )
 
         let taggedURL = CaptureTagParser.parse("www.example.com @Reading")
         XCTAssertEqual(taggedURL.text, "www.example.com")
@@ -26,7 +41,7 @@ final class CaptureDataTests: XCTestCase {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)
         let item = try repository.createItem(
-            text: "Review draft",
+            text: "Review draft with @Lipe",
             origin: .manual,
             tagNames: ["Lipe", "lipe"]
         )
@@ -44,11 +59,53 @@ final class CaptureDataTests: XCTestCase {
         let merged = try repository.renameTag(lipe, to: "work")
         XCTAssertEqual(merged.id, work.id)
         XCTAssertEqual(item.tags.map(\.id), [work.id])
+        XCTAssertEqual(item.text, "Review draft with @Work")
         XCTAssertEqual(try repository.fetchTags().count, 1)
 
         try repository.deleteTag(work)
         XCTAssertTrue(item.tags.isEmpty)
+        XCTAssertEqual(item.text, "Review draft with @Work")
         XCTAssertTrue(try repository.fetchTags().isEmpty)
+        XCTAssertEqual(try repository.fetch(scope: .inbox, search: "Work").map(\.id), [item.id])
+    }
+
+    func testEmbeddedTagCreationPreservesTextAndReusesNamesCaseInsensitively() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let existing = try repository.createTag(name: "Home")
+        let text = "I want to create a new task for @home that is this xyz"
+        let parsed = CaptureTagParser.parse(text)
+
+        let item = try repository.createItem(
+            text: text,
+            origin: .manual,
+            tagNames: parsed.tagNames
+        )
+
+        XCTAssertEqual(item.text, text)
+        XCTAssertEqual(item.tags.map(\.id), [existing.id])
+        XCTAssertEqual(item.tags.map(\.name), ["Home"])
+        XCTAssertEqual(try repository.fetchTags().count, 1)
+        XCTAssertTrue(try repository.fetch(scope: .inbox, search: "home").isEmpty)
+        XCTAssertEqual(try repository.fetch(scope: .inbox, search: "@HOME").map(\.id), [item.id])
+        XCTAssertEqual(
+            try repository.fetch(scope: .inbox, search: "new task @home").map(\.id),
+            [item.id]
+        )
+
+        let newText = "Put the tools in @Garden"
+        let newTagItem = try repository.createItem(
+            text: newText,
+            origin: .manual,
+            tagNames: CaptureTagParser.parse(newText).tagNames
+        )
+        XCTAssertEqual(newTagItem.text, newText)
+        XCTAssertEqual(newTagItem.tags.map(\.name), ["Garden"])
+        XCTAssertEqual(try repository.fetchTags().count, 2)
+
+        let renamed = try repository.renameTag(existing, to: "HOMEBASE")
+        XCTAssertEqual(renamed.name, "HOMEBASE")
+        XCTAssertEqual(item.text, "I want to create a new task for @HOMEBASE that is this xyz")
     }
 
     func testLegacyTagsReceivePersistentColorSeeds() throws {
@@ -416,7 +473,7 @@ final class CaptureDataTests: XCTestCase {
         let sourceStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("source", isDirectory: true))
         let sourceRepository = ItemRepository(modelContext: sourceContainer.mainContext)
         let original = try sourceRepository.createItem(
-            text: "Tagged thought",
+            text: "Tagged thought for @Lipe",
             origin: .manual,
             tagNames: ["Lipe"]
         )
@@ -435,6 +492,7 @@ final class CaptureDataTests: XCTestCase {
         let imported = try XCTUnwrap(
             targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first { $0.id == original.id }
         )
+        XCTAssertEqual(imported.text, "Tagged thought for @Lipe")
         XCTAssertEqual(imported.tags.map(\.name), ["Lipe"])
         XCTAssertEqual(imported.tags.first?.colorSeed, original.tags.first?.colorSeed)
         XCTAssertEqual(
