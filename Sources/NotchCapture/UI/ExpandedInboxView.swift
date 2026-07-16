@@ -618,10 +618,9 @@ struct ExpandedInboxView: View {
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
-                .onSubmit {
-                    if !viewModel.acceptSelectedTagSuggestion() {
-                        viewModel.submitComposer()
-                    }
+                .onKeyPress(.return) {
+                    viewModel.handleComposerReturn()
+                    return .handled
                 }
                 .onKeyPress(.tab) {
                     viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored

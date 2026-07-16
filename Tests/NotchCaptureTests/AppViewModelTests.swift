@@ -75,6 +75,18 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.composerText, "")
     }
 
+    func testReturnCreatesStandaloneTagWithoutAddingHyphens() {
+        var createdTag: String?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCreateTag = { createdTag = $0 }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.composerText = "@work"
+
+        viewModel.handleComposerReturn()
+        XCTAssertEqual(createdTag, "work")
+        XCTAssertEqual(viewModel.composerText, "")
+    }
+
     func testCreationTimestampIsAbsoluteAndOmitsElapsedUnits() throws {
         var components = DateComponents()
         components.calendar = Calendar(identifier: .gregorian)

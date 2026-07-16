@@ -541,6 +541,16 @@ final class AppViewModel: ObservableObject {
         return true
     }
 
+    func handleComposerReturn() {
+        if composerIsTagOnly && (canCreateStandaloneTag || exactComposerTagExists) {
+            submitComposer()
+            return
+        }
+        if !acceptSelectedTagSuggestion() {
+            submitComposer()
+        }
+    }
+
     func acceptTagSuggestion(_ suggestion: TagSuggestion) {
         guard let at = composerText.lastIndex(of: "@") else { return }
         composerText.replaceSubrange(at..., with: "@\(suggestion.name) ")
