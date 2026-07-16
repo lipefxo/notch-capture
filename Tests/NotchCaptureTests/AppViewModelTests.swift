@@ -59,19 +59,43 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.visibleTagGroups.isEmpty)
     }
 
-    func testTagAutocompleteConvertsSpaceAndCommitsWithTrailingSpace() {
+    func testTagAutocompleteUsesSpaceAsDelimiterAndCommitsWithTrailingSpace() {
         let product = AppViewModel.TagSummary(name: "Product-Launch")
         let viewModel = AppViewModel(tags: [product])
         viewModel.composerText = "Review @Product"
 
         XCTAssertEqual(viewModel.tagSuggestions.first?.name, "Product-Launch")
 
+        viewModel.composerText = "Review @Product "
         viewModel.composerTextDidChange(from: "Review @Product", to: "Review @Product ")
-        XCTAssertEqual(viewModel.composerText, "Review @Product-")
+        XCTAssertEqual(viewModel.composerText, "Review @Product ")
+        XCTAssertTrue(viewModel.tagSuggestions.isEmpty)
 
         viewModel.composerText = "Review @Prod"
+        let textBeforeAcceptingSuggestion = viewModel.composerText
         XCTAssertTrue(viewModel.acceptSelectedTagSuggestion())
+        viewModel.composerTextDidChange(
+            from: textBeforeAcceptingSuggestion,
+            to: viewModel.composerText
+        )
         XCTAssertEqual(viewModel.composerText, "Review @Product-Launch ")
+    }
+
+    func testTrailingTagCanBeDelimitedAndSubmittedWithTheItem() {
+        let bags = AppViewModel.TagSummary(name: "bags")
+        var capturedItem: String?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureText = { text, _ in capturedItem = text }
+        let viewModel = AppViewModel(tags: [bags], hooks: hooks)
+        let activeTag = "do this and that and that @bags"
+
+        viewModel.composerText = activeTag + " "
+        viewModel.composerTextDidChange(from: activeTag, to: activeTag + " ")
+        viewModel.submitComposer()
+
+        XCTAssertEqual(capturedItem, activeTag)
+        XCTAssertEqual(CaptureTagParser.parse(capturedItem ?? "").tagNames, ["bags"])
+        XCTAssertEqual(viewModel.composerText, "")
     }
 
     func testStandaloneTagSubmissionUsesTagHookInsteadOfItemCapture() {
@@ -553,11 +577,13 @@ final class AppViewModelTests: XCTestCase {
             tags: [home]
         )
         var persisted: (UUID, String)?
+        var completionToggleCount = 0
         var hooks = AppViewModel.Hooks()
         hooks.onUpdateText = { id, text in
             persisted = (id, text)
             return nil
         }
+        hooks.onToggleComplete = { _ in completionToggleCount += 1 }
         let viewModel = AppViewModel(
             surfaceState: .expanded,
             items: [item],
@@ -573,6 +599,8 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.selectedItemID, item.id)
         XCTAssertFalse(viewModel.canReorderVisibleItems)
         XCTAssertFalse(viewModel.performSelectedRowKeyboardCommand(.toggleCompletion))
+        XCTAssertFalse(viewModel.items[0].isCompleted)
+        XCTAssertEqual(completionToggleCount, 0)
 
         let edited = "First line\n\nSecond line @Home"
         viewModel.updateEditingDraft(edited)
@@ -586,6 +614,60 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.items[0].title, "First line")
         XCTAssertEqual(viewModel.items[0].detail, "Second line @Home")
         XCTAssertEqual(viewModel.items[0].tags, [home])
+    }
+
+    func testBeginningAndEndingEditingPreservesVisibleRowsAndCompletionState() {
+        let now = Date.now
+        let first = AppViewModel.LedgerItem(
+            title: "First",
+            createdAt: now.addingTimeInterval(-120),
+            sortOrder: 0
+        )
+        let target = AppViewModel.LedgerItem(
+            title: "Edit me",
+            createdAt: now.addingTimeInterval(-60),
+            sortOrder: 1
+        )
+        let completed = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Already completed",
+            createdAt: now.addingTimeInterval(-180),
+            isCompleted: true,
+            completedAt: now.addingTimeInterval(-30),
+            sortOrder: 2
+        )
+        var completedIDs: [UUID] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onToggleComplete = { completedIDs.append($0) }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [first, target, completed],
+            hooks: hooks
+        )
+        let visibleIDs = viewModel.visibleItems.map(\.id)
+        let completionStates = Dictionary(
+            uniqueKeysWithValues: viewModel.items.map { ($0.id, $0.isCompleted) }
+        )
+
+        viewModel.beginEditing(target)
+
+        XCTAssertFalse(viewModel.canReorderVisibleItems)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), visibleIDs)
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: viewModel.items.map { ($0.id, $0.isCompleted) }),
+            completionStates
+        )
+        XCTAssertTrue(completedIDs.isEmpty)
+
+        viewModel.cancelEditing()
+
+        XCTAssertTrue(viewModel.canReorderVisibleItems)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), visibleIDs)
+        XCTAssertEqual(
+            Dictionary(uniqueKeysWithValues: viewModel.items.map { ($0.id, $0.isCompleted) }),
+            completionStates
+        )
+        XCTAssertTrue(completedIDs.isEmpty)
     }
 
     func testInlineEditingCancelAndFailuresKeepStoredContentSafe() {
