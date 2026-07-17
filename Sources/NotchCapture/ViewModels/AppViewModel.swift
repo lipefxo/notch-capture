@@ -1,6 +1,7 @@
 import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 @MainActor
 final class AppViewModel: ObservableObject {
@@ -163,6 +164,10 @@ final class AppViewModel: ObservableObject {
             self.subtitle = subtitle
             self.previewURL = previewURL
         }
+
+        var isImage: Bool {
+            kind == .image || kind == .screenshot
+        }
     }
 
     struct LedgerItem: Identifiable, Hashable {
@@ -231,8 +236,23 @@ final class AppViewModel: ObservableObject {
             self.attachments = attachments
         }
 
+        var imageAttachments: [LedgerAttachment] {
+            attachments.filter(\.isImage)
+        }
+
+        var hasImageAttachments: Bool {
+            !imageAttachments.isEmpty
+        }
+
+        var displaysOnlyImages: Bool {
+            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && tags.isEmpty
+                && hasImageAttachments
+                && imageAttachments.count == attachments.count
+        }
+
         var displaysAttachmentPrefix: Bool {
-            !attachments.isEmpty
+            !attachments.isEmpty && !hasImageAttachments
         }
     }
 
@@ -278,6 +298,25 @@ final class AppViewModel: ObservableObject {
         var draft: String
     }
 
+    struct ComposerImage: Identifiable, Equatable {
+        let id: UUID
+        let data: Data
+        let typeIdentifier: String
+        let filename: String
+
+        init(
+            id: UUID = UUID(),
+            data: Data,
+            typeIdentifier: String,
+            filename: String
+        ) {
+            self.id = id
+            self.data = data
+            self.typeIdentifier = typeIdentifier
+            self.filename = filename
+        }
+    }
+
     enum CaptureFeedback: Equatable {
         case stayExpanded
         case transientConfirmation
@@ -300,6 +339,8 @@ final class AppViewModel: ObservableObject {
     struct Hooks {
         var onDismiss: () -> Void = {}
         var onCaptureText: (String, UUID?) -> Void = { _, _ in }
+        var onCaptureComposerImages: (String, [ComposerImage], UUID?) -> String? = { _, _, _ in nil }
+        var onPastedImageProviders: ([NSItemProvider], UUID) -> Void = { _, _ in }
         var onUndoCapture: (UUID?) -> Void = { _ in }
         var onConfirmationPauseChanged: (Bool, TimeInterval) -> Void = { _, _ in }
         var onToggleComplete: (UUID) -> Void = { _ in }
@@ -338,6 +379,7 @@ final class AppViewModel: ObservableObject {
     @Published var browseLocation: BrowseLocation = .root
     @Published var filter: InboxFilter = .all
     @Published var composerText = ""
+    @Published private(set) var composerImages: [ComposerImage] = []
     @Published var confirmation: Confirmation?
     @Published var itemEditSession: ItemEditSession?
     @Published var errorMessage: String?
@@ -364,6 +406,7 @@ final class AppViewModel: ObservableObject {
 
     var hooks: Hooks
     private let now: () -> Date
+    private var composerDraftID = UUID()
 
     init(
         surfaceState: SurfaceState = .collapsed,
@@ -453,9 +496,12 @@ final class AppViewModel: ObservableObject {
     var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
 
     var composerHasQuery: Bool { !normalizedComposerText.isEmpty }
+    var composerHasImages: Bool { !composerImages.isEmpty }
+    var composerHasDraft: Bool { composerHasQuery || composerHasImages }
     var searchMatchCount: Int { visibleFolders.count + visibleItems.count }
     var composerHasMatches: Bool { composerHasQuery && searchMatchCount > 0 }
     var canCreateStandaloneTag: Bool {
+        guard !composerHasImages else { return false }
         let query = parsedComposerQuery
         guard query.isTagOnly, query.tagNames.count == 1 else { return false }
         let normalized = CaptureTagParser.normalize(query.tagNames[0])
@@ -470,6 +516,9 @@ final class AppViewModel: ObservableObject {
     }
     var canAddComposerText: Bool {
         composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
+    }
+    var canSubmitComposer: Bool {
+        composerHasImages || canAddComposerText || canCreateStandaloneTag
     }
 
     var visibleTagGroups: [TagGroup] {
@@ -514,7 +563,7 @@ final class AppViewModel: ObservableObject {
     func dismiss() {
         itemEditSession = nil
         clearSelection()
-        composerText = ""
+        resetComposerDraft()
         errorMessage = nil
         surfaceState = shouldYieldIdleSurface ? .dormant : .collapsed
         hooks.onDismiss()
@@ -522,6 +571,20 @@ final class AppViewModel: ObservableObject {
 
     func submitComposer() {
         let text = normalizedComposerText
+        if composerHasImages {
+            errorMessage = nil
+            if let persistenceError = hooks.onCaptureComposerImages(
+                text,
+                composerImages,
+                captureDestinationID
+            ) {
+                errorMessage = persistenceError
+                return
+            }
+            filter = .all
+            resetComposerDraft()
+            return
+        }
         guard !text.isEmpty else {
             return
         }
@@ -529,7 +592,7 @@ final class AppViewModel: ObservableObject {
             let name = parsedComposerQuery.tagNames[0]
             errorMessage = nil
             hooks.onCreateTag(name)
-            composerText = ""
+            resetComposerDraft()
             return
         }
         guard canAddComposerText else {
@@ -543,7 +606,41 @@ final class AppViewModel: ObservableObject {
         errorMessage = nil
         filter = .all
         hooks.onCaptureText(text, captureDestinationID)
-        composerText = ""
+        resetComposerDraft()
+    }
+
+    @discardableResult
+    func acceptPastedImages(_ providers: [NSItemProvider]) -> Bool {
+        let imageProviders = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) ||
+                $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+        }
+        guard !imageProviders.isEmpty else { return false }
+        errorMessage = nil
+        hooks.onPastedImageProviders(imageProviders, composerDraftID)
+        return true
+    }
+
+    func appendComposerImages(_ images: [ComposerImage]) {
+        guard !images.isEmpty else { return }
+        composerImages.append(contentsOf: images)
+        errorMessage = nil
+        keyboardFocus = .composer
+    }
+
+    func appendComposerImages(_ images: [ComposerImage], toComposerDraft draftID: UUID) {
+        guard draftID == composerDraftID else { return }
+        appendComposerImages(images)
+    }
+
+    func showComposerPasteError(_ message: String, forComposerDraft draftID: UUID) {
+        guard draftID == composerDraftID else { return }
+        errorMessage = message
+    }
+
+    func removeComposerImage(id: UUID) {
+        composerImages.removeAll { $0.id == id }
+        keyboardFocus = .composer
     }
 
     func composerTextDidChange(from _: String, to _: String) {
@@ -590,6 +687,7 @@ final class AppViewModel: ObservableObject {
     func search(for tag: TagSummary) {
         clearSelection()
         browseLocation = .root
+        resetComposerDraft()
         composerText = "@\(tag.name) "
         isTagAutocompleteDismissed = true
         keyboardFocus = .composer
@@ -614,14 +712,14 @@ final class AppViewModel: ObservableObject {
 
     func openFolder(_ folder: FolderSummary) {
         clearSelection()
-        composerText = ""
+        resetComposerDraft()
         errorMessage = nil
         browseLocation = .folder(folder.id)
     }
 
     func openRoot() {
         clearSelection()
-        composerText = ""
+        resetComposerDraft()
         errorMessage = nil
         browseLocation = .root
     }
@@ -702,7 +800,7 @@ final class AppViewModel: ObservableObject {
                 cancelEditing()
             } else if !tagSuggestions.isEmpty {
                 dismissTagAutocomplete()
-            } else if composerHasQuery {
+            } else if composerHasDraft {
                 clearComposerQuery()
             } else if !isAtRoot {
                 openRoot()
@@ -1193,11 +1291,17 @@ final class AppViewModel: ObservableObject {
 
     private func clearComposerQuery() {
         clearSelection()
-        composerText = ""
-        selectedTagSuggestionIndex = 0
-        isTagAutocompleteDismissed = false
+        resetComposerDraft()
         errorMessage = nil
         keyboardFocus = .composer
+    }
+
+    private func resetComposerDraft() {
+        composerText = ""
+        composerImages = []
+        composerDraftID = UUID()
+        selectedTagSuggestionIndex = 0
+        isTagAutocompleteDismissed = false
     }
 }
 

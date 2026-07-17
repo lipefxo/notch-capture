@@ -2,6 +2,12 @@ import Foundation
 import SwiftData
 import UniformTypeIdentifiers
 
+struct ImageAttachmentPayload: Sendable, Equatable {
+    let data: Data
+    let typeIdentifier: String
+    let filename: String
+}
+
 @MainActor
 final class ItemRepository {
     let modelContext: ModelContext
@@ -43,6 +49,44 @@ final class ItemRepository {
             return item
         } catch {
             modelContext.rollback()
+            throw error
+        }
+    }
+
+    @discardableResult
+    func createItem(
+        text: String,
+        origin: CaptureOrigin,
+        list: ItemList? = nil,
+        tagNames: [String] = [],
+        imageAttachments: [ImageAttachmentPayload],
+        now: Date = .now
+    ) throws -> CaptureItem {
+        guard let attachmentStore else { throw ItemRepositoryError.attachmentStoreRequired }
+        var storedPaths: [String] = []
+
+        do {
+            let attachments = try imageAttachments.enumerated().map { order, image in
+                let type = UTType(image.typeIdentifier) ?? .data
+                let stored = try attachmentStore.storeData(
+                    image.data,
+                    filename: image.filename,
+                    type: type,
+                    kind: .image
+                )
+                storedPaths.append(stored.relativePath)
+                return attachment(from: stored, order: order)
+            }
+            return try createItem(
+                text: text,
+                origin: origin,
+                list: list,
+                tagNames: tagNames,
+                attachments: attachments,
+                now: now
+            )
+        } catch {
+            storedPaths.forEach { try? attachmentStore.remove(relativePath: $0) }
             throw error
         }
     }

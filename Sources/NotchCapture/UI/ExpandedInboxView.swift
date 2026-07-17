@@ -119,9 +119,6 @@ private struct LedgerDragPreview: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: item.kind == .task ? "checkmark.circle" : "note.text")
-                .font(.system(size: 14, weight: .light))
-                .foregroundStyle(NotchTheme.secondaryText)
             Text(item.title)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(NotchTheme.primaryText)
@@ -323,9 +320,24 @@ struct ExpandedInboxView: View {
     @State private var tagPendingDeletion: AppViewModel.TagSummary?
 
     private let floatingComposerMargin: CGFloat = 18
-    private let floatingComposerHeight: CGFloat = 48
-    private let floatingGlassHeight: CGFloat = 134
-    private let ledgerBottomClearance: CGFloat = 96
+    private let composerTextRowHeight: CGFloat = 48
+    private let composerImageStripHeight: CGFloat = 64
+
+    private var composerAttachmentExpansion: CGFloat {
+        viewModel.composerHasImages ? composerImageStripHeight : 0
+    }
+
+    private var floatingComposerHeight: CGFloat {
+        composerTextRowHeight + composerAttachmentExpansion
+    }
+
+    private var floatingGlassHeight: CGFloat {
+        134 + composerAttachmentExpansion
+    }
+
+    private var ledgerBottomClearance: CGFloat {
+        96 + composerAttachmentExpansion
+    }
 
     private var draggedItemID: UUID? {
         reorderSession?.draggedItemID ?? dragPresentation?.item.id
@@ -748,9 +760,26 @@ struct ExpandedInboxView: View {
         }
         .contentShape(composerShape)
         .shadow(color: .black.opacity(0.42), radius: 14, y: 8)
+        .animation(reduceMotion ? nil : NotchMotion.content, value: viewModel.composerHasImages)
     }
 
     private var captureFieldContent: some View {
+        VStack(spacing: 0) {
+            if viewModel.composerHasImages {
+                composerImageStrip
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .move(edge: .bottom))
+                    )
+            }
+
+            captureTextRow
+        }
+        .frame(height: floatingComposerHeight)
+    }
+
+    private var captureTextRow: some View {
         HStack(spacing: 13) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 15, weight: .light))
@@ -763,6 +792,9 @@ struct ExpandedInboxView: View {
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1...2)
                 .focused($focusedField, equals: .unifiedInput)
+                .onPasteCommand(of: [.image, .fileURL]) { providers in
+                    _ = viewModel.acceptPastedImages(providers)
+                }
                 .onKeyPress(.return) {
                     viewModel.handleComposerReturn()
                     return .handled
@@ -783,7 +815,7 @@ struct ExpandedInboxView: View {
                 .accessibilityLabel("Search or add to \(viewModel.captureDestinationName)")
                 .accessibilityHint(unifiedInputHint)
 
-            if viewModel.canAddComposerText || viewModel.canCreateStandaloneTag {
+            if viewModel.canSubmitComposer {
                 Button {
                     viewModel.submitComposer()
                 } label: {
@@ -820,7 +852,73 @@ struct ExpandedInboxView: View {
             }
         }
         .padding(.horizontal, 16)
-        .frame(height: floatingComposerHeight)
+        .frame(height: composerTextRowHeight)
+    }
+
+    private var composerImageStrip: some View {
+        ScrollView(.horizontal) {
+            HStack(spacing: 8) {
+                ForEach(viewModel.composerImages) { image in
+                    composerImageThumbnail(image)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 10)
+            .padding(.bottom, 8)
+        }
+        .scrollIndicators(.hidden)
+        .frame(height: composerImageStripHeight)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchTheme.controlStroke.opacity(0.65))
+                .frame(height: 1)
+                .padding(.horizontal, 14)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Pasted images")
+    }
+
+    private func composerImageThumbnail(_ image: AppViewModel.ComposerImage) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let nsImage = NSImage(data: image.data) {
+                    Image(nsImage: nsImage)
+                        .resizable()
+                        .scaledToFill()
+                } else {
+                    Image(systemName: "photo")
+                        .font(.system(size: 15, weight: .light))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                }
+            }
+            .frame(width: 42, height: 42)
+            .background(NotchTheme.control)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+            }
+
+            Button {
+                viewModel.removeComposerImage(id: image.id)
+                focusComposer()
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(NotchTheme.primaryText, NotchTheme.ink.opacity(0.9))
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 22, height: 22)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .offset(x: 7, y: -7)
+            .help("Remove \(image.filename)")
+            .accessibilityLabel("Remove \(image.filename)")
+        }
+        .padding(.trailing, 5)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Attached image: \(image.filename)")
     }
 
     private var tagAutocomplete: some View {
@@ -911,8 +1009,8 @@ struct ExpandedInboxView: View {
         }
     }
 
-    private var composerShape: Capsule {
-        Capsule()
+    private var composerShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 24, style: .continuous)
     }
 
     private func composerBackground(angle: Angle) -> some View {
@@ -985,6 +1083,10 @@ struct ExpandedInboxView: View {
     }
 
     private var unifiedInputHint: String {
+        if viewModel.composerHasImages {
+            let count = viewModel.composerImages.count
+            return "\(count) \(count == 1 ? "image is" : "images are") attached. Press Return to add this capture to \(viewModel.captureDestinationName)."
+        }
         if viewModel.canCreateStandaloneTag {
             return "Press Return to create this tag group."
         }
@@ -1820,12 +1922,13 @@ private struct LedgerRowView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isEditorFocused: Bool
     @State private var isHovered = false
+    @State private var isMoreActionsHovered = false
     @State private var completionRevealProgress: CGFloat
 
     private var isSelected: Bool { viewModel.selectedItemID == item.id }
     private var isEditing: Bool { viewModel.itemEditSession?.itemID == item.id }
     private var showsActions: Bool { isHovered || isSelected }
-    private var isAttachmentOnly: Bool {
+    private var isSingleAttachmentOnly: Bool {
         item.text.isEmpty && item.attachments.count == 1 && item.tags.isEmpty
     }
 
@@ -1892,7 +1995,12 @@ private struct LedgerRowView: View {
 
     @ViewBuilder
     private func rowContent(completedPresentation: Bool, isInteractive: Bool) -> some View {
-        if isAttachmentOnly, let attachment = item.attachments.first {
+        if item.displaysOnlyImages {
+            imageAttachmentRows(
+                completedPresentation: completedPresentation,
+                isInteractive: isInteractive
+            )
+        } else if isSingleAttachmentOnly, let attachment = item.attachments.first {
             AttachmentLedgerRow(
                 item: item,
                 attachment: attachment,
@@ -1903,11 +2011,42 @@ private struct LedgerRowView: View {
                 completedPresentation: completedPresentation,
                 isInteractive: isInteractive
             )
+        } else if item.hasImageAttachments {
+            VStack(spacing: 0) {
+                textRow(
+                    completedPresentation: completedPresentation,
+                    isInteractive: isInteractive
+                )
+                imageAttachmentRows(
+                    completedPresentation: completedPresentation,
+                    isInteractive: isInteractive
+                )
+            }
         } else {
             textRow(
                 completedPresentation: completedPresentation,
                 isInteractive: isInteractive
             )
+        }
+    }
+
+    private func imageAttachmentRows(
+        completedPresentation: Bool,
+        isInteractive: Bool
+    ) -> some View {
+        VStack(spacing: 0) {
+            ForEach(item.imageAttachments) { attachment in
+                AttachmentLedgerRow(
+                    item: item,
+                    attachment: attachment,
+                    timeFormat: viewModel.timeFormat,
+                    searchLocation: viewModel.isShowingGlobalSearchResults
+                        ? (item.folderName ?? "Inbox")
+                        : nil,
+                    completedPresentation: completedPresentation,
+                    isInteractive: isInteractive
+                )
+            }
         }
     }
 
@@ -1973,7 +2112,8 @@ private struct LedgerRowView: View {
                     .layoutPriority(1)
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.leading, 20)
+        .padding(.trailing, 8)
         .frame(minHeight: item.detail.isEmpty ? 56 : 66)
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -2228,9 +2368,17 @@ private struct LedgerRowView: View {
         } label: {
             Text("⋮")
                 .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(NotchTheme.secondaryText)
+                .foregroundStyle(
+                    isMoreActionsHovered ? NotchTheme.primaryText : NotchTheme.secondaryText
+                )
                 .frame(width: 36, height: 38)
+                .background(
+                    isMoreActionsHovered ? NotchTheme.control : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                )
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .onHover { isMoreActionsHovered = $0 }
+                .animation(reduceMotion ? nil : NotchMotion.hover, value: isMoreActionsHovered)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
@@ -2372,62 +2520,64 @@ private struct AttachmentLedgerRow: View {
 
     private var rowLabel: some View {
         HStack(spacing: 12) {
+            if !attachment.isImage {
                 Image(systemName: symbol)
                     .font(.system(size: 13, weight: .regular))
                     .foregroundStyle(
                         completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
                     )
                     .frame(width: 20)
+            }
 
-                if attachment.kind == .image || attachment.kind == .screenshot {
-                    if let url = attachment.previewURL, url.isFileURL {
-                        QuickLookThumbnail(url: url, size: CGSize(width: 56, height: 52), fallbackSymbol: symbol)
-                    } else {
-                        Image(systemName: symbol)
-                            .font(.system(size: 18, weight: .light))
-                            .foregroundStyle(NotchTheme.secondaryText)
-                            .frame(width: 56, height: 52)
-                            .background(NotchTheme.control)
-                            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
-                    }
+            if attachment.isImage {
+                if let url = attachment.previewURL, url.isFileURL {
+                    QuickLookThumbnail(url: url, size: CGSize(width: 56, height: 52), fallbackSymbol: symbol)
+                } else {
+                    Image(systemName: symbol)
+                        .font(.system(size: 18, weight: .light))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                        .frame(width: 56, height: 52)
+                        .background(NotchTheme.control)
+                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 }
+            }
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(attachment.name)
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundStyle(
-                            completedPresentation ? NotchTheme.secondaryText : NotchTheme.primaryText
-                        )
-                        .strikethrough(completedPresentation, color: NotchTheme.secondaryText)
-                        .lineLimit(1)
-                    if let detail = attachment.subtitle {
-                        Text(detail)
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(
-                                completedPresentation
-                                    ? NotchTheme.tertiaryText
-                                    : NotchTheme.secondaryText
-                            )
-                            .lineLimit(1)
-                    }
-                    if let searchLocation {
-                        Text(searchLocation == "Inbox" ? "Inbox" : "Folder · \(searchLocation)")
-                            .font(.system(size: 9.5, weight: .regular))
-                            .foregroundStyle(NotchTheme.secondaryText)
-                            .lineLimit(1)
-                    }
-                    Text(CaptureTimestampFormatter.string(from: item.createdAt, timeFormat: timeFormat))
-                        .font(.system(size: 9.5, weight: .regular))
-                        .foregroundStyle(NotchTheme.tertiaryText)
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 10, weight: .regular))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(attachment.name)
+                    .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(
-                        completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+                        completedPresentation ? NotchTheme.secondaryText : NotchTheme.primaryText
                     )
+                    .strikethrough(completedPresentation, color: NotchTheme.secondaryText)
+                    .lineLimit(1)
+                if let detail = attachment.subtitle {
+                    Text(detail)
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(
+                            completedPresentation
+                                ? NotchTheme.tertiaryText
+                                : NotchTheme.secondaryText
+                        )
+                        .lineLimit(1)
+                }
+                if let searchLocation {
+                    Text(searchLocation == "Inbox" ? "Inbox" : "Folder · \(searchLocation)")
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                        .lineLimit(1)
+                }
+                Text(CaptureTimestampFormatter.string(from: item.createdAt, timeFormat: timeFormat))
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundStyle(NotchTheme.tertiaryText)
+            }
+
+            Spacer()
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 10, weight: .regular))
+                .foregroundStyle(
+                    completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+                )
         }
         .padding(.horizontal, 20)
         .frame(minHeight: attachment.kind == .image || attachment.kind == .screenshot ? 64 : 56)

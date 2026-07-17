@@ -402,6 +402,15 @@ final class ApplicationMenuTests: XCTestCase {
         ))
 
         XCTAssertEqual(NotchPanel.editingAction(for: commandV), #selector(NSText.paste(_:)))
+
+        let panel = NotchPanel()
+        var interceptedImagePaste = false
+        panel.onComposerImagePaste = { _ in
+            interceptedImagePaste = true
+            return true
+        }
+        XCTAssertTrue(panel.performKeyEquivalent(with: commandV))
+        XCTAssertTrue(interceptedImagePaste)
     }
 
     func testNotchPanelClassifiesUnmodifiedLedgerRowCommands() throws {

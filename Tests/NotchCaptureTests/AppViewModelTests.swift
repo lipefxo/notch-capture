@@ -1,8 +1,218 @@
 import XCTest
+import UniformTypeIdentifiers
 @testable import NotchCapture
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testImagePasteRoutesOnlyImageProvidersToTheComposerHook() {
+        let imageProvider = NSItemProvider()
+        imageProvider.registerDataRepresentation(
+            forTypeIdentifier: UTType.png.identifier,
+            visibility: .all
+        ) { completion in
+            completion(Data("pixels".utf8), nil)
+            return nil
+        }
+        let fileURLProvider = NSItemProvider(
+            item: URL(fileURLWithPath: "/tmp/CleanShot.png") as NSURL,
+            typeIdentifier: UTType.fileURL.identifier
+        )
+        let textProvider = NSItemProvider(object: "plain text" as NSString)
+        var acceptedProviders: [NSItemProvider] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onPastedImageProviders = { providers, _ in acceptedProviders = providers }
+        let viewModel = AppViewModel(hooks: hooks)
+
+        XCTAssertTrue(viewModel.acceptPastedImages([textProvider, imageProvider, fileURLProvider]))
+        XCTAssertEqual(acceptedProviders.count, 2)
+        XCTAssertTrue(acceptedProviders[0] === imageProvider)
+        XCTAssertTrue(acceptedProviders[1] === fileURLProvider)
+        XCTAssertFalse(viewModel.acceptPastedImages([textProvider]))
+    }
+
+    func testCompletedPasteDoesNotRepopulateADiscardedDraft() throws {
+        let imageProvider = NSItemProvider()
+        imageProvider.registerDataRepresentation(
+            forTypeIdentifier: UTType.png.identifier,
+            visibility: .all
+        ) { completion in
+            completion(Data("pixels".utf8), nil)
+            return nil
+        }
+        var pasteDraftID: UUID?
+        var hooks = AppViewModel.Hooks()
+        hooks.onPastedImageProviders = { _, draftID in pasteDraftID = draftID }
+        let viewModel = AppViewModel(surfaceState: .expanded, hooks: hooks)
+
+        XCTAssertTrue(viewModel.acceptPastedImages([imageProvider]))
+        viewModel.dismiss()
+        viewModel.appendComposerImages(
+            [composerImage(name: "Late.png", contents: "late")],
+            toComposerDraft: try XCTUnwrap(pasteDraftID)
+        )
+
+        XCTAssertTrue(viewModel.composerImages.isEmpty)
+    }
+
+    func testImageFileURLClipboardRepresentationLoadsAsComposerImage() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let imageURL = root.appendingPathComponent("Design/reference-thumbnail.png")
+
+        let image = try XCTUnwrap(AppCoordinator.loadPastedImageFile(at: imageURL, index: 1))
+
+        XCTAssertEqual(image.filename, "reference-thumbnail.png")
+        XCTAssertEqual(image.typeIdentifier, UTType.png.identifier)
+        XCTAssertEqual(image.data, try Data(contentsOf: imageURL))
+        XCTAssertNil(AppCoordinator.loadPastedImageFile(
+            at: root.appendingPathComponent("Package.swift"),
+            index: 2
+        ))
+    }
+
+    func testCleanShotPasteboardItemPrefersBitmapDataOverItsFileURLText() throws {
+        let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
+        let imageURL = root.appendingPathComponent("Design/reference-thumbnail.png")
+        let imageData = try Data(contentsOf: imageURL)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("NotchCaptureTests.\(UUID().uuidString)"))
+        pasteboard.clearContents()
+        let item = NSPasteboardItem()
+        item.setString(imageURL.absoluteString, forType: .fileURL)
+        item.setData(imageData, forType: .png)
+        pasteboard.writeObjects([item])
+
+        let images = AppCoordinator.composerImages(from: pasteboard)
+
+        XCTAssertEqual(images.count, 1)
+        XCTAssertEqual(images[0].filename, "reference-thumbnail.png")
+        XCTAssertEqual(images[0].typeIdentifier, UTType.png.identifier)
+        XCTAssertEqual(images[0].data, imageData)
+    }
+
+    func testComposerImagesAppendInOrderAndCanBeRemovedIndividually() {
+        let first = composerImage(name: "First.png", contents: "first")
+        let second = composerImage(name: "Second.png", contents: "second")
+        let third = composerImage(name: "Third.png", contents: "third")
+        let viewModel = AppViewModel()
+
+        viewModel.appendComposerImages([first, second])
+        viewModel.appendComposerImages([third])
+
+        XCTAssertEqual(viewModel.composerImages.map(\.id), [first.id, second.id, third.id])
+        XCTAssertTrue(viewModel.composerHasDraft)
+        XCTAssertTrue(viewModel.canSubmitComposer)
+
+        viewModel.removeComposerImage(id: second.id)
+        XCTAssertEqual(viewModel.composerImages.map(\.id), [first.id, third.id])
+    }
+
+    func testComposerImagesSubmitAsOneFolderScopedCaptureEvenWhenTextMatches() {
+        let folder = AppViewModel.FolderSummary(name: "Projects")
+        let work = AppViewModel.TagSummary(name: "Work")
+        let matchingItem = AppViewModel.LedgerItem(
+            title: "Review launch",
+            folderID: folder.id,
+            tags: [work]
+        )
+        let images = [
+            composerImage(name: "First.png", contents: "first"),
+            composerImage(name: "Second.jpg", contents: "second", type: .jpeg),
+        ]
+        var capturedText: String?
+        var capturedImages: [AppViewModel.ComposerImage] = []
+        var capturedFolderID: UUID?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureComposerImages = { text, images, folderID in
+            capturedText = text
+            capturedImages = images
+            capturedFolderID = folderID
+            return nil
+        }
+        let viewModel = AppViewModel(
+            items: [matchingItem],
+            folders: [folder],
+            tags: [work],
+            hooks: hooks
+        )
+        viewModel.openFolder(folder)
+        viewModel.composerText = "Review @Work"
+        viewModel.appendComposerImages(images)
+
+        XCTAssertTrue(viewModel.composerHasMatches)
+        XCTAssertFalse(viewModel.canAddComposerText)
+        XCTAssertTrue(viewModel.canSubmitComposer)
+
+        viewModel.submitComposer()
+
+        XCTAssertEqual(capturedText, "Review @Work")
+        XCTAssertEqual(capturedImages, images)
+        XCTAssertEqual(capturedFolderID, folder.id)
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertTrue(viewModel.composerImages.isEmpty)
+    }
+
+    func testImageOnlyAndTagOnlyDraftsSubmitAsCaptures() {
+        let image = composerImage(name: "Capture.png", contents: "pixels")
+        var submissions: [(String, [AppViewModel.ComposerImage])] = []
+        var createdTag: String?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureComposerImages = { text, images, _ in
+            submissions.append((text, images))
+            return nil
+        }
+        hooks.onCreateTag = { createdTag = $0 }
+        let viewModel = AppViewModel(hooks: hooks)
+
+        viewModel.appendComposerImages([image])
+        viewModel.submitComposer()
+        XCTAssertEqual(submissions.first?.0, "")
+        XCTAssertEqual(submissions.first?.1, [image])
+
+        viewModel.composerText = "@Ideas"
+        viewModel.appendComposerImages([image])
+        XCTAssertFalse(viewModel.canCreateStandaloneTag)
+        viewModel.submitComposer()
+
+        XCTAssertEqual(submissions.last?.0, "@Ideas")
+        XCTAssertNil(createdTag)
+    }
+
+    func testFailedImageSubmissionPreservesTheCompleteDraft() {
+        let image = composerImage(name: "Capture.png", contents: "pixels")
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureComposerImages = { _, _, _ in "Could not save pasted images." }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.composerText = "Keep this @Work"
+        viewModel.appendComposerImages([image])
+
+        viewModel.submitComposer()
+
+        XCTAssertEqual(viewModel.composerText, "Keep this @Work")
+        XCTAssertEqual(viewModel.composerImages, [image])
+        XCTAssertEqual(viewModel.errorMessage, "Could not save pasted images.")
+    }
+
+    func testComposerImageDraftClearsOnEscapeNavigationAndDismissal() {
+        let image = composerImage(name: "Capture.png", contents: "pixels")
+        let folder = AppViewModel.FolderSummary(name: "Projects")
+        let viewModel = AppViewModel(surfaceState: .expanded, folders: [folder])
+        viewModel.composerText = "Draft"
+        viewModel.appendComposerImages([image])
+
+        viewModel.handleDismissalRequest(.escape)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertTrue(viewModel.composerImages.isEmpty)
+
+        viewModel.appendComposerImages([image])
+        viewModel.openFolder(folder)
+        XCTAssertTrue(viewModel.composerImages.isEmpty)
+
+        viewModel.appendComposerImages([image])
+        viewModel.dismiss()
+        XCTAssertTrue(viewModel.composerImages.isEmpty)
+        XCTAssertNotEqual(viewModel.surfaceState, .expanded)
+    }
+
     func testTagSearchUsesPlainTextAndAnyExactTag() {
         let lipe = AppViewModel.TagSummary(name: "Lipe")
         let work = AppViewModel.TagSummary(name: "Work")
@@ -880,14 +1090,78 @@ final class AppViewModelTests: XCTestCase {
     func testOnlyAttachmentItemsDisplayAPrefixIcon() {
         let textNote = AppViewModel.LedgerItem(title: "Text note")
         let textTask = AppViewModel.LedgerItem(kind: .task, title: "Text task")
-        let attachment = AppViewModel.LedgerItem(
+        let fileAttachment = AppViewModel.LedgerItem(
             title: "Reference",
             attachments: [.init(kind: .file, name: "brief.pdf")]
+        )
+        let imageAttachment = AppViewModel.LedgerItem(
+            title: "Reference image",
+            attachments: [.init(kind: .image, name: "reference.png")]
         )
 
         XCTAssertFalse(textNote.displaysAttachmentPrefix)
         XCTAssertFalse(textTask.displaysAttachmentPrefix)
-        XCTAssertTrue(attachment.displaysAttachmentPrefix)
+        XCTAssertTrue(fileAttachment.displaysAttachmentPrefix)
+        XCTAssertFalse(imageAttachment.displaysAttachmentPrefix)
+    }
+
+    func testImageAttachmentsPreserveTheirLedgerOrderAndIncludeScreenshots() {
+        let file = AppViewModel.LedgerAttachment(kind: .file, name: "brief.pdf")
+        let first = AppViewModel.LedgerAttachment(kind: .image, name: "first.png")
+        let second = AppViewModel.LedgerAttachment(kind: .screenshot, name: "second.png")
+        let item = AppViewModel.LedgerItem(
+            title: "References",
+            attachments: [file, first, second]
+        )
+
+        XCTAssertEqual(item.imageAttachments, [first, second])
+        XCTAssertTrue(item.hasImageAttachments)
+    }
+
+    func testImageOnlyPresentationExcludesTextTagsAndMixedAttachments() {
+        let image = AppViewModel.LedgerAttachment(kind: .image, name: "reference.png")
+        let secondImage = AppViewModel.LedgerAttachment(kind: .screenshot, name: "capture.png")
+        let file = AppViewModel.LedgerAttachment(kind: .file, name: "brief.pdf")
+        let tag = AppViewModel.TagSummary(name: "Reference")
+
+        XCTAssertTrue(AppViewModel.LedgerItem(
+            title: "reference.png",
+            text: "",
+            attachments: [image, secondImage]
+        ).displaysOnlyImages)
+        XCTAssertFalse(AppViewModel.LedgerItem(
+            title: "Image title",
+            attachments: [image]
+        ).displaysOnlyImages)
+        XCTAssertFalse(AppViewModel.LedgerItem(
+            title: "@Reference",
+            tags: [tag],
+            attachments: [image]
+        ).displaysOnlyImages)
+        XCTAssertFalse(AppViewModel.LedgerItem(
+            title: "reference.png",
+            text: "",
+            attachments: [image, file]
+        ).displaysOnlyImages)
+    }
+
+    func testEditingTextPreservesImageAttachments() {
+        let image = AppViewModel.LedgerAttachment(kind: .image, name: "reference.png")
+        let item = AppViewModel.LedgerItem(
+            title: "Original",
+            text: "Original",
+            attachments: [image]
+        )
+        var hooks = AppViewModel.Hooks()
+        hooks.onUpdateText = { _, _ in nil }
+        let viewModel = AppViewModel(items: [item], hooks: hooks)
+
+        viewModel.beginEditing(item)
+        viewModel.updateEditingDraft("Updated title")
+
+        XCTAssertTrue(viewModel.saveEditing())
+        XCTAssertEqual(viewModel.items[0].title, "Updated title")
+        XCTAssertEqual(viewModel.items[0].attachments, [image])
     }
 
     func testReorderWithinGroupPersistsNormalizedAssignments() {
@@ -1058,6 +1332,18 @@ final class AppViewModelTests: XCTestCase {
         let confirmation = try XCTUnwrap(viewModel.confirmation)
         XCTAssertEqual(confirmation.title, "Second capture")
         XCTAssertEqual(confirmation.remaining(at: currentDate), 5, accuracy: 0.001)
+    }
+
+    private func composerImage(
+        name: String,
+        contents: String,
+        type: UTType = .png
+    ) -> AppViewModel.ComposerImage {
+        AppViewModel.ComposerImage(
+            data: Data(contents.utf8),
+            typeIdentifier: type.identifier,
+            filename: name
+        )
     }
 }
 

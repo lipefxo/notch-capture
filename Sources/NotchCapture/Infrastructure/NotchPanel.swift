@@ -10,6 +10,7 @@ enum LedgerRowKeyboardCommand: Equatable {
 public final class NotchPanel: NSPanel {
     public var permitsKeyWindow = false
     var onLedgerRowKeyboardCommand: (@MainActor (LedgerRowKeyboardCommand) -> Bool)?
+    var onComposerImagePaste: (@MainActor (NSPasteboard) -> Bool)?
 
     public override var canBecomeKey: Bool {
         permitsKeyWindow
@@ -20,9 +21,14 @@ public final class NotchPanel: NSPanel {
     }
 
     public override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        if let action = Self.editingAction(for: event),
-           NSApp.sendAction(action, to: nil, from: self) {
-            return true
+        if let action = Self.editingAction(for: event) {
+            if action == #selector(NSText.paste(_:)),
+               onComposerImagePaste?(NSPasteboard.general) == true {
+                return true
+            }
+            if NSApp.sendAction(action, to: nil, from: self) {
+                return true
+            }
         }
         return super.performKeyEquivalent(with: event)
     }
