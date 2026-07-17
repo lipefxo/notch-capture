@@ -263,6 +263,75 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(link.displayTitle, "example.com")
     }
 
+    func testComposerImagePayloadsPersistInOrderWithTextTagsAndFolder() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = try AttachmentStore(rootURL: temporary)
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext, attachmentStore: store)
+        let list = try repository.createList(name: "Projects")
+
+        let item = try repository.createItem(
+            text: "Review @Work",
+            origin: .manual,
+            list: list,
+            tagNames: ["Work"],
+            imageAttachments: [
+                ImageAttachmentPayload(
+                    data: Data("first".utf8),
+                    typeIdentifier: UTType.png.identifier,
+                    filename: "First.png"
+                ),
+                ImageAttachmentPayload(
+                    data: Data("second".utf8),
+                    typeIdentifier: UTType.jpeg.identifier,
+                    filename: "Second.jpg"
+                ),
+            ]
+        )
+
+        XCTAssertEqual(item.list?.id, list.id)
+        XCTAssertEqual(item.tags.map(\.name), ["Work"])
+        let orderedAttachments = item.attachments.sorted { $0.order < $1.order }
+        XCTAssertEqual(orderedAttachments.map(\.order), [0, 1])
+        XCTAssertEqual(orderedAttachments.map(\.originalFilename), ["First.png", "Second.jpg"])
+        XCTAssertEqual(orderedAttachments.map(\.kind), [.image, .image])
+        for attachment in orderedAttachments {
+            let path = try XCTUnwrap(attachment.relativePath)
+            XCTAssertTrue(FileManager.default.fileExists(atPath: try store.resolve(relativePath: path).path))
+        }
+    }
+
+    func testComposerImagePayloadFailureRemovesPartiallyStoredFiles() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = try AttachmentStore(rootURL: temporary)
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext, attachmentStore: store)
+
+        XCTAssertThrowsError(
+            try repository.createItem(
+                text: "Keep this draft",
+                origin: .manual,
+                imageAttachments: [
+                    ImageAttachmentPayload(
+                        data: Data("first".utf8),
+                        typeIdentifier: UTType.png.identifier,
+                        filename: "First.png"
+                    ),
+                    ImageAttachmentPayload(
+                        data: Data(),
+                        typeIdentifier: UTType.png.identifier,
+                        filename: "Empty.png"
+                    ),
+                ]
+            )
+        )
+
+        XCTAssertTrue(try FileManager.default.contentsOfDirectory(atPath: temporary.path).isEmpty)
+        XCTAssertTrue(try container.mainContext.fetch(FetchDescriptor<CaptureItem>()).isEmpty)
+    }
+
     func testPlainWebAddressesBecomeURLAttachments() throws {
         XCTAssertEqual(
             CaptureURLParser.url(from: "  www.youtube.com/watch?v=123  ")?.absoluteString,

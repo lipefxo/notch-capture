@@ -41,6 +41,7 @@ final class AppCoordinator {
     private var permissionGlobalEventMonitor: Any?
     private var permissionActivationObserver: NSObjectProtocol?
     private var permissionRestoreTask: Task<Void, Never>?
+    private var composerPasteTask: Task<Void, Never>?
 
     init(defaults: UserDefaults = .standard) throws {
         self.defaults = defaults
@@ -131,6 +132,9 @@ final class AppCoordinator {
         self.panelController.panel.onLedgerRowKeyboardCommand = { [weak viewModel] command in
             viewModel?.performSelectedRowKeyboardCommand(command) ?? false
         }
+        self.panelController.panel.onComposerImagePaste = { [weak self] pasteboard in
+            self?.handleComposerImagePaste(from: pasteboard) ?? false
+        }
 
         configureHooks()
         configureStateSynchronization()
@@ -209,6 +213,7 @@ final class AppCoordinator {
         hotKeyManager = nil
         occupancyService.stop()
         screenshotSelection.cancel()
+        composerPasteTask?.cancel()
         clearPermissionSuspension()
         panelController.dismiss(restoringFocus: false, animated: false)
     }
@@ -220,6 +225,12 @@ final class AppCoordinator {
         }
         hooks.onCaptureText = { [weak self] text, folderID in
             self?.captureManualText(text, folderID: folderID)
+        }
+        hooks.onCaptureComposerImages = { [weak self] text, images, folderID in
+            self?.captureComposerImages(text: text, images: images, folderID: folderID)
+        }
+        hooks.onPastedImageProviders = { [weak self] providers, draftID in
+            self?.loadPastedImages(from: providers, forComposerDraft: draftID)
         }
         hooks.onUndoCapture = { [weak self] id in
             self?.undoCapture(id: id)
@@ -449,6 +460,78 @@ final class AppCoordinator {
             presentCaptureFeedback(for: item, feedback: .stayExpanded)
         } catch {
             show(error)
+        }
+    }
+
+    private func captureComposerImages(
+        text: String,
+        images: [AppViewModel.ComposerImage],
+        folderID: UUID?
+    ) -> String? {
+        do {
+            let parsed = CaptureTagParser.parse(text)
+            let list = try folderID.map(findList)
+            let item = try repository.createItem(
+                text: text,
+                origin: .manual,
+                list: list,
+                tagNames: parsed.tagNames,
+                imageAttachments: images.map {
+                    ImageAttachmentPayload(
+                        data: $0.data,
+                        typeIdentifier: $0.typeIdentifier,
+                        filename: $0.filename
+                    )
+                }
+            )
+            presentCaptureFeedback(for: item, feedback: .stayExpanded)
+            return nil
+        } catch {
+            reloadFromStore()
+            return error.localizedDescription
+        }
+    }
+
+    private func handleComposerImagePaste(from pasteboard: NSPasteboard) -> Bool {
+        guard viewModel.surfaceState == .expanded,
+              viewModel.keyboardFocus == .composer else {
+            return false
+        }
+        let images = Self.composerImages(from: pasteboard)
+        guard !images.isEmpty else { return false }
+        viewModel.appendComposerImages(images)
+        return true
+    }
+
+    static func composerImages(from pasteboard: NSPasteboard) -> [AppViewModel.ComposerImage] {
+        (pasteboard.pasteboardItems ?? []).enumerated().compactMap { offset, item in
+            let fileURL = item.string(forType: .fileURL).flatMap(URL.init(string:))
+            let registeredTypes = item.types.compactMap { UTType($0.rawValue) }
+            let preferredTypes: [UTType] = [.png, .jpeg, .heic, .tiff, .gif]
+            let imageType = preferredTypes.first(where: { registeredTypes.contains($0) })
+                ?? registeredTypes.first(where: { $0 != .image && $0.conforms(to: .image) })
+
+            if let imageType,
+               let data = item.data(forType: NSPasteboard.PasteboardType(imageType.identifier)),
+               !data.isEmpty {
+                let filename = fileURL?.lastPathComponent.isEmpty == false
+                    ? fileURL?.lastPathComponent
+                    : nil
+                return AppViewModel.ComposerImage(
+                    data: data,
+                    typeIdentifier: imageType.identifier,
+                    filename: filename ?? pastedImageFilename(
+                        suggestedName: nil,
+                        type: imageType,
+                        index: offset + 1
+                    )
+                )
+            }
+
+            if let fileURL {
+                return loadPastedImageFile(at: fileURL, index: offset + 1)
+            }
+            return nil
         }
     }
 
@@ -747,6 +830,94 @@ final class AppCoordinator {
                 show(error)
             }
         }
+    }
+
+    private func loadPastedImages(from providers: [NSItemProvider], forComposerDraft draftID: UUID) {
+        let previousTask = composerPasteTask
+        composerPasteTask = Task { @MainActor [weak self] in
+            _ = await previousTask?.value
+            guard let self else { return }
+            guard !Task.isCancelled else { return }
+            var images: [AppViewModel.ComposerImage] = []
+
+            for (offset, provider) in providers.enumerated() {
+                if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                    let type = preferredImageType(for: provider)
+                    guard let data = await loadData(from: provider, type: type), !data.isEmpty else {
+                        continue
+                    }
+                    images.append(
+                        AppViewModel.ComposerImage(
+                            data: data,
+                            typeIdentifier: type.identifier,
+                            filename: Self.pastedImageFilename(
+                                suggestedName: provider.suggestedName,
+                                type: type,
+                                index: offset + 1
+                            )
+                        )
+                    )
+                } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
+                          let url = await loadURL(from: provider, type: .fileURL),
+                          let image = Self.loadPastedImageFile(at: url, index: offset + 1) {
+                    images.append(image)
+                }
+            }
+
+            guard !Task.isCancelled else { return }
+            if images.isEmpty {
+                viewModel.showComposerPasteError(
+                    "The pasted image couldn’t be read.",
+                    forComposerDraft: draftID
+                )
+            } else {
+                viewModel.appendComposerImages(images, toComposerDraft: draftID)
+            }
+        }
+    }
+
+    static func loadPastedImageFile(at url: URL, index: Int) -> AppViewModel.ComposerImage? {
+        guard url.isFileURL else { return nil }
+        let didAccess = url.startAccessingSecurityScopedResource()
+        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
+
+        let resourceType = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
+        let type = resourceType ?? UTType(filenameExtension: url.pathExtension)
+        guard let type, type.conforms(to: .image),
+              let data = try? Data(contentsOf: url), !data.isEmpty else {
+            return nil
+        }
+        let filename = url.lastPathComponent.isEmpty
+            ? pastedImageFilename(suggestedName: nil, type: type, index: index)
+            : url.lastPathComponent
+        return AppViewModel.ComposerImage(
+            data: data,
+            typeIdentifier: type.identifier,
+            filename: filename
+        )
+    }
+
+    private func preferredImageType(for provider: NSItemProvider) -> UTType {
+        let registeredTypes = provider.registeredTypeIdentifiers.compactMap(UTType.init)
+        let preferredTypes: [UTType] = [.png, .jpeg, .heic, .tiff, .gif]
+        if let preferred = preferredTypes.first(where: { registeredTypes.contains($0) }) {
+            return preferred
+        }
+        return registeredTypes.first(where: { $0 != .image && $0.conforms(to: .image) }) ?? .image
+    }
+
+    private static func pastedImageFilename(
+        suggestedName: String?,
+        type: UTType,
+        index: Int
+    ) -> String {
+        let trimmedName = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseName = trimmedName.flatMap { $0.isEmpty ? nil : $0 } ?? "Pasted Image \(index)"
+        guard URL(fileURLWithPath: baseName).pathExtension.isEmpty,
+              let filenameExtension = type.preferredFilenameExtension else {
+            return baseName
+        }
+        return "\(baseName).\(filenameExtension)"
     }
 
     private func loadURL(from provider: NSItemProvider, type: UTType) async -> URL? {
