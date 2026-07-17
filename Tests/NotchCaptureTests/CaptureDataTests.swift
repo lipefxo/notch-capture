@@ -286,13 +286,13 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(item.displayTitle, "www.youtube.com")
     }
 
-    func testNewItemsEnterAtTopAndAssignmentsPersistAtomically() throws {
+    func testNewItemsEnterAtBottomAndAssignmentsPersistAtomically() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)
         let first = try repository.createItem(text: "First", origin: .manual)
         let second = try repository.createItem(text: "Second", origin: .manual)
 
-        XCTAssertEqual(try repository.fetch(scope: .inbox).map(\.id), [second.id, first.id])
+        XCTAssertEqual(try repository.fetch(scope: .inbox).map(\.id), [first.id, second.id])
 
         try repository.applyOrderAssignments([
             ItemOrderAssignment(id: first.id, isPinned: true, sortOrder: 0),
@@ -338,7 +338,7 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertFalse(try repository.backfillMissingSortOrders())
 
         let newerFolderItem = try repository.createItem(text: "Newer folder item", origin: .manual, list: folder)
-        XCTAssertLessThan(try XCTUnwrap(newerFolderItem.sortOrder), try XCTUnwrap(folderItem.sortOrder))
+        XCTAssertGreaterThan(try XCTUnwrap(newerFolderItem.sortOrder), try XCTUnwrap(folderItem.sortOrder))
         XCTAssertNil(inboxItem.list)
         XCTAssertEqual(folderItem.list?.id, folder.id)
     }
@@ -360,7 +360,7 @@ final class CaptureDataTests: XCTestCase {
         let storedFolders = try container.mainContext.fetch(FetchDescriptor<ItemList>())
         XCTAssertTrue(storedFolders.isEmpty)
         let inbox = try repository.fetch(scope: .inbox)
-        XCTAssertEqual(inbox.map(\.id), [existingInbox.id, second.id, first.id])
+        XCTAssertEqual(inbox.map(\.id), [existingInbox.id, first.id, second.id])
         XCTAssertTrue(inbox.allSatisfy { $0.list == nil })
     }
 

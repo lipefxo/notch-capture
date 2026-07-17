@@ -1202,7 +1202,7 @@ struct ExpandedInboxView: View {
 
     private func completionRemovalTransition(for item: AppViewModel.LedgerItem) -> AnyTransition {
         guard !reduceMotion else {
-            return .opacity.animation(NotchMotion.reducedMotion)
+            return .opacity
         }
         return .modifier(
             active: LedgerCompletionExitModifier(
@@ -1214,7 +1214,6 @@ struct ExpandedInboxView: View {
                 wasCompleted: item.isCompleted
             )
         )
-        .animation(NotchMotion.completionExit)
     }
 
     private func reorderSectionHeader(title: String, count: Int, isPinned: Bool) -> some View {
@@ -2220,7 +2219,6 @@ private struct LedgerRowView: View {
             return dueDate.formatted(date: .abbreviated, time: .omitted)
         }
         if let sourceApp = item.sourceApp { return "Selected from \(sourceApp)" }
-        if let folderName = item.folderName { return "Folder · \(folderName)" }
         return nil
     }
 
