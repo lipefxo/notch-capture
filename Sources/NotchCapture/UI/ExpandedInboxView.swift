@@ -323,7 +323,7 @@ struct ExpandedInboxView: View {
     @State private var tagPendingDeletion: AppViewModel.TagSummary?
 
     private let floatingComposerMargin: CGFloat = 18
-    private let floatingComposerHeight: CGFloat = 52
+    private let floatingComposerHeight: CGFloat = 48
     private let floatingGlassHeight: CGFloat = 134
     private let ledgerBottomClearance: CGFloat = 96
 
@@ -1170,17 +1170,7 @@ struct ExpandedInboxView: View {
         .ledgerDragRegion(.folder(folder.id))
     }
 
-    @ViewBuilder
     private func reorderableRow(_ item: AppViewModel.LedgerItem) -> some View {
-        if viewModel.canReorderVisibleItems {
-            draggableRow(item)
-        } else {
-            LedgerRowView(item: item, viewModel: viewModel)
-                .transition(completionRemovalTransition(for: item))
-        }
-    }
-
-    private func draggableRow(_ item: AppViewModel.LedgerItem) -> some View {
         let target = reorderTarget?.targetID == item.id ? reorderTarget : nil
         let isDragSource = dragPresentation?.item.id == item.id
         return LedgerRowView(item: item, viewModel: viewModel)
@@ -1194,14 +1184,16 @@ struct ExpandedInboxView: View {
                 value: isDragSource
             )
             .accessibilityActions {
-                if viewModel.canMoveUp(item) {
-                    Button("Move up") {
-                        commitAccessibleMove { viewModel.moveUp(item) }
+                if viewModel.canReorderVisibleItems {
+                    if viewModel.canMoveUp(item) {
+                        Button("Move up") {
+                            commitAccessibleMove { viewModel.moveUp(item) }
+                        }
                     }
-                }
-                if viewModel.canMoveDown(item) {
-                    Button("Move down") {
-                        commitAccessibleMove { viewModel.moveDown(item) }
+                    if viewModel.canMoveDown(item) {
+                        Button("Move down") {
+                            commitAccessibleMove { viewModel.moveDown(item) }
+                        }
                     }
                 }
             }
@@ -1210,7 +1202,7 @@ struct ExpandedInboxView: View {
 
     private func completionRemovalTransition(for item: AppViewModel.LedgerItem) -> AnyTransition {
         guard !reduceMotion else {
-            return .opacity.animation(NotchMotion.reducedMotion)
+            return .opacity
         }
         return .modifier(
             active: LedgerCompletionExitModifier(
@@ -1222,7 +1214,6 @@ struct ExpandedInboxView: View {
                 wasCompleted: item.isCompleted
             )
         )
-        .animation(NotchMotion.completionExit)
     }
 
     private func reorderSectionHeader(title: String, count: Int, isPinned: Bool) -> some View {
@@ -1710,6 +1701,12 @@ struct LedgerCompletionRevealGeometry {
         let right = initialRight + ((rect.maxX - initialRight) * stretch)
         return CGRect(x: left, y: rect.minY, width: right - left, height: rect.height)
     }
+
+    static func cornerRadius(for revealFrame: CGRect, progress: CGFloat) -> CGFloat {
+        let clampedProgress = min(max(progress, 0), 1)
+        let maximumRadius = min(revealFrame.width, revealFrame.height) / 2
+        return maximumRadius * (1 - clampedProgress)
+    }
 }
 
 private struct LedgerCompletionRevealMask: Shape {
@@ -1727,7 +1724,10 @@ private struct LedgerCompletionRevealMask: Shape {
         )
         guard revealFrame.width > 0, revealFrame.height > 0 else { return Path() }
         return RoundedRectangle(
-            cornerRadius: min(revealFrame.width, revealFrame.height) / 2,
+            cornerRadius: LedgerCompletionRevealGeometry.cornerRadius(
+                for: revealFrame,
+                progress: progress
+            ),
             style: .continuous
         )
         .path(in: revealFrame)
@@ -1986,14 +1986,18 @@ private struct LedgerRowView: View {
     @ViewBuilder
     private func selectionContent(completedPresentation: Bool, isInteractive: Bool) -> some View {
         if isInteractive {
-            selectionContentLayout(
-                completedPresentation: completedPresentation,
-                isInteractive: true
-            )
-            .contentShape(Rectangle())
-            .onTapGesture(count: 1) {
-                guard !isEditing else { return }
-                viewModel.select(item)
+            if isEditing {
+                selectionContentLayout(
+                    completedPresentation: completedPresentation,
+                    isInteractive: true
+                )
+            } else {
+                selectionContentLayout(
+                    completedPresentation: completedPresentation,
+                    isInteractive: true
+                )
+                .contentShape(Rectangle())
+                .gesture(selectionGesture)
             }
         } else {
             selectionContentLayout(
@@ -2026,16 +2030,23 @@ private struct LedgerRowView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    private var selectionGesture: some Gesture {
+        TapGesture(count: 2)
+            .exclusively(before: TapGesture(count: 1))
+            .onEnded { result in
+                switch result {
+                case .first:
+                    viewModel.beginEditing(item)
+                case .second:
+                    viewModel.select(item)
+                }
+            }
+    }
+
     @ViewBuilder
     private func displayText(completedPresentation: Bool, isInteractive: Bool) -> some View {
         if isInteractive {
             displayTextLayout(completedPresentation: completedPresentation, isInteractive: true)
-                .contentShape(Rectangle())
-                .highPriorityGesture(
-                    TapGesture(count: 2).onEnded {
-                        viewModel.beginEditing(item)
-                    }
-                )
         } else {
             displayTextLayout(completedPresentation: completedPresentation, isInteractive: false)
         }
@@ -2208,7 +2219,6 @@ private struct LedgerRowView: View {
             return dueDate.formatted(date: .abbreviated, time: .omitted)
         }
         if let sourceApp = item.sourceApp { return "Selected from \(sourceApp)" }
-        if let folderName = item.folderName { return "Folder · \(folderName)" }
         return nil
     }
 

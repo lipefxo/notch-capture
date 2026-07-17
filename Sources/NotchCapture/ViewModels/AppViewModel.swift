@@ -546,16 +546,9 @@ final class AppViewModel: ObservableObject {
         composerText = ""
     }
 
-    func composerTextDidChange(from oldValue: String, to newValue: String) {
+    func composerTextDidChange(from _: String, to _: String) {
         selectedTagSuggestionIndex = 0
         isTagAutocompleteDismissed = false
-        let appendedWhitespace = newValue.hasPrefix(oldValue) &&
-            newValue.dropFirst(oldValue.count).count == 1 &&
-            newValue.last?.isWhitespace == true
-        guard appendedWhitespace else { return }
-        if CaptureTagParser.activeTagFragment(in: oldValue) != nil {
-            composerText = oldValue + "-"
-        }
     }
 
     @discardableResult

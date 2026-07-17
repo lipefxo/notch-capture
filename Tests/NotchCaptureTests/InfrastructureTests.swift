@@ -306,6 +306,21 @@ final class LedgerCompletionRevealGeometryTests: XCTestCase {
             )
         }
     }
+
+    func testCompletedRevealFinishesWithRectangularCorners() {
+        let completedFrame = LedgerCompletionRevealGeometry.revealFrame(
+            in: rowRect,
+            progress: 1
+        )
+
+        XCTAssertEqual(
+            LedgerCompletionRevealGeometry.cornerRadius(
+                for: completedFrame,
+                progress: 1
+            ),
+            0
+        )
+    }
 }
 
 @MainActor

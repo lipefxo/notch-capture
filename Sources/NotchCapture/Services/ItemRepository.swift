@@ -29,7 +29,7 @@ final class ItemRepository {
             let tags = try resolveTags(named: tagNames, now: now)
             let item = CaptureItem(
                 text: text,
-                sortOrder: try nextTopSortOrder(isPinned: false, list: list),
+                sortOrder: try nextBottomSortOrder(isPinned: false, list: list),
                 origin: origin,
                 source: source,
                 list: list,
@@ -464,6 +464,14 @@ final class ItemRepository {
         return (items.filter {
             $0.isPinned == isPinned && $0.list?.id == list?.id
         }.compactMap(\.sortOrder).min() ?? 0) - 1
+    }
+
+    /// Assigns the next rank so a newly created item stacks below existing ones.
+    private func nextBottomSortOrder(isPinned: Bool, list: ItemList?) throws -> Int {
+        let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
+        return (items.filter {
+            $0.isPinned == isPinned && $0.list?.id == list?.id
+        }.compactMap(\.sortOrder).max() ?? -1) + 1
     }
 
     private func resolveTags(named proposedNames: [String], now: Date) throws -> [CaptureTag] {
