@@ -2,9 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var viewModel: AppViewModel
-    @State private var folderBeingRenamed: AppViewModel.FolderSummary?
-    @State private var renameFolderName = ""
-    @State private var folderPendingDeletion: AppViewModel.FolderSummary?
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
 
     var body: some View {
         VStack(spacing: 0) {
@@ -25,32 +23,11 @@ struct SettingsView: View {
         }
         .frame(width: NotchTheme.width, height: NotchTheme.maxHeight)
         .onExitCommand { viewModel.openExpanded() }
-        .alert("Rename Folder", isPresented: renameAlertBinding) {
-            TextField("Folder name", text: $renameFolderName)
-            Button("Cancel", role: .cancel) { folderBeingRenamed = nil }
-            Button("Rename") {
-                if let folderBeingRenamed {
-                    _ = viewModel.renameFolder(folderBeingRenamed, to: renameFolderName)
-                }
-                folderBeingRenamed = nil
-            }
+        .onChange(of: viewModel.shortcutRecordingRequest) { _, request in
+            guard let request else { return }
+            presentShortcutRecorder(request)
         }
-        .confirmationDialog(
-            "Delete \(folderPendingDeletion?.name ?? "folder")?",
-            isPresented: deleteConfirmationBinding,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Folder", role: .destructive) {
-                if let folderPendingDeletion {
-                    viewModel.deleteFolder(folderPendingDeletion)
-                }
-                folderPendingDeletion = nil
-            }
-            Button("Cancel", role: .cancel) { folderPendingDeletion = nil }
-        } message: {
-            let count = folderPendingDeletion.map { viewModel.totalItemCount(in: $0.id) } ?? 0
-            Text("\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.")
-        }
+        .onDisappear { viewModel.hooks.onCancelShortcutRecording() }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture settings")
     }
@@ -86,13 +63,7 @@ struct SettingsView: View {
 
     private var ownershipSection: some View {
         SettingsSection(title: "Notch ownership", caption: viewModel.ownership.explanation) {
-            Picker("Notch ownership", selection: $viewModel.ownership) {
-                ForEach(AppViewModel.NotchOwnership.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            NotchSegmentedControl(options: AppViewModel.NotchOwnership.allCases, selection: $viewModel.ownership)
             .accessibilityLabel("Notch ownership")
 
             if viewModel.ownership == .primary {
@@ -172,22 +143,18 @@ struct SettingsView: View {
             if !viewModel.folders.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder })) { folder in
-                        Label(folder.name, systemImage: "folder")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.7))
-                            .padding(.horizontal, 8)
-                            .frame(height: 25)
-                            .background(Color.white.opacity(0.05))
-                            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                            .contextMenu {
-                                Button("Rename Folder") {
-                                    renameFolderName = folder.name
-                                    folderBeingRenamed = folder
-                                }
-                                Button("Delete Folder", role: .destructive) {
-                                    folderPendingDeletion = folder
-                                }
-                            }
+                        Button {
+                            presentFolderMenu(folder)
+                        } label: {
+                            Label(folder.name, systemImage: "folder")
+                                .font(.system(size: 10, weight: .medium))
+                                .foregroundStyle(Color.white.opacity(0.7))
+                                .padding(.horizontal, 8)
+                                .frame(height: 25)
+                                .background(Color.white.opacity(0.05))
+                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -207,39 +174,13 @@ struct SettingsView: View {
         }
     }
 
-    private var renameAlertBinding: Binding<Bool> {
-        Binding(
-            get: { folderBeingRenamed != nil },
-            set: { if !$0 { folderBeingRenamed = nil } }
-        )
-    }
-
-    private var deleteConfirmationBinding: Binding<Bool> {
-        Binding(
-            get: { folderPendingDeletion != nil },
-            set: { if !$0 { folderPendingDeletion = nil } }
-        )
-    }
-
     private var behaviorSection: some View {
         SettingsSection(title: "Behavior", caption: nil) {
-            Picker("Time format", selection: $viewModel.timeFormat) {
-                ForEach(AppViewModel.TimeFormat.allCases) { format in
-                    Text(format.rawValue).tag(format)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            NotchSegmentedControl(options: AppViewModel.TimeFormat.allCases, selection: $viewModel.timeFormat)
             .accessibilityLabel("Time format")
 
-            Toggle("Launch at login", isOn: $viewModel.launchAtLogin)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.system(size: 11, weight: .medium))
-            Toggle("Auto-hide pill on external displays", isOn: $viewModel.autoHideExternalPill)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.system(size: 11, weight: .medium))
+            NotchToggle(title: "Launch at login", isOn: $viewModel.launchAtLogin)
+            NotchToggle(title: "Auto-hide pill on external displays", isOn: $viewModel.autoHideExternalPill)
         }
     }
 
@@ -260,6 +201,40 @@ struct SettingsView: View {
                     .foregroundStyle(Color.red.opacity(0.78))
             }
         }
+    }
+
+    private func presentFolderMenu(_ folder: AppViewModel.FolderSummary) {
+        presentation.present(NotchMenu(title: folder.name, anchor: CGPoint(x: 210, y: 235), items: [
+            NotchMenuItem(title: "Rename Folder", icon: "pencil") { presentRename(folder) },
+            NotchMenuItem(title: "Delete Folder", icon: "trash", role: .destructive) { presentDelete(folder) },
+        ]))
+    }
+
+    private func presentRename(_ folder: AppViewModel.FolderSummary) {
+        presentation.present(NotchModal(kind: .standard, title: "Rename Folder", message: nil, textFieldLabel: "Folder name", draft: folder.name, primaryTitle: "Rename", cancelTitle: "Cancel", onSubmit: { name in
+            viewModel.renameFolder(folder, to: name) ? nil : "Enter a folder name."
+        }, onCancel: {}))
+    }
+
+    private func presentDelete(_ folder: AppViewModel.FolderSummary) {
+        let count = viewModel.totalItemCount(in: folder.id)
+        presentation.present(NotchModal(kind: .destructive, title: "Delete \(folder.name)?", message: "\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.", textFieldLabel: nil, draft: "", primaryTitle: "Delete Folder", cancelTitle: "Cancel", onSubmit: { _ in
+            viewModel.deleteFolder(folder)
+            return nil
+        }, onCancel: {}))
+    }
+
+    private func presentShortcutRecorder(_ request: AppViewModel.ShortcutRecordingRequest) {
+        presentation.present(NotchModal(kind: .shortcut, title: "Record \(request.title)", message: "Press a shortcut that includes Control, Option, Shift, or Command.", textFieldLabel: nil, draft: request.currentValue, primaryTitle: "Waiting for keys", cancelTitle: "Cancel", onSubmit: { _ in "Press a key combination to record it." }, onCancel: {
+            viewModel.hooks.onCancelShortcutRecording()
+        }, onKeyRecording: { result in
+            switch result {
+            case let .success(recording):
+                return viewModel.hooks.onCommitShortcutRecording(request.action, recording)
+            case let .failure(failure):
+                return failure.message
+            }
+        }))
     }
 }
 

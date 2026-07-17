@@ -301,6 +301,7 @@ private extension View {
 
 struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
@@ -311,13 +312,6 @@ struct ExpandedInboxView: View {
     @State private var dragPresentation: LedgerDragPresentation?
     @State private var dragGeneration = 0
     @State private var navigationDirection: CGFloat = 1
-    @State private var isCreatingFolder = false
-    @State private var folderBeingRenamed: AppViewModel.FolderSummary?
-    @State private var renameFolderName = ""
-    @State private var folderPendingDeletion: AppViewModel.FolderSummary?
-    @State private var tagBeingRenamed: AppViewModel.TagSummary?
-    @State private var renameTagName = ""
-    @State private var tagPendingDeletion: AppViewModel.TagSummary?
 
     private let floatingComposerMargin: CGFloat = 18
     private let composerTextRowHeight: CGFloat = 48
@@ -431,97 +425,8 @@ struct ExpandedInboxView: View {
                 resetReorderState()
             }
         }
-        .alert("New Folder", isPresented: $isCreatingFolder) {
-            TextField("Folder name", text: $viewModel.newFolderName)
-            Button("Cancel", role: .cancel) { viewModel.newFolderName = "" }
-            Button("Create") { _ = viewModel.createFolder() }
-        } message: {
-            Text("Create a folder to group related captures.")
-        }
-        .alert("Rename Folder", isPresented: renameAlertBinding) {
-            TextField("Folder name", text: $renameFolderName)
-            Button("Cancel", role: .cancel) { folderBeingRenamed = nil }
-            Button("Rename") {
-                if let folderBeingRenamed {
-                    _ = viewModel.renameFolder(folderBeingRenamed, to: renameFolderName)
-                }
-                folderBeingRenamed = nil
-            }
-        }
-        .confirmationDialog(
-            "Delete \(folderPendingDeletion?.name ?? "folder")?",
-            isPresented: deleteConfirmationBinding,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Folder", role: .destructive) {
-                if let folderPendingDeletion {
-                    viewModel.deleteFolder(folderPendingDeletion)
-                }
-                folderPendingDeletion = nil
-            }
-            Button("Cancel", role: .cancel) { folderPendingDeletion = nil }
-        } message: {
-            let count = folderPendingDeletion.map { viewModel.totalItemCount(in: $0.id) } ?? 0
-            Text("\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.")
-        }
-        .alert("Rename Tag", isPresented: renameTagAlertBinding) {
-            TextField("Tag name", text: $renameTagName)
-            Button("Cancel", role: .cancel) { tagBeingRenamed = nil }
-            Button("Rename") {
-                if let tagBeingRenamed {
-                    viewModel.renameTag(tagBeingRenamed, to: renameTagName)
-                }
-                tagBeingRenamed = nil
-            }
-        } message: {
-            Text("Spaces become hyphens. Renaming to an existing tag merges both groups.")
-        }
-        .confirmationDialog(
-            "Delete @\(tagPendingDeletion?.name ?? "tag")?",
-            isPresented: deleteTagConfirmationBinding,
-            titleVisibility: .visible
-        ) {
-            Button("Delete Tag", role: .destructive) {
-                if let tagPendingDeletion {
-                    viewModel.deleteTag(tagPendingDeletion)
-                }
-                tagPendingDeletion = nil
-            }
-            Button("Cancel", role: .cancel) { tagPendingDeletion = nil }
-        } message: {
-            let count = tagPendingDeletion.map { viewModel.totalItemCount(for: $0.id) } ?? 0
-            Text("The tag will be removed from \(count) \(count == 1 ? "item" : "items"). No items will be deleted.")
-        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture inbox")
-    }
-
-    private var renameAlertBinding: Binding<Bool> {
-        Binding(
-            get: { folderBeingRenamed != nil },
-            set: { if !$0 { folderBeingRenamed = nil } }
-        )
-    }
-
-    private var deleteConfirmationBinding: Binding<Bool> {
-        Binding(
-            get: { folderPendingDeletion != nil },
-            set: { if !$0 { folderPendingDeletion = nil } }
-        )
-    }
-
-    private var renameTagAlertBinding: Binding<Bool> {
-        Binding(
-            get: { tagBeingRenamed != nil },
-            set: { if !$0 { tagBeingRenamed = nil } }
-        )
-    }
-
-    private var deleteTagConfirmationBinding: Binding<Bool> {
-        Binding(
-            get: { tagPendingDeletion != nil },
-            set: { if !$0 { tagPendingDeletion = nil } }
-        )
     }
 
     private var floatingComposer: some View {
@@ -615,7 +520,7 @@ struct ExpandedInboxView: View {
                 if viewModel.isAtRoot {
                     Button {
                         viewModel.newFolderName = ""
-                        isCreatingFolder = true
+                        presentCreateFolder()
                     } label: {
                         Image(systemName: "folder.badge.plus")
                             .font(.system(size: 13, weight: .regular))
@@ -625,24 +530,14 @@ struct ExpandedInboxView: View {
                     .help("New folder")
                     .accessibilityLabel("Create a new folder")
                 } else if let folder = viewModel.currentFolder {
-                    Menu {
-                        Button {
-                            beginRenaming(folder)
-                        } label: {
-                            Label("Rename Folder", systemImage: "pencil")
-                        }
-                        Button(role: .destructive) {
-                            folderPendingDeletion = folder
-                        } label: {
-                            Label("Delete Folder", systemImage: "trash")
-                        }
+                    Button {
+                        presentFolderActions(folder)
                     } label: {
                         Image(systemName: "ellipsis")
                             .font(.system(size: 13, weight: .semibold))
                             .frame(width: 28, height: 28)
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
+                    .buttonStyle(PressableIconButtonStyle())
                     .frame(width: 28, height: 28)
                     .help("Folder actions")
                     .accessibilityLabel("Actions for \(folder.name)")
@@ -680,23 +575,16 @@ struct ExpandedInboxView: View {
     }
 
     private var inboxFilterMenu: some View {
-        Menu {
-            ForEach(AppViewModel.InboxFilter.allCases) { filter in
-                Button {
+        Button {
+            presentation.present(NotchMenu(title: "Inbox filter", anchor: CGPoint(x: 278, y: 52), items: AppViewModel.InboxFilter.allCases.map { filter in
+                NotchMenuItem(title: filter.rawValue, icon: filter.systemImage, isChecked: viewModel.filter == filter) {
                     viewModel.filter = filter
-                } label: {
-                    Label(
-                        filter.rawValue,
-                        systemImage: viewModel.filter == filter ? "checkmark" : filter.systemImage
-                    )
                 }
-            }
+            }))
         } label: {
             Image(systemName: "slider.horizontal.3")
                 .font(.system(size: 13, weight: .regular))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
         .buttonStyle(
             PressableIconButtonStyle(
                 idleForeground: viewModel.filter == .all
@@ -736,8 +624,55 @@ struct ExpandedInboxView: View {
     }
 
     private func beginRenaming(_ folder: AppViewModel.FolderSummary) {
-        renameFolderName = folder.name
-        folderBeingRenamed = folder
+        presentation.present(NotchModal(kind: .standard, title: "Rename Folder", message: nil, textFieldLabel: "Folder name", draft: folder.name, primaryTitle: "Rename", cancelTitle: "Cancel", onSubmit: { name in
+            viewModel.renameFolder(folder, to: name) ? nil : "Enter a folder name."
+        }, onCancel: {}))
+    }
+
+    private func presentCreateFolder() {
+        presentation.present(NotchModal(kind: .standard, title: "New Folder", message: "Create a folder to group related captures.", textFieldLabel: "Folder name", draft: "", primaryTitle: "Create", cancelTitle: "Cancel", onSubmit: { name in
+            viewModel.createFolder(named: name) ? nil : "Enter a unique folder name."
+        }, onCancel: {}))
+    }
+
+    private func presentFolderActions(_ folder: AppViewModel.FolderSummary) {
+        presentation.present(NotchMenu(title: folder.name, anchor: CGPoint(x: 350, y: 54), items: [
+            NotchMenuItem(title: "Rename Folder", icon: "pencil") { beginRenaming(folder) },
+            NotchMenuItem(title: "Delete Folder", icon: "trash", role: .destructive) { presentDeleteFolder(folder) },
+        ]))
+    }
+
+    private func presentDeleteFolder(_ folder: AppViewModel.FolderSummary) {
+        let count = viewModel.totalItemCount(in: folder.id)
+        presentation.present(NotchModal(kind: .destructive, title: "Delete \(folder.name)?", message: "\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.", textFieldLabel: nil, draft: "", primaryTitle: "Delete Folder", cancelTitle: "Cancel", onSubmit: { _ in
+            viewModel.deleteFolder(folder)
+            return nil
+        }, onCancel: {}))
+    }
+
+    private func presentTagActions(_ tag: AppViewModel.TagSummary, count: Int) {
+        presentation.present(NotchMenu(title: "@\(tag.name)", anchor: CGPoint(x: 210, y: 150), items: [
+            NotchMenuItem(title: "Search @\(tag.name)", icon: "magnifyingglass") {
+                viewModel.search(for: tag)
+                focusComposer()
+            },
+            NotchMenuItem(title: "Rename Tag", icon: "pencil") { presentRenameTag(tag) },
+            NotchMenuItem(title: "Delete Tag", icon: "trash", role: .destructive) { presentDeleteTag(tag, count: count) },
+        ]))
+    }
+
+    private func presentRenameTag(_ tag: AppViewModel.TagSummary) {
+        presentation.present(NotchModal(kind: .standard, title: "Rename Tag", message: "Spaces become hyphens. Renaming to an existing tag merges both groups.", textFieldLabel: "Tag name", draft: tag.name, primaryTitle: "Rename", cancelTitle: "Cancel", onSubmit: { name in
+            viewModel.renameTag(tag, to: name)
+            return nil
+        }, onCancel: {}))
+    }
+
+    private func presentDeleteTag(_ tag: AppViewModel.TagSummary, count: Int) {
+        presentation.present(NotchModal(kind: .destructive, title: "Delete @\(tag.name)?", message: "The tag will be removed from \(count) \(count == 1 ? "item" : "items"). No items will be deleted.", textFieldLabel: nil, draft: "", primaryTitle: "Delete Tag", cancelTitle: "Cancel", onSubmit: { _ in
+            viewModel.deleteTag(tag)
+            return nil
+        }, onCancel: {}))
     }
 
     private var captureField: some View {
@@ -1221,33 +1156,25 @@ struct ExpandedInboxView: View {
         ScrollView(.horizontal) {
             HStack(spacing: 18) {
                 ForEach(viewModel.visibleTagGroups) { group in
-                    Button {
-                        viewModel.search(for: group.tag)
-                        focusComposer()
-                    } label: {
-                        TonalTagLabel(
-                            name: group.name,
-                            count: group.count,
-                            colorSeed: group.tag.colorSeed
-                        )
-                    }
-                    .buttonStyle(NotchPressButtonStyle())
-                    .contextMenu {
-                        Button("Search @\(group.name)") {
+                    HStack(spacing: 3) {
+                        Button {
                             viewModel.search(for: group.tag)
                             focusComposer()
+                        } label: {
+                            TonalTagLabel(name: group.name, count: group.count, colorSeed: group.tag.colorSeed)
                         }
-                        Button("Rename Tag") {
-                            renameTagName = group.name
-                            tagBeingRenamed = group.tag
+                        .buttonStyle(NotchPressButtonStyle())
+                        Button {
+                            presentTagActions(group.tag, count: group.count)
+                        } label: {
+                            Image(systemName: "ellipsis.circle")
+                                .font(.system(size: 11))
+                                .foregroundStyle(NotchTheme.secondaryText)
                         }
-                        Divider()
-                        Button("Delete Tag", role: .destructive) {
-                            tagPendingDeletion = group.tag
-                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Actions for tag \(group.name)")
                     }
                     .accessibilityLabel("Tag \(group.name), \(group.count) \(group.count == 1 ? "item" : "items")")
-                    .accessibilityHint("Searches for this tag")
                 }
             }
             .padding(.horizontal, 20)
@@ -1267,7 +1194,7 @@ struct ExpandedInboxView: View {
             reduceMotion: reduceMotion,
             onOpen: { navigate(forward: true) { viewModel.openFolder(folder) } },
             onRename: { beginRenaming(folder) },
-            onDelete: { folderPendingDeletion = folder }
+            onDelete: { presentDeleteFolder(folder) }
         )
         .ledgerDragRegion(.folder(folder.id))
     }
@@ -1694,6 +1621,7 @@ private struct FolderLedgerRow: View {
     let onOpen: () -> Void
     let onRename: () -> Void
     let onDelete: () -> Void
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @State private var isHovered = false
 
     var body: some View {
@@ -1757,11 +1685,20 @@ private struct FolderLedgerRow: View {
         .onHover { isHovered = $0 }
         .animation(reduceMotion ? nil : NotchMotion.hover, value: isHovered)
         .animation(reduceMotion ? nil : NotchMotion.filter, value: isDropTarget)
-        .contextMenu {
-            Button("Open Folder", action: onOpen)
-            Button("Rename Folder", action: onRename)
-            Divider()
-            Button("Delete Folder", role: .destructive, action: onDelete)
+        .overlay(alignment: .trailing) {
+            Button {
+                presentation.present(NotchMenu(title: folder.name, anchor: CGPoint(x: 330, y: 220), items: [
+                    NotchMenuItem(title: "Open Folder", icon: "folder") { onOpen() },
+                    NotchMenuItem(title: "Rename Folder", icon: "pencil") { onRename() },
+                    NotchMenuItem(title: "Delete Folder", icon: "trash", role: .destructive) { onDelete() },
+                ]))
+            } label: {
+                Image(systemName: "ellipsis.vertical").font(.system(size: 11, weight: .semibold)).frame(width: 28, height: 28)
+            }
+            .buttonStyle(PressableIconButtonStyle())
+            // The chevron remains the final affordance; actions sit immediately before it.
+            .padding(.trailing, 34)
+            .opacity(isHovered ? 1 : 0)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Folder \(folder.name), \(itemCount) \(itemCount == 1 ? "item" : "items")")
@@ -1919,6 +1856,7 @@ private struct LedgerCompletionExitModifier: ViewModifier {
 private struct LedgerRowView: View {
     let item: AppViewModel.LedgerItem
     @ObservedObject var viewModel: AppViewModel
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isEditorFocused: Bool
     @State private var isHovered = false
@@ -1982,7 +1920,6 @@ private struct LedgerRowView: View {
                 }
             }
         }
-        .contextMenu { rowActions }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
@@ -2363,8 +2300,8 @@ private struct LedgerRowView: View {
     }
 
     private var inlineActions: some View {
-        Menu {
-            rowActions
+        Button {
+            presentation.present(NotchMenu(title: item.title, anchor: CGPoint(x: 330, y: 290), items: appMenuItems))
         } label: {
             Text("⋮")
                 .font(.system(size: 16, weight: .semibold))
@@ -2380,113 +2317,35 @@ private struct LedgerRowView: View {
                 .onHover { isMoreActionsHovered = $0 }
                 .animation(reduceMotion ? nil : NotchMotion.hover, value: isMoreActionsHovered)
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
         .frame(width: 36, height: 38)
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .help("More actions")
         .accessibilityLabel("More actions for \(item.title)")
     }
 
-    @ViewBuilder
-    private var rowActions: some View {
-        Button {
-            viewModel.beginEditing(item)
-        } label: {
-            Label("Edit", systemImage: "pencil")
+    private var appMenuItems: [NotchMenuItem] {
+        var items: [NotchMenuItem] = [
+            NotchMenuItem(title: "Edit", icon: "pencil", isEnabled: !item.text.isEmpty) { viewModel.beginEditing(item) },
+            NotchMenuItem(title: item.isCompleted ? "Mark incomplete" : "Complete", icon: item.isCompleted ? "arrow.uturn.backward" : "checkmark") { viewModel.toggleComplete(item) },
+            NotchMenuItem(title: item.isPinned ? "Unpin" : "Pin", icon: item.isPinned ? "pin.slash" : "pin") { viewModel.togglePin(item) },
+        ]
+        items.append(NotchMenuItem(title: "Move to Inbox", icon: "tray", isEnabled: item.folderID != nil) { viewModel.move(item, to: nil) })
+        for folder in viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+            items.append(NotchMenuItem(title: "Move to \(folder.name)", icon: "folder", isEnabled: item.folderID != folder.id) { viewModel.move(item, to: folder.id) })
         }
-        .disabled(item.text.isEmpty)
-
-        Divider()
-
-        Button {
-            viewModel.toggleComplete(item)
-        } label: {
-            Label(
-                item.isCompleted ? "Mark incomplete" : "Complete",
-                systemImage: item.isCompleted ? "arrow.uturn.backward" : "checkmark"
-            )
-        }
-
-        Button {
-            viewModel.togglePin(item)
-        } label: {
-            Label(item.isPinned ? "Unpin" : "Pin", systemImage: item.isPinned ? "pin.slash" : "pin")
-        }
-
-        Menu {
-            Button("Today") {
-                viewModel.setDueDate(Calendar.current.startOfDay(for: .now), for: item)
-            }
-            Button("Tomorrow") {
-                viewModel.setDueDate(Calendar.current.date(byAdding: .day, value: 1, to: .now), for: item)
-            }
-            if item.dueDate != nil {
-                Divider()
-                Button("Clear due date") { viewModel.setDueDate(nil, for: item) }
-            }
-        } label: {
-            Label("Due date", systemImage: "calendar")
-        }
-
-        Menu {
-            Button {
-                viewModel.move(item, to: nil)
-            } label: {
-                Label("Inbox", systemImage: "tray")
-            }
-            .disabled(item.folderID == nil)
-
-            if !viewModel.folders.isEmpty {
-                Divider()
-                ForEach(viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder })) { folder in
-                    Button {
-                        viewModel.move(item, to: folder.id)
-                    } label: {
-                        Label(folder.name, systemImage: "folder")
-                    }
-                    .disabled(item.folderID == folder.id)
-                }
-            }
-        } label: {
-            Label("Move", systemImage: "folder")
-        }
-
-        Divider()
-
         if item.isTrashed {
-            Button {
-                viewModel.restore(item)
-            } label: {
-                Label("Restore", systemImage: "arrow.uturn.backward")
-            }
-            Button(role: .destructive) {
-                viewModel.deletePermanently(item)
-            } label: {
-                Label("Delete permanently", systemImage: "trash.slash")
-            }
+            items.append(NotchMenuItem(title: "Restore", icon: "arrow.uturn.backward") { viewModel.restore(item) })
+            items.append(NotchMenuItem(title: "Delete permanently", icon: "trash.slash", role: .destructive) { viewModel.deletePermanently(item) })
         } else {
-            if item.isArchived {
-                Button {
-                    viewModel.restore(item)
-                } label: {
-                    Label("Restore to Inbox", systemImage: "arrow.uturn.backward")
-                }
-            } else {
-                Button {
-                    viewModel.archive(item)
-                } label: {
-                    Label("Archive", systemImage: "archivebox")
-                }
-            }
-
-            Button(role: .destructive) {
-                viewModel.trash(item)
-            } label: {
-                Label("Move to Trash", systemImage: "trash")
-            }
+            items.append(NotchMenuItem(title: item.isArchived ? "Restore to Inbox" : "Archive", icon: item.isArchived ? "arrow.uturn.backward" : "archivebox") {
+                item.isArchived ? viewModel.restore(item) : viewModel.archive(item)
+            })
+            items.append(NotchMenuItem(title: "Move to Trash", icon: "trash", role: .destructive) { viewModel.trash(item) })
         }
+        return items
     }
+
 }
 
 private struct AttachmentLedgerRow: View {

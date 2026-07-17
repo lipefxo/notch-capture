@@ -5,7 +5,6 @@ import SwiftUI
 struct PanelTransitionPolicy: Equatable {
     enum Kind: Equatable {
         case immediate
-        case reveal
         case expand
         case contract
         case hide
@@ -24,10 +23,10 @@ struct PanelTransitionPolicy: Equatable {
     let fadeDuration: TimeInterval
 
     var duration: TimeInterval {
-        spring?.perceptualDuration ?? fadeDuration
+        max(spring?.perceptualDuration ?? 0, fadeDuration)
     }
 
-    var animatesFrame: Bool {
+    var animatesMorph: Bool {
         spring != nil
     }
 
@@ -63,35 +62,26 @@ struct PanelTransitionPolicy: Equatable {
                 kind: .hide,
                 spring: NotchMotion.surfaceHide,
                 opacity: .hide,
-                fadeDuration: NotchMotion.surfaceHide.perceptualDuration
+                fadeDuration: NotchMotion.removalDuration
             )
         }
 
         if reduceMotion {
-            return wasVisible
-                ? .immediate
-                : Self(
-                    kind: .reducedFade,
-                    spring: nil,
-                    opacity: .reveal,
-                    fadeDuration: NotchMotion.reducedMotionDuration
-                )
+            return Self(
+                kind: .reducedFade,
+                spring: nil,
+                opacity: wasVisible ? .unchanged : .reveal,
+                fadeDuration: NotchMotion.reducedMotionDuration
+            )
         }
 
         if !wasVisible {
-            return newState == .collapsed
-                ? Self(
-                    kind: .reveal,
-                    spring: nil,
-                    opacity: .reveal,
-                    fadeDuration: NotchMotion.idleRevealDuration
-                )
-                : Self(
-                    kind: .expand,
-                    spring: NotchMotion.surfaceExpansion,
-                    opacity: .reveal,
-                    fadeDuration: NotchMotion.insertionDuration
-                )
+            return Self(
+                kind: .expand,
+                spring: NotchMotion.surfaceExpansion,
+                opacity: .reveal,
+                fadeDuration: NotchMotion.insertionDuration
+            )
         }
 
         let recoveringFromHide = !oldState.isVisible && wasVisible
@@ -170,14 +160,15 @@ public final class PanelController: NSObject, ObservableObject {
     public let panel: NotchPanel
 
     private let displayLocator: any DisplayLocating
-    private let contentFactory: ContentFactory
     private let automaticDismissalEnabled: Bool
     private let hostingView: NSHostingView<AnyView>
+    private let morphCoordinator: PanelMorphCoordinator
     private var targetScreen: NSScreen?
     private weak var previouslyActiveApplication: NSRunningApplication?
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
     private var confirmationDismissalTask: Task<Void, Never>?
+    private var transitionTask: Task<Void, Never>?
     private var transitionGeneration = 0
 
     public init(
@@ -185,10 +176,13 @@ public final class PanelController: NSObject, ObservableObject {
         automaticDismissalEnabled: Bool = true,
         content: @escaping ContentFactory
     ) {
+        let morphCoordinator = PanelMorphCoordinator()
         self.displayLocator = displayLocator
         self.automaticDismissalEnabled = automaticDismissalEnabled
-        self.contentFactory = content
-        self.hostingView = NSHostingView(rootView: content(.dormant))
+        self.morphCoordinator = morphCoordinator
+        self.hostingView = NSHostingView(
+            rootView: AnyView(content(.dormant).environmentObject(morphCoordinator))
+        )
         self.panel = NotchPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
@@ -202,6 +196,7 @@ public final class PanelController: NSObject, ObservableObject {
 
     deinit {
         confirmationDismissalTask?.cancel()
+        transitionTask?.cancel()
         MainActor.assumeIsolated {
             if let localEventMonitor { NSEvent.removeMonitor(localEventMonitor) }
             if let globalEventMonitor { NSEvent.removeMonitor(globalEventMonitor) }
@@ -227,12 +222,14 @@ public final class PanelController: NSObject, ObservableObject {
         confirmationDismissalTask?.cancel()
 
         targetScreen = screen ?? displayLocator.pointerScreen
-        guard let targetFrame = panelFrame(for: newState) else { return }
+        guard let geometry = targetGeometry,
+              let targetFrame = panelFrame(for: newState, geometry: geometry) else { return }
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let transition = PanelTransitionPolicy.resolve(
             from: oldState,
             to: newState,
             wasVisible: wasVisible,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            reduceMotion: reduceMotion
         )
 
         state = newState
@@ -247,12 +244,48 @@ public final class PanelController: NSObject, ObservableObject {
         let contractsToPill = transition.kind == .contract && newState == .collapsed
         panel.ignoresMouseEvents = contractsToPill
 
+        let morphGeometry = PanelMorphGeometry(
+            topCenter: CGPoint(x: targetFrame.midX, y: geometry.screenFrame.maxY),
+            sourceSize: morphSourceSize(
+                for: oldState,
+                targetState: newState,
+                wasVisible: wasVisible,
+                geometry: geometry
+            ),
+            targetSize: surfaceSize(for: newState, geometry: geometry)
+        )
+        let request = morphRequest(
+            generation: generation,
+            geometry: morphGeometry,
+            targetState: newState,
+            transition: transition,
+            reduceMotion: reduceMotion,
+            wasVisible: wasVisible
+        )
+        let usesMorphCoordinator = transition.animatesMorph || transition.kind == .reducedFade
+
+        if usesMorphCoordinator && (!reduceMotion || wasVisible) {
+            panel.setFrame(
+                transitionCanvasFrame(
+                    for: morphGeometry,
+                    targetFrame: targetFrame,
+                    includeCurrentFrame: wasVisible
+                ),
+                display: false
+            )
+        } else {
+            panel.setFrame(targetFrame, display: false)
+        }
         if !wasVisible {
-            let sourceFrame = transition.animatesFrame
-                ? panelFrame(for: .collapsed) ?? targetFrame
-                : targetFrame
-            panel.setFrame(sourceFrame, display: false)
             panel.alphaValue = transition.opacity == .reveal ? 0 : 1
+        }
+
+        if usesMorphCoordinator {
+            if !wasVisible && !reduceMotion {
+                morphCoordinator.prepare(request)
+            } else {
+                morphCoordinator.begin(request)
+            }
         }
 
         if activate && newState.acceptsKeyboardInput {
@@ -263,12 +296,20 @@ public final class PanelController: NSObject, ObservableObject {
             panel.orderFrontRegardless()
         }
 
-        animatePanel(
-            to: targetFrame,
-            transition: transition,
-            generation: generation,
-            restoreHitTesting: contractsToPill
-        )
+        if usesMorphCoordinator {
+            runPanelTransition(
+                request: request,
+                transition: transition,
+                targetFrame: targetFrame,
+                restoreHitTesting: contractsToPill,
+                deferActivation: !wasVisible && !reduceMotion
+            )
+        } else {
+            transitionTask?.cancel()
+            morphCoordinator.cancel()
+            panel.alphaValue = 1
+            if contractsToPill { panel.ignoresMouseEvents = false }
+        }
 
         if newState == .confirmation {
             scheduleConfirmationDismissal()
@@ -280,8 +321,14 @@ public final class PanelController: NSObject, ObservableObject {
         targetScreen = screen ?? targetScreen ?? displayLocator.pointerScreen
         guard state.isVisible else { return }
         guard let frame = panelFrame(for: state) else { return }
+        transitionTask?.cancel()
+        if let generation = morphCoordinator.request?.generation {
+            morphCoordinator.settle(generation: generation)
+        }
         transitionGeneration += 1
         panel.setFrame(frame, display: true)
+        panel.alphaValue = 1
+        panel.ignoresMouseEvents = false
     }
 
 #if DEBUG
@@ -371,11 +418,12 @@ public final class PanelController: NSObject, ObservableObject {
         confirmationDismissalTask = nil
         let oldState = state
         let wasVisible = panel.isVisible
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let transition = PanelTransitionPolicy.resolve(
             from: oldState,
             to: hiddenState,
             wasVisible: wasVisible,
-            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion,
+            reduceMotion: reduceMotion,
             animated: animated
         )
 
@@ -386,103 +434,209 @@ public final class PanelController: NSObject, ObservableObject {
         panel.ignoresMouseEvents = true
         removeDismissalMonitors()
 
-        guard wasVisible, transition.kind != .immediate,
-              let collapsedFrame = panelFrame(for: .collapsed) else {
+        guard wasVisible, transition.kind != .immediate, let geometry = targetGeometry else {
+            transitionTask?.cancel()
+            morphCoordinator.cancel()
             panel.orderOut(nil)
             panel.alphaValue = 1
             panel.ignoresMouseEvents = false
             return
         }
 
-        animatePanel(
-            to: transition.animatesFrame ? collapsedFrame : panel.frame,
-            transition: transition,
+        let targetSize = PanelMorphGeometry.notchAnchorSize(for: geometry)
+        let morphGeometry = PanelMorphGeometry(
+            topCenter: CGPoint(x: panel.frame.midX, y: geometry.screenFrame.maxY),
+            sourceSize: morphSourceSize(
+                for: oldState,
+                targetState: hiddenState,
+                wasVisible: true,
+                geometry: geometry
+            ),
+            targetSize: targetSize
+        )
+        let request = morphRequest(
             generation: generation,
-            restoreHitTesting: false
+            geometry: morphGeometry,
+            targetState: hiddenState,
+            transition: transition,
+            reduceMotion: reduceMotion,
+            wasVisible: true
+        )
+        morphCoordinator.begin(request)
+        runPanelTransition(
+            request: request,
+            transition: transition,
+            targetFrame: panel.frame,
+            restoreHitTesting: false,
+            deferActivation: false
         )
     }
 
+    private var targetGeometry: NotchGeometry? {
+        guard let screen = targetScreen ?? displayLocator.pointerScreen else { return nil }
+        return displayLocator.geometry(for: screen)
+    }
+
     private func panelFrame(for state: PanelState) -> CGRect? {
-        guard
-            let screen = targetScreen ?? displayLocator.pointerScreen,
-            let geometry = displayLocator.geometry(for: screen)
-        else {
+        guard let geometry = targetGeometry else {
             assertionFailure("A visible notch surface requires an available display geometry.")
             return nil
         }
+        return panelFrame(for: state, geometry: geometry)
+    }
 
-        var size = state.nominalSize
+    private func panelFrame(for state: PanelState, geometry: NotchGeometry) -> CGRect? {
+        var size = surfaceSize(for: state, geometry: geometry)
         if state == .collapsed {
-            let notchWidth = geometry.notchRect?.width ?? 156
+            let notchWidth = geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width
             size.width = max(size.width, notchWidth + 24)
             size.height = max(size.height, geometry.safeAreaInsets.top + 6)
-        } else if [.expanded, .dropTarget, .onboarding, .settings].contains(state) {
-            size.height = min(size.height, geometry.screenFrame.height - 28)
         }
-
         guard size.width > 0, size.height > 0 else { return nil }
         size.width += PanelShadowApron.horizontal * 2
         size.height += PanelShadowApron.bottom
         return geometry.panelFrame(for: size)
     }
 
-    private func animatePanel(
-        to targetFrame: CGRect,
-        transition: PanelTransitionPolicy,
+    private func surfaceSize(for state: PanelState, geometry: NotchGeometry) -> CGSize {
+        var size = state.nominalSize
+        if [.expanded, .dropTarget, .onboarding, .settings].contains(state) {
+            size.height = min(size.height, geometry.screenFrame.height - 28)
+        }
+        return size
+    }
+
+    private func morphSourceSize(
+        for state: PanelState,
+        targetState: PanelState,
+        wasVisible: Bool,
+        geometry: NotchGeometry
+    ) -> CGSize {
+        guard wasVisible else {
+            return PanelMorphGeometry.concealedAnchorSize(
+                for: geometry,
+                targetSize: surfaceSize(for: targetState, geometry: geometry)
+            )
+        }
+        if state.isVisible {
+            return surfaceSize(for: state, geometry: geometry)
+        }
+        return morphCoordinator.request?.geometry.targetSize
+            ?? PanelMorphGeometry.notchAnchorSize(for: geometry)
+    }
+
+    private func transitionCanvasFrame(
+        for geometry: PanelMorphGeometry,
+        targetFrame: CGRect,
+        includeCurrentFrame: Bool
+    ) -> CGRect {
+        let requested = geometry.panelCanvasFrame(
+            horizontalApron: PanelShadowApron.horizontal,
+            bottomApron: PanelShadowApron.bottom
+        )
+        let width = max(
+            requested.width,
+            targetFrame.width,
+            includeCurrentFrame ? panel.frame.width : 0
+        )
+        let height = max(
+            requested.height,
+            targetFrame.height,
+            includeCurrentFrame ? panel.frame.height : 0
+        )
+        return CGRect(
+            x: targetFrame.midX - (width / 2),
+            y: targetFrame.maxY - height,
+            width: width,
+            height: height
+        ).integral
+    }
+
+    private func morphRequest(
         generation: Int,
-        restoreHitTesting: Bool
+        geometry: PanelMorphGeometry,
+        targetState: PanelState,
+        transition: PanelTransitionPolicy,
+        reduceMotion: Bool,
+        wasVisible: Bool
+    ) -> PanelMorphRequest {
+        let shellDelay: TimeInterval = if !reduceMotion && [.contract, .hide].contains(transition.kind) {
+            NotchMotion.stagingDelay
+        } else {
+            0
+        }
+        return PanelMorphRequest(
+            generation: generation,
+            phase: .active,
+            geometry: geometry,
+            targetState: targetState,
+            kind: transition.kind,
+            spring: transition.spring,
+            fadeDuration: transition.fadeDuration,
+            shellDelay: shellDelay,
+            contentDelay: reduceMotion ? 0 : NotchMotion.surfaceContentDelay,
+            reduceMotion: reduceMotion,
+            wasVisible: wasVisible
+        )
+    }
+
+    private func runPanelTransition(
+        request: PanelMorphRequest,
+        transition: PanelTransitionPolicy,
+        targetFrame: CGRect,
+        restoreHitTesting: Bool,
+        deferActivation: Bool
     ) {
-        let changesFrame = transition.animatesFrame && panel.frame != targetFrame
-        guard changesFrame || transition.animatesOpacity else {
-            panel.setFrame(targetFrame, display: true)
-            panel.alphaValue = 1
-            if restoreHitTesting { panel.ignoresMouseEvents = false }
+        transitionTask?.cancel()
+        transitionTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            if deferActivation {
+                await Task.yield()
+                guard !Task.isCancelled, self.transitionGeneration == request.generation else { return }
+                self.morphCoordinator.activate(generation: request.generation)
+            }
+
+            if transition.opacity == .reveal {
+                self.animatePanelAlpha(to: 1, duration: transition.fadeDuration)
+            }
+
+            if transition.opacity == .hide {
+                let fadeDelay = max(0, request.totalDuration - transition.fadeDuration)
+                if fadeDelay > 0 {
+                    try? await Task.sleep(for: .seconds(fadeDelay))
+                }
+                guard !Task.isCancelled, self.transitionGeneration == request.generation else { return }
+                self.animatePanelAlpha(to: 0, duration: transition.fadeDuration)
+                if transition.fadeDuration > 0 {
+                    try? await Task.sleep(for: .seconds(transition.fadeDuration))
+                }
+            } else if request.totalDuration > 0 {
+                try? await Task.sleep(for: .seconds(request.totalDuration))
+            }
+
+            guard !Task.isCancelled, self.transitionGeneration == request.generation else { return }
+            self.morphCoordinator.settle(generation: request.generation)
+            if transition.ordersOutOnCompletion {
+                self.panel.orderOut(nil)
+                self.panel.alphaValue = 1
+                self.panel.ignoresMouseEvents = false
+            } else {
+                self.panel.setFrame(targetFrame, display: true)
+                self.panel.alphaValue = 1
+                if restoreHitTesting { self.panel.ignoresMouseEvents = false }
+            }
+        }
+    }
+
+    private func animatePanelAlpha(to alpha: CGFloat, duration: TimeInterval) {
+        guard duration > 0 else {
+            panel.alphaValue = alpha
             return
         }
-
-        var animations = panel.animations
-        var animationDuration = transition.fadeDuration
-        if let profile = transition.spring {
-            let spring = CASpringAnimation(
-                perceptualDuration: profile.perceptualDuration,
-                bounce: CGFloat(profile.bounce)
-            )
-            spring.duration = spring.settlingDuration
-            animations[NSAnimatablePropertyKey("frame")] = spring
-            animationDuration = max(animationDuration, spring.settlingDuration)
-        }
-        if transition.animatesOpacity {
-            let fade = CABasicAnimation()
-            fade.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
-            animations[NSAnimatablePropertyKey("alphaValue")] = fade
-        }
-        panel.animations = animations
-
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = animationDuration
+            context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
-            if changesFrame {
-                panel.animator().setFrame(targetFrame, display: true)
-            }
-            switch transition.opacity {
-            case .unchanged:
-                break
-            case .reveal:
-                panel.animator().alphaValue = 1
-            case .hide:
-                panel.animator().alphaValue = 0
-            }
-        } completionHandler: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, self.transitionGeneration == generation else { return }
-                if transition.ordersOutOnCompletion {
-                    self.panel.orderOut(nil)
-                    self.panel.alphaValue = 1
-                    self.panel.ignoresMouseEvents = false
-                } else if restoreHitTesting {
-                    self.panel.ignoresMouseEvents = false
-                }
-            }
+            panel.animator().alphaValue = alpha
         }
     }
 

@@ -336,6 +336,12 @@ final class AppViewModel: ObservableObject {
         var id: Action { action }
     }
 
+    struct ShortcutRecordingRequest: Equatable {
+        let action: Shortcut.Action
+        let title: String
+        let currentValue: String
+    }
+
     struct Hooks {
         var onDismiss: () -> Void = {}
         var onCaptureText: (String, UUID?) -> Void = { _, _ in }
@@ -367,6 +373,8 @@ final class AppViewModel: ObservableObject {
         var onSetOwnership: (NotchOwnership) -> Void = { _ in }
         var onSetTimeFormat: (TimeFormat) -> Void = { _ in }
         var onOpenShortcutRecorder: (Shortcut.Action) -> Void = { _ in }
+        var onCommitShortcutRecording: (Shortcut.Action, ShortcutRecording) -> String? = { _, _ in nil }
+        var onCancelShortcutRecording: () -> Void = {}
         var onImport: () -> Void = {}
         var onExport: () -> Void = {}
         var onQuit: () -> Void = {}
@@ -403,6 +411,7 @@ final class AppViewModel: ObservableObject {
     @Published var onboardingPage = 0
     @Published var isNotchFlowRunning = false
     @Published var shortcuts: [Shortcut]
+    @Published var shortcutRecordingRequest: ShortcutRecordingRequest?
 
     var hooks: Hooks
     private let now: () -> Date

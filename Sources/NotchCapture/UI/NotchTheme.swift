@@ -118,8 +118,8 @@ enum NotchMotion {
     static let hoverDuration: TimeInterval = 0.08
     static let insertionDuration: TimeInterval = 0.18
     static let removalDuration: TimeInterval = 0.14
-    static let idleRevealDuration: TimeInterval = 0.18
     static let stagingDelay: TimeInterval = 0.04
+    static let surfaceContentDelay: TimeInterval = 0.07
     static let composerFocusDuration: TimeInterval = 0.18
     static let composerIridescenceCycleDuration: TimeInterval = 10
     static let reducedMotionDuration: TimeInterval = 0.12

@@ -50,12 +50,12 @@ final class PanelTransitionPolicyTests: XCTestCase {
 
         XCTAssertEqual(policy.kind, .expand)
         XCTAssertEqual(policy.duration, NotchMotion.surfaceExpansionDuration)
-        XCTAssertTrue(policy.animatesFrame)
+        XCTAssertTrue(policy.animatesMorph)
         XCTAssertEqual(policy.opacity, .reveal)
         XCTAssertEqual(policy.spring, NotchMotion.surfaceExpansion)
     }
 
-    func testHiddenCollapsedSurfaceUsesRestrainedReveal() {
+    func testHiddenCollapsedSurfaceAlsoMorphsFromTheNotch() {
         let policy = PanelTransitionPolicy.resolve(
             from: .dormant,
             to: .collapsed,
@@ -63,10 +63,26 @@ final class PanelTransitionPolicyTests: XCTestCase {
             reduceMotion: false
         )
 
-        XCTAssertEqual(policy.kind, .reveal)
-        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertEqual(policy.kind, .expand)
+        XCTAssertTrue(policy.animatesMorph)
+        XCTAssertEqual(policy.spring, NotchMotion.surfaceExpansion)
         XCTAssertEqual(policy.opacity, .reveal)
-        XCTAssertEqual(policy.fadeDuration, NotchMotion.idleRevealDuration)
+        XCTAssertEqual(policy.fadeDuration, NotchMotion.insertionDuration)
+    }
+
+    func testEveryHiddenVisibleSurfaceUsesTheSharedNotchMorph() {
+        for state in PanelState.allCases.filter(\.isVisible) {
+            let policy = PanelTransitionPolicy.resolve(
+                from: .dormant,
+                to: state,
+                wasVisible: false,
+                reduceMotion: false
+            )
+
+            XCTAssertEqual(policy.kind, .expand, "Expected a notch morph for \(state)")
+            XCTAssertEqual(policy.spring, NotchMotion.surfaceExpansion)
+            XCTAssertEqual(policy.opacity, .reveal)
+        }
     }
 
     func testExpandedSurfaceContractsToCollapsedPill() {
@@ -91,10 +107,44 @@ final class PanelTransitionPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(policy.kind, .immediate)
-        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertFalse(policy.animatesMorph)
     }
 
-    func testReducedMotionDisablesFrameMorph() {
+    func testDropTargetDoesNotRestartTheShellMorph() {
+        let entering = PanelTransitionPolicy.resolve(
+            from: .expanded,
+            to: .dropTarget,
+            wasVisible: true,
+            reduceMotion: false
+        )
+        let leaving = PanelTransitionPolicy.resolve(
+            from: .dropTarget,
+            to: .expanded,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(entering.kind, .immediate)
+        XCTAssertEqual(leaving.kind, .immediate)
+        XCTAssertFalse(entering.animatesMorph)
+        XCTAssertFalse(leaving.animatesMorph)
+    }
+
+    func testHiddenReducedMotionOpenUsesOnlyTheShortFade() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .dormant,
+            to: .onboarding,
+            wasVisible: false,
+            reduceMotion: true
+        )
+
+        XCTAssertEqual(policy.kind, .reducedFade)
+        XCTAssertFalse(policy.animatesMorph)
+        XCTAssertEqual(policy.opacity, .reveal)
+        XCTAssertEqual(policy.duration, NotchMotion.reducedMotionDuration)
+    }
+
+    func testReducedMotionUsesOpacityWithoutSpatialMorph() {
         let policy = PanelTransitionPolicy.resolve(
             from: .collapsed,
             to: .expanded,
@@ -102,8 +152,10 @@ final class PanelTransitionPolicyTests: XCTestCase {
             reduceMotion: true
         )
 
-        XCTAssertEqual(policy.kind, .immediate)
-        XCTAssertEqual(policy.duration, 0)
+        XCTAssertEqual(policy.kind, .reducedFade)
+        XCTAssertFalse(policy.animatesMorph)
+        XCTAssertEqual(policy.opacity, .unchanged)
+        XCTAssertEqual(policy.duration, NotchMotion.reducedMotionDuration)
     }
 
     func testNotchFlowHandoffMorphsAndFadesBeforeOrderingOut() {
@@ -117,7 +169,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.kind, .hide)
         XCTAssertEqual(policy.spring, NotchMotion.surfaceHide)
         XCTAssertEqual(policy.opacity, .hide)
-        XCTAssertTrue(policy.animatesFrame)
+        XCTAssertTrue(policy.animatesMorph)
         XCTAssertTrue(policy.ordersOutOnCompletion)
     }
 
@@ -130,7 +182,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(policy.kind, .reducedFade)
-        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertFalse(policy.animatesMorph)
         XCTAssertEqual(policy.opacity, .hide)
         XCTAssertEqual(policy.fadeDuration, NotchMotion.reducedMotionDuration)
     }
@@ -144,7 +196,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(policy.kind, .immediate)
-        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertFalse(policy.animatesMorph)
         XCTAssertFalse(policy.ordersOutOnCompletion)
     }
 
@@ -183,7 +235,183 @@ final class PanelTransitionPolicyTests: XCTestCase {
         )
 
         XCTAssertEqual(policy.kind, .immediate)
-        XCTAssertFalse(policy.animatesFrame)
+        XCTAssertFalse(policy.animatesMorph)
+    }
+}
+
+final class PanelMorphGeometryTests: XCTestCase {
+    private let topCenter = CGPoint(x: 756, y: 982)
+    private let notchSize = CGSize(width: 152, height: 38)
+    private let expandedSize = CGSize(width: 420, height: 560)
+
+    func testInterpolationRemainsTopCenteredAndGrowsMonotonically() {
+        let geometry = PanelMorphGeometry(
+            topCenter: topCenter,
+            sourceSize: notchSize,
+            targetSize: expandedSize
+        )
+        let frames = [0, 0.25, 0.5, 0.75, 1].map {
+            geometry.interpolatedFrame(progress: $0)
+        }
+
+        for frame in frames {
+            XCTAssertEqual(frame.maxY, topCenter.y, accuracy: 0.0001)
+            XCTAssertEqual(frame.midX, topCenter.x, accuracy: 0.0001)
+        }
+        for pair in zip(frames, frames.dropFirst()) {
+            XCTAssertGreaterThan(pair.1.width, pair.0.width)
+            XCTAssertGreaterThan(pair.1.height, pair.0.height)
+        }
+        XCTAssertEqual(frames.first, geometry.sourceFrame)
+        XCTAssertEqual(frames.last, geometry.targetFrame)
+    }
+
+    func testReverseMorphRetracesTheOpeningPath() {
+        let opening = PanelMorphGeometry(
+            topCenter: topCenter,
+            sourceSize: notchSize,
+            targetSize: expandedSize
+        )
+        let closing = PanelMorphGeometry(
+            topCenter: topCenter,
+            sourceSize: expandedSize,
+            targetSize: notchSize
+        )
+
+        for progress in stride(from: CGFloat(0), through: 1, by: 0.1) {
+            let openingFrame = opening.interpolatedFrame(progress: progress)
+            let closingFrame = closing.interpolatedFrame(progress: 1 - progress)
+            XCTAssertEqual(openingFrame.minX, closingFrame.minX, accuracy: 0.0001)
+            XCTAssertEqual(openingFrame.minY, closingFrame.minY, accuracy: 0.0001)
+            XCTAssertEqual(openingFrame.width, closingFrame.width, accuracy: 0.0001)
+            XCTAssertEqual(openingFrame.height, closingFrame.height, accuracy: 0.0001)
+        }
+    }
+
+    func testCanvasReservesTheLargestSurfaceAndShadowApron() {
+        let geometry = PanelMorphGeometry(
+            topCenter: topCenter,
+            sourceSize: expandedSize,
+            targetSize: CGSize(width: 178, height: 34)
+        )
+        let frame = geometry.panelCanvasFrame(horizontalApron: 64, bottomApron: 80)
+
+        XCTAssertEqual(frame.size, CGSize(width: 548, height: 640))
+        XCTAssertEqual(frame.midX, topCenter.x)
+        XCTAssertEqual(frame.maxY, topCenter.y)
+    }
+
+    func testNotchAnchorUsesHardwareGeometryAndExternalFallback() {
+        let hardware = makeDisplayGeometry(
+            notchRect: CGRect(x: 680, y: 944, width: 152, height: 38),
+            safeTop: 38
+        )
+        let external = makeDisplayGeometry(notchRect: nil, safeTop: 0)
+
+        XCTAssertEqual(
+            PanelMorphGeometry.notchAnchorSize(for: hardware),
+            CGSize(width: 152, height: 38)
+        )
+        XCTAssertEqual(
+            PanelMorphGeometry.notchAnchorSize(for: external),
+            PanelMorphGeometry.virtualNotchSize
+        )
+
+        let collapsedAnchor = PanelMorphGeometry.concealedAnchorSize(
+            for: hardware,
+            targetSize: CGSize(width: 178, height: 34)
+        )
+        XCTAssertEqual(collapsedAnchor, CGSize(width: 152, height: 34))
+        XCTAssertLessThanOrEqual(collapsedAnchor.width, 178)
+        XCTAssertLessThanOrEqual(collapsedAnchor.height, 34)
+
+        let collapsedMorph = PanelMorphGeometry(
+            topCenter: topCenter,
+            sourceSize: collapsedAnchor,
+            targetSize: CGSize(width: 178, height: 34)
+        )
+        let collapsedFrames = [0, 0.5, 1].map {
+            collapsedMorph.interpolatedFrame(progress: $0)
+        }
+        for pair in zip(collapsedFrames, collapsedFrames.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(pair.1.width, pair.0.width)
+            XCTAssertGreaterThanOrEqual(pair.1.height, pair.0.height)
+        }
+    }
+
+    func testInterpolationClampsOutOfRangeProgress() {
+        let geometry = PanelMorphGeometry(
+            topCenter: topCenter,
+            sourceSize: notchSize,
+            targetSize: expandedSize
+        )
+
+        XCTAssertEqual(geometry.interpolatedFrame(progress: -1), geometry.sourceFrame)
+        XCTAssertEqual(geometry.interpolatedFrame(progress: 2), geometry.targetFrame)
+    }
+
+    private func makeDisplayGeometry(notchRect: CGRect?, safeTop: CGFloat) -> NotchGeometry {
+        let screenFrame = CGRect(x: 0, y: 0, width: 1_512, height: 982)
+        return NotchGeometry(
+            displayID: 42,
+            screenFrame: screenFrame,
+            visibleFrame: screenFrame.insetBy(dx: 0, dy: 24),
+            safeAreaInsets: NSEdgeInsets(top: safeTop, left: 0, bottom: 0, right: 0),
+            notchRect: notchRect
+        )
+    }
+}
+
+@MainActor
+final class PanelMorphCoordinatorTests: XCTestCase {
+    func testStaleActivationAndCompletionCannotReplaceTheCurrentGeneration() {
+        let coordinator = PanelMorphCoordinator()
+        let first = makeRequest(generation: 1)
+        let second = makeRequest(generation: 2)
+
+        coordinator.prepare(first)
+        coordinator.begin(second)
+        coordinator.activate(generation: 1)
+        coordinator.settle(generation: 1)
+
+        XCTAssertEqual(coordinator.request?.generation, 2)
+        XCTAssertEqual(coordinator.request?.phase, .active)
+
+        coordinator.settle(generation: 2)
+        XCTAssertEqual(coordinator.request?.phase, .settled)
+
+        coordinator.cancel()
+        XCTAssertNil(coordinator.request)
+    }
+
+    func testRequestDurationIncludesTheContentFirstShellDelay() {
+        let request = makeRequest(generation: 1, shellDelay: 0.04)
+
+        XCTAssertEqual(request.morphDuration, 0.34)
+        XCTAssertEqual(request.totalDuration, 0.38)
+    }
+
+    private func makeRequest(
+        generation: Int,
+        shellDelay: TimeInterval = 0
+    ) -> PanelMorphRequest {
+        PanelMorphRequest(
+            generation: generation,
+            phase: .active,
+            geometry: PanelMorphGeometry(
+                topCenter: CGPoint(x: 756, y: 982),
+                sourceSize: CGSize(width: 420, height: 560),
+                targetSize: CGSize(width: 178, height: 34)
+            ),
+            targetState: .collapsed,
+            kind: .contract,
+            spring: NotchMotion.surfaceContraction,
+            fadeDuration: 0,
+            shellDelay: shellDelay,
+            contentDelay: NotchMotion.surfaceContentDelay,
+            reduceMotion: false,
+            wasVisible: true
+        )
     }
 }
 
@@ -215,6 +443,16 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         XCTAssertNil(SurfaceChromeMetrics.resolve(for: .dormant))
         XCTAssertNil(SurfaceChromeMetrics.resolve(for: .screenshot))
     }
+
+    func testPreparedChromeUsesTheConcealedNotchSourceWithoutAShadow() throws {
+        let expanded = try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .expanded))
+        let anchored = expanded.anchored(at: CGSize(width: 152, height: 38))
+
+        XCTAssertEqual(anchored.size, CGSize(width: 152, height: 38))
+        XCTAssertEqual(anchored.shadowOpacity, 0)
+        XCTAssertEqual(anchored.shadowY, 0)
+        XCTAssertLessThanOrEqual(anchored.bottomRadius, 19)
+    }
 }
 
 final class NotchMotionTokenTests: XCTestCase {
@@ -245,6 +483,7 @@ final class NotchMotionTokenTests: XCTestCase {
         XCTAssertEqual(NotchMotion.insertionDuration, 0.18)
         XCTAssertEqual(NotchMotion.removalDuration, 0.14)
         XCTAssertEqual(NotchMotion.reducedMotionDuration, 0.12)
+        XCTAssertEqual(NotchMotion.surfaceContentDelay, 0.07)
         XCTAssertEqual(NotchMotion.completionRevealDuration, 0.30)
         XCTAssertEqual(NotchMotion.completionRetractDuration, 0.16)
         XCTAssertEqual(NotchMotion.completionReopenDuration, 0.16)

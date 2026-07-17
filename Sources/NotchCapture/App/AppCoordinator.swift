@@ -42,6 +42,7 @@ final class AppCoordinator {
     private var permissionActivationObserver: NSObjectProtocol?
     private var permissionRestoreTask: Task<Void, Never>?
     private var composerPasteTask: Task<Void, Never>?
+    private var pendingShortcutDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition]?
 
     init(defaults: UserDefaults = .standard) throws {
         self.defaults = defaults
@@ -308,7 +309,13 @@ final class AppCoordinator {
             self?.defaults.set(timeFormat.rawValue, forKey: DefaultsKey.timeFormat)
         }
         hooks.onOpenShortcutRecorder = { [weak self] action in
-            self?.recordShortcut(for: action)
+            self?.beginShortcutRecording(for: action)
+        }
+        hooks.onCommitShortcutRecording = { [weak self] action, recording in
+            self?.commitShortcutRecording(recording, for: action)
+        }
+        hooks.onCancelShortcutRecording = { [weak self] in
+            self?.cancelShortcutRecording()
         }
         hooks.onImport = { [weak self] in
             self?.presentImportPanel()
@@ -1094,25 +1101,31 @@ final class AppCoordinator {
         applyOccupancy(occupancyService.snapshot)
     }
 
-    private func recordShortcut(for action: AppViewModel.Shortcut.Action) {
-        guard let hotKeyAction = globalAction(for: action), let manager = hotKeyManager else { return }
+    private func beginShortcutRecording(for action: AppViewModel.Shortcut.Action) {
+        guard globalAction(for: action) != nil, let manager = hotKeyManager else { return }
         let currentDisplay = viewModel.shortcuts.first(where: { $0.action == action })?.displayValue ?? ""
         let oldDefinitions = manager.definitions
         manager.unregisterAll()
-
-        guard let recording = ShortcutRecorder.capture(
+        pendingShortcutDefinitions = oldDefinitions
+        viewModel.shortcutRecordingRequest = AppViewModel.ShortcutRecordingRequest(
+            action: action,
             title: viewModel.shortcuts.first(where: { $0.action == action })?.title ?? "Shortcut",
             currentValue: currentDisplay
-        ) else {
-            do { try manager.register(oldDefinitions) } catch { show(error) }
-            return
+        )
+    }
+
+    private func commitShortcutRecording(
+        _ recording: ShortcutRecording,
+        for action: AppViewModel.Shortcut.Action
+    ) -> String? {
+        guard let hotKeyAction = globalAction(for: action), let manager = hotKeyManager,
+              let oldDefinitions = pendingShortcutDefinitions else {
+            return "Shortcut recording is no longer active."
         }
 
         var definitions = oldDefinitions
         if definitions.contains(where: { $0.key != hotKeyAction && $0.value == recording.definition }) {
-            do { try manager.register(oldDefinitions) } catch { show(error) }
-            viewModel.errorMessage = "That shortcut is already assigned to another Notch Capture action."
-            return
+            return "That shortcut is already assigned to another Notch Capture action."
         }
         definitions[hotKeyAction] = recording.definition
 
@@ -1121,10 +1134,22 @@ final class AppCoordinator {
             persistShortcut(recording, for: hotKeyAction)
             viewModel.updateShortcut(action, displayValue: recording.displayValue)
             viewModel.errorMessage = nil
+            pendingShortcutDefinitions = nil
+            viewModel.shortcutRecordingRequest = nil
+            return nil
         } catch {
             try? manager.register(oldDefinitions)
-            show(error)
+            return error.localizedDescription
         }
+    }
+
+    private func cancelShortcutRecording() {
+        defer {
+            pendingShortcutDefinitions = nil
+            viewModel.shortcutRecordingRequest = nil
+        }
+        guard let oldDefinitions = pendingShortcutDefinitions, let manager = hotKeyManager else { return }
+        do { try manager.register(oldDefinitions) } catch { show(error) }
     }
 
     private func loadShortcutDefinitions() -> [GlobalHotKeyAction: GlobalHotKeyDefinition] {
