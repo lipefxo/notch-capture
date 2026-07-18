@@ -13,6 +13,26 @@ final class NotchPresentationTests: XCTestCase {
         XCTAssertEqual(frame.minY, 56, accuracy: 0.001)
     }
 
+    func testPopoverPlacementNeverEscapesTheTopEdge() {
+        // The surface is flush with the screen top; a menu anchored high with
+        // no room below must clamp inside the bounds, never above them.
+        let frame = NotchPopoverPlacement.frame(
+            anchor: CGRect(x: 340, y: 40, width: 28, height: 28),
+            menuSize: CGSize(width: 230, height: 300),
+            in: CGRect(x: 0, y: 0, width: 420, height: 320)
+        )
+
+        XCTAssertGreaterThanOrEqual(frame.minY, 12)
+
+        let oversized = NotchPopoverPlacement.frame(
+            anchor: CGRect(x: 340, y: 40, width: 28, height: 28),
+            menuSize: CGSize(width: 230, height: 600),
+            in: CGRect(x: 0, y: 0, width: 420, height: 560)
+        )
+
+        XCTAssertGreaterThanOrEqual(oversized.minY, 12)
+    }
+
     func testPopoverPlacementFlipsAboveWhenThereIsNoRoomBelow() {
         let frame = NotchPopoverPlacement.frame(
             anchor: CGRect(x: 190, y: 510, width: 20, height: 20),

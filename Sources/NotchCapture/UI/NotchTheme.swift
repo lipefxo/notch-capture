@@ -30,6 +30,8 @@ enum NotchTheme {
     static let width: CGFloat = 420
     static let maxHeight: CGFloat = 560
     static let headerHeight: CGFloat = 62
+    /// Width of the concave fillets that merge the surface into the top screen edge.
+    static let topFlare: CGFloat = 10
     static let mint = Color(red: 0.23, green: 0.78, blue: 0.50)
     static let ink = Color(red: 0.022, green: 0.024, blue: 0.027)
     static let graphite = Color(red: 0.070, green: 0.074, blue: 0.080)
@@ -40,13 +42,26 @@ enum NotchTheme {
     static let selectedLedger = Color.white.opacity(0.055)
     static let hoveredLedger = Color.white.opacity(0.028)
     static let completedLedger = mint.opacity(0.045)
-    static let completionWash = mint.opacity(0.10)
+    /// Specular highlight riding the crest of the completion wave.
+    static let completionCrest = mint.opacity(0.18)
+    /// Additional warmth layered behind the crest; multiplied by (1 - progress)
+    /// so the trail cools into completedLedger as the liquid settles.
+    static let completionTrail = mint.opacity(0.075)
     static let controlStroke = Color.white.opacity(0.075)
     static let hairline = Color.white.opacity(0.065)
     static let primaryText = Color.white.opacity(0.90)
     static let secondaryText = Color.white.opacity(0.55)
-    static let tertiaryText = Color.white.opacity(0.39)
+    // Completed rows sit below the secondary/tertiary ramp on purpose: the
+    // deeper dim is what makes the done state legible at a glance.
+    static let completedPrimaryText = Color.white.opacity(0.36)
+    static let completedSecondaryText = Color.white.opacity(0.28)
+    // 0.48 keeps small timestamps/captions at ~4.5:1 over ink (AA); 0.39 measured ~3.1:1.
+    static let tertiaryText = Color.white.opacity(0.48)
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
+    static let warning = Color.orange
+    static let destructive = Color.red
+    /// Bottom corner radius shared by every open surface state and the composer.
+    static let surfaceBottomRadius: CGFloat = 24
     private static let tagPaletteAnchors = [
         TagPaletteAnchor(red: 0.31, green: 0.89, blue: 1.00),
         TagPaletteAnchor(red: 0.46, green: 0.42, blue: 1.00),
@@ -111,6 +126,10 @@ enum NotchMotion {
     static let onboardingSpring = NotchSpringProfile(perceptualDuration: 0.36, bounce: 0)
     static let confirmationSpring = NotchSpringProfile(perceptualDuration: 0.32, bounce: 0)
     static let completionSpring = NotchSpringProfile(perceptualDuration: 0.16, bounce: 0)
+    // The checkmark is the one deliberately playful element in the completion
+    // choreography: a touch of overshoot makes the pop feel earned without the
+    // wash or the row itself bouncing.
+    static let completionCheckPop = NotchSpringProfile(perceptualDuration: 0.40, bounce: 0.30)
 
     // Compatibility aliases for policy tests and callers that reason about the
     // perceptual pace without constructing a SwiftUI animation.
@@ -134,10 +153,15 @@ enum NotchMotion {
     static let composerFocusDuration: TimeInterval = 0.18
     static let composerIridescenceCycleDuration: TimeInterval = 10
     static let reducedMotionDuration: TimeInterval = 0.12
-    static let completionRevealDuration: TimeInterval = 0.30
+    static let completionRevealDuration: TimeInterval = 0.40
     static let completionRetractDuration: TimeInterval = 0.16
     static let completionReopenDuration = completionRetractDuration
-    static let completionExitDuration: TimeInterval = 0.16
+    static let completionExitDuration: TimeInterval = 0.22
+    // Completion is staged: the check pops, the wash sweeps shortly after, and
+    // only once the wash has landed does the row reorder or exit. The hold must
+    // outlast washDelay + reveal so the payoff is never cut short.
+    static let completionWashDelay: TimeInterval = 0.04
+    static let completionHoldDuration: TimeInterval = 0.60
 
     static func easeOut(duration: TimeInterval) -> Animation {
         .timingCurve(0.23, 1, 0.32, 1, duration: duration)
@@ -159,6 +183,11 @@ enum NotchMotion {
     static let reducedMotion = easeOut(duration: reducedMotionDuration)
     static let reorder = reorderDisplacement.animation
     static let completion = completionSpring.animation
+    static let completionCheck = completionCheckPop.animation
+    static let completionSettle = reorderDisplacement.animation
+    // Trash/archive/move removals share the reorder spring so the exiting row
+    // and the gap closing beneath it always move at the same pace.
+    static let ledgerRemoval = reorderDisplacement.animation
     static let completionReopen = easeOut(duration: completionReopenDuration)
     static let completionReveal = easeOut(duration: completionRevealDuration)
     static let completionRetract = easeOut(duration: completionRetractDuration)
@@ -175,44 +204,35 @@ enum NotchMotion {
 
 struct NotchHugShape: Shape {
     var bottomRadius: CGFloat = 24
-    var topLift: CGFloat = 8
 
-    var animatableData: AnimatablePair<CGFloat, CGFloat> {
-        get { AnimatablePair(bottomRadius, topLift) }
-        set {
-            bottomRadius = newValue.first
-            topLift = newValue.second
-        }
+    var animatableData: CGFloat {
+        get { bottomRadius }
+        set { bottomRadius = newValue }
     }
 
     func path(in rect: CGRect) -> Path {
-        let topY = rect.minY + topLift
-        let topRadius = min(16, rect.width / 8)
-        let tabHalfWidth = min(17, rect.width / 10)
-        let centerX = rect.midX
+        let flare = min(NotchTheme.topFlare, rect.height / 2, rect.width / 4)
+        let radius = min(bottomRadius, rect.height - flare, rect.width / 2 - flare)
         var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: topY + topRadius))
+        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX + topRadius, y: topY),
-            control: CGPoint(x: rect.minX, y: topY)
+            to: CGPoint(x: rect.minX + flare, y: rect.minY + flare),
+            control: CGPoint(x: rect.minX + flare, y: rect.minY)
         )
-        path.addLine(to: CGPoint(x: centerX - tabHalfWidth, y: topY))
-        path.addLine(to: CGPoint(x: centerX, y: rect.minY))
-        path.addLine(to: CGPoint(x: centerX + tabHalfWidth, y: topY))
-        path.addLine(to: CGPoint(x: rect.maxX - topRadius, y: topY))
+        path.addLine(to: CGPoint(x: rect.minX + flare, y: rect.maxY - radius))
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: topY + topRadius),
-            control: CGPoint(x: rect.maxX, y: topY)
+            to: CGPoint(x: rect.minX + flare + radius, y: rect.maxY),
+            control: CGPoint(x: rect.minX + flare, y: rect.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - bottomRadius))
+        path.addLine(to: CGPoint(x: rect.maxX - flare - radius, y: rect.maxY))
         path.addQuadCurve(
-            to: CGPoint(x: rect.maxX - bottomRadius, y: rect.maxY),
-            control: CGPoint(x: rect.maxX, y: rect.maxY)
+            to: CGPoint(x: rect.maxX - flare, y: rect.maxY - radius),
+            control: CGPoint(x: rect.maxX - flare, y: rect.maxY)
         )
-        path.addLine(to: CGPoint(x: rect.minX + bottomRadius, y: rect.maxY))
+        path.addLine(to: CGPoint(x: rect.maxX - flare, y: rect.minY + flare))
         path.addQuadCurve(
-            to: CGPoint(x: rect.minX, y: rect.maxY - bottomRadius),
-            control: CGPoint(x: rect.minX, y: rect.maxY)
+            to: CGPoint(x: rect.maxX, y: rect.minY),
+            control: CGPoint(x: rect.maxX - flare, y: rect.minY)
         )
         path.closeSubpath()
         return path

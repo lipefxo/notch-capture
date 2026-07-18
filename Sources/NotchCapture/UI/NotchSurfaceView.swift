@@ -7,46 +7,24 @@ struct SurfaceChromeMetrics: Equatable {
     let shadowRadius: CGFloat
     let shadowY: CGFloat
 
+    /// Sizes come from `PanelState.nominalSize` — the AppKit window and the
+    /// SwiftUI chrome must never disagree about surface dimensions.
     static func resolve(for state: AppViewModel.SurfaceState) -> Self? {
         switch state {
         case .dormant, .screenshot:
             nil
         case .collapsed:
             Self(
-                size: CGSize(width: 178, height: 34),
+                size: state.panelState.nominalSize,
                 bottomRadius: 16,
                 shadowOpacity: 0,
                 shadowRadius: 0,
                 shadowY: 0
             )
-        case .confirmation:
+        case .confirmation, .expanded, .drop, .onboarding, .settings:
             Self(
-                size: CGSize(width: 280, height: 56),
-                bottomRadius: 24,
-                shadowOpacity: 0.46,
-                shadowRadius: 24,
-                shadowY: 14
-            )
-        case .expanded, .drop:
-            Self(
-                size: CGSize(width: NotchTheme.width, height: NotchTheme.maxHeight),
-                bottomRadius: 22,
-                shadowOpacity: 0.46,
-                shadowRadius: 24,
-                shadowY: 14
-            )
-        case .onboarding:
-            Self(
-                size: CGSize(width: NotchTheme.width, height: 500),
-                bottomRadius: 24,
-                shadowOpacity: 0.46,
-                shadowRadius: 24,
-                shadowY: 14
-            )
-        case .settings:
-            Self(
-                size: CGSize(width: NotchTheme.width, height: NotchTheme.maxHeight),
-                bottomRadius: 24,
+                size: state.panelState.nominalSize,
+                bottomRadius: NotchTheme.surfaceBottomRadius,
                 shadowOpacity: 0.46,
                 shadowRadius: 24,
                 shadowY: 14
@@ -79,7 +57,7 @@ struct NotchSurfaceView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @EnvironmentObject private var morphCoordinator: PanelMorphCoordinator
-    @StateObject private var presentation = NotchPresentationCoordinator()
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @State private var displayedState: AppViewModel.SurfaceState?
     @State private var chromeMetrics: SurfaceChromeMetrics?
     @State private var activeTransition: AnyTransition = .opacity
@@ -88,6 +66,13 @@ struct NotchSurfaceView: View {
     @State private var contentOffsetY: CGFloat = 0
     @State private var contentScale = 1.0
     @State private var morphTask: Task<Void, Never>?
+    // The hosting view's very first commit reliably fails to paint the final
+    // glyph run of the scene (the collapsed pill's trailing shortcut hint
+    // renders blank) even though layout is correct; only recreating the content
+    // subtree repaints it. Bumped once shortly after launch, the id change
+    // rebuilds the content with fresh layers. See PanelController's present
+    // pipeline for the launch ordering.
+    @State private var initialCommitRepaint = 0
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
@@ -112,14 +97,18 @@ struct NotchSurfaceView: View {
 
                     ZStack {
                         surfaceContent(for: displayedState)
-                            .id(contentIdentity(for: displayedState))
+                            .id("\(contentIdentity(for: displayedState))#\(initialCommitRepaint)")
                             .transition(activeTransition)
                             .disabled(presentation.hasModal)
                             .accessibilityHidden(presentation.hasModal)
 
                         NotchPresentationLayer()
                     }
+                    .coordinateSpace(name: NotchPresentationLayer.coordinateSpace)
                     .environmentObject(presentation)
+                    // Content lays out in the visible body; the surface frame is
+                    // wider by one top-flare wing per side.
+                    .padding(.horizontal, NotchTheme.topFlare)
                     .clipShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
                     .opacity(contentOpacity)
                     .offset(y: contentOffsetY)
@@ -175,9 +164,8 @@ struct NotchSurfaceView: View {
         from oldState: AppViewModel.SurfaceState,
         to newState: AppViewModel.SurfaceState
     ) {
-        if newState != .expanded && newState != .settings && newState != .onboarding {
-            presentation.dismissAll()
-        }
+        // Presentation teardown on state changes is owned by AppCoordinator's
+        // state sink, which runs even when this view's updates are deferred.
 
         guard let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else {
             // The morph coordinator keeps the last visible shell mounted while
@@ -225,7 +213,14 @@ struct NotchSurfaceView: View {
         case .active:
             beginMorph(request)
         case .settled:
-            break
+            // Repainting mid-morph re-drops the glyphs, so the rebuild waits
+            // for the first settled transition. Scoped to the collapsed pill:
+            // it is the only surface that idles unattended long enough for the
+            // blank text to be seen, and recreating a keyboard surface here
+            // would risk resetting its focus.
+            if initialCommitRepaint == 0, viewModel.surfaceState == .collapsed {
+                withoutAnimation { initialCommitRepaint = 1 }
+            }
         }
     }
 
@@ -452,7 +447,7 @@ struct CollapsedPillView: View {
                 Text("Capture")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.82))
-                Text("⌃⇧N")
+                Text(viewModel.shortcutDisplayValue(for: .openComposer))
                     .font(.system(size: 9, weight: .medium, design: .rounded))
                     .foregroundStyle(NotchTheme.tertiaryText)
             }
@@ -464,10 +459,10 @@ struct CollapsedPillView: View {
                     .scaleEffect(x: isHovered ? 1 : 22 / 38)
                     .padding(.bottom, 3)
             }
-            .contentShape(NotchHugShape(bottomRadius: 16))
+            .contentShape(Rectangle())
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.94))
-        .notchHitTarget(NotchHugShape(bottomRadius: 16))
+        .notchHitTarget(Rectangle())
         .onHover { isHovered = $0 }
         .animation(NotchMotion.hover, value: isHovered)
         .help("Open Notch Capture")

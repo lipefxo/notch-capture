@@ -114,6 +114,26 @@ struct PanelTransitionPolicy: Equatable {
     )
 }
 
+/// Debug-build flight recorder for the dismissal/presentation pipeline.
+/// Appends to /tmp/notchcapture-diagnostics.log so environment-dependent
+/// lockups (input-method windows, activation races) can be diagnosed from a
+/// single user reproduction instead of guesswork.
+enum PanelDiagnostics {
+    nonisolated static func log(_ message: @autoclosure () -> String) {
+        #if DEBUG
+        let line = "\(Date().timeIntervalSince1970) \(message())\n"
+        let url = URL(fileURLWithPath: "/tmp/notchcapture-diagnostics.log")
+        if let handle = try? FileHandle(forWritingTo: url) {
+            defer { try? handle.close() }
+            _ = try? handle.seekToEnd()
+            try? handle.write(contentsOf: Data(line.utf8))
+        } else {
+            try? Data(line.utf8).write(to: url)
+        }
+        #endif
+    }
+}
+
 struct PanelDismissalEventPolicy {
     /// Mouse events delivered to this process belong to the notch panel or to
     /// one of its auxiliary dialogs. Clicks in other applications are handled
@@ -129,6 +149,22 @@ struct PanelDismissalEventPolicy {
 
     static func shouldDismissForExternalClick(hasVisibleAuxiliaryWindow: Bool) -> Bool {
         !hasVisibleAuxiliaryWindow
+    }
+
+    /// Only genuine user-facing dialogs suppress outside-click dismissal.
+    /// System helper windows (e.g. the text-input `TUINSWindow` that appears
+    /// whenever a text field is focused) must not count: treating them as
+    /// dialogs silently disables dismissal for entire sessions.
+    @MainActor
+    static func countsAsAuxiliaryDialog(
+        _ window: NSWindow,
+        panel: NSWindow,
+        modalWindow: NSWindow?
+    ) -> Bool {
+        window !== panel
+            && window.isVisible
+            && !window.isMiniaturized
+            && (window is NSSavePanel || window is NSOpenPanel || window === modalWindow)
     }
 }
 
@@ -178,6 +214,25 @@ public enum PanelDismissalReason: Equatable {
     case automatic
 }
 
+/// Owns the NSEvent monitors so deinit can schedule their removal on the main
+/// actor without asserting isolation (a controller released off-main must not trap).
+private final class PanelEventMonitorLifetime: @unchecked Sendable {
+    var localEventMonitor: Any?
+    var globalEventMonitor: Any?
+
+    @MainActor
+    func removeAll() {
+        if let localEventMonitor {
+            NSEvent.removeMonitor(localEventMonitor)
+            self.localEventMonitor = nil
+        }
+        if let globalEventMonitor {
+            NSEvent.removeMonitor(globalEventMonitor)
+            self.globalEventMonitor = nil
+        }
+    }
+}
+
 @MainActor
 public final class PanelController: NSObject, ObservableObject {
     public typealias ContentFactory = @MainActor (PanelState) -> AnyView
@@ -186,15 +241,17 @@ public final class PanelController: NSObject, ObservableObject {
     public var onRequestDismiss: (@MainActor (PanelDismissalReason) -> Void)?
 
     public let panel: NotchPanel
+    /// Owner of transient in-panel presentation (menus, modals). Held here so
+    /// the app layer can tear presentations down alongside panel transitions.
+    let presentationCoordinator: NotchPresentationCoordinator
 
     private let displayLocator: any DisplayLocating
     private let automaticDismissalEnabled: Bool
     private let hostingView: NSHostingView<AnyView>
     private let morphCoordinator: PanelMorphCoordinator
-    private var targetScreen: NSScreen?
+    private var targetDisplayID: CGDirectDisplayID?
     private weak var previouslyActiveApplication: NSRunningApplication?
-    private var localEventMonitor: Any?
-    private var globalEventMonitor: Any?
+    private let eventMonitors = PanelEventMonitorLifetime()
     private var confirmationDismissalTask: Task<Void, Never>?
     private var transitionTask: Task<Void, Never>?
     private var transitionGeneration = 0
@@ -205,11 +262,17 @@ public final class PanelController: NSObject, ObservableObject {
         content: @escaping ContentFactory
     ) {
         let morphCoordinator = PanelMorphCoordinator()
+        let presentationCoordinator = NotchPresentationCoordinator()
         self.displayLocator = displayLocator
         self.automaticDismissalEnabled = automaticDismissalEnabled
         self.morphCoordinator = morphCoordinator
+        self.presentationCoordinator = presentationCoordinator
         self.hostingView = NSHostingView(
-            rootView: AnyView(content(.dormant).environmentObject(morphCoordinator))
+            rootView: AnyView(
+                content(.dormant)
+                    .environmentObject(morphCoordinator)
+                    .environmentObject(presentationCoordinator)
+            )
         )
         self.panel = NotchPanel(
             contentRect: .zero,
@@ -230,9 +293,9 @@ public final class PanelController: NSObject, ObservableObject {
     deinit {
         confirmationDismissalTask?.cancel()
         transitionTask?.cancel()
-        MainActor.assumeIsolated {
-            if let localEventMonitor { NSEvent.removeMonitor(localEventMonitor) }
-            if let globalEventMonitor { NSEvent.removeMonitor(globalEventMonitor) }
+        let eventMonitors = eventMonitors
+        Task { @MainActor in
+            eventMonitors.removeAll()
         }
     }
 
@@ -252,11 +315,20 @@ public final class PanelController: NSObject, ObservableObject {
         let oldState = state
         let wasVisible = panel.isVisible
         guard oldState != newState || !wasVisible else { return }
+        PanelDiagnostics.log("present \(oldState.rawValue)→\(newState.rawValue) wasVisible=\(wasVisible)")
         confirmationDismissalTask?.cancel()
 
-        targetScreen = screen ?? displayLocator.pointerScreen
+        let resolvedScreen = screen ?? displayLocator.pointerScreen
+        targetDisplayID = resolvedScreen.flatMap(displayLocator.displayID(for:))
         guard let geometry = targetGeometry,
-              let targetFrame = panelFrame(for: newState, geometry: geometry) else { return }
+              let targetFrame = panelFrame(for: newState, geometry: geometry) else {
+            // Without display geometry no surface can exist. Hide instead of
+            // silently bailing, and tell the owner so the app-level state
+            // machine doesn't keep believing a panel is on screen.
+            transitionToHiddenState(.dormant, animated: false)
+            requestDismissal(reason: .automatic)
+            return
+        }
         let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
         let transition = PanelTransitionPolicy.resolve(
             from: oldState,
@@ -326,6 +398,14 @@ public final class PanelController: NSObject, ObservableObject {
             }
         }
 
+        // Entering a keyboard state from a non-keyboard one must not inherit a
+        // stale first responder: a modal's field editor survives the contract
+        // to the pill inside the window, and reopening would route every key
+        // press to a view that no longer exists.
+        if newState.acceptsKeyboardInput && !oldState.acceptsKeyboardInput {
+            panel.makeFirstResponder(nil)
+        }
+
         if activate && newState.acceptsKeyboardInput {
             rememberPreviousApplication()
             NSApp.activate(ignoringOtherApps: true)
@@ -356,7 +436,13 @@ public final class PanelController: NSObject, ObservableObject {
 
     /// Recalculates the panel position after a screen arrangement or resolution change.
     public func reposition(on screen: NSScreen? = nil) {
-        targetScreen = screen ?? targetScreen ?? displayLocator.pointerScreen
+        if let screen {
+            targetDisplayID = displayLocator.displayID(for: screen)
+        } else if let targetDisplayID, displayLocator.screen(withID: targetDisplayID) == nil {
+            // The tracked display disappeared; re-anchor to the pointer display.
+            self.targetDisplayID = displayLocator.pointerScreen
+                .flatMap(displayLocator.displayID(for:))
+        }
         guard state.isVisible else { return }
         guard let frame = panelFrame(for: state) else { return }
         transitionTask?.cancel()
@@ -452,6 +538,7 @@ public final class PanelController: NSObject, ObservableObject {
 
     private func transitionToHiddenState(_ hiddenState: PanelState, animated: Bool = true) {
         guard state != hiddenState else { return }
+        PanelDiagnostics.log("hide \(state.rawValue)→\(hiddenState.rawValue) visible=\(panel.isVisible)")
         confirmationDismissalTask?.cancel()
         confirmationDismissalTask = nil
         let oldState = state
@@ -470,6 +557,7 @@ public final class PanelController: NSObject, ObservableObject {
         state = hiddenState
         panel.permitsKeyWindow = false
         panel.ignoresMouseEvents = true
+        panel.makeFirstResponder(nil)
         removeDismissalMonitors()
 
         guard wasVisible, transition.kind != .immediate, let geometry = targetGeometry else {
@@ -511,7 +599,11 @@ public final class PanelController: NSObject, ObservableObject {
     }
 
     private var targetGeometry: NotchGeometry? {
-        guard let screen = targetScreen ?? displayLocator.pointerScreen else { return nil }
+        // Re-resolve from the display ID every time: NSScreen instances are
+        // snapshots and go stale across display reconfigurations.
+        let screen = targetDisplayID.flatMap(displayLocator.screen(withID:))
+            ?? displayLocator.pointerScreen
+        guard let screen else { return nil }
         return displayLocator.geometry(for: screen)
     }
 
@@ -662,6 +754,7 @@ public final class PanelController: NSObject, ObservableObject {
                         actualFrame: self.panel.frame,
                         targetFrame: targetFrame
                     )
+                    PanelDiagnostics.log("transition settled state=\(self.state.rawValue) ignoresMouse=\(self.panel.ignoresMouseEvents)")
                 }
             }
         }
@@ -706,8 +799,8 @@ public final class PanelController: NSObject, ObservableObject {
             return
         }
 
-        if localEventMonitor == nil {
-            localEventMonitor = NSEvent.addLocalMonitorForEvents(
+        if eventMonitors.localEventMonitor == nil {
+            eventMonitors.localEventMonitor = NSEvent.addLocalMonitorForEvents(
                 matching: PanelDismissalEventPolicy.localEventMask
             ) { [weak self] event in
                 guard let self else { return event }
@@ -716,21 +809,33 @@ public final class PanelController: NSObject, ObservableObject {
                        eventWindow: event.window,
                        panel: self.panel
                    ) {
-                    self.requestDismissal(reason: .escape)
+                    // A visible menu or modal owns Escape; only an unadorned
+                    // surface escalates it to a panel dismissal.
+                    if self.presentationCoordinator.hasActivePresentation {
+                        PanelDiagnostics.log("escape → cancel presentation")
+                        self.presentationCoordinator.cancelActivePresentation()
+                    } else {
+                        PanelDiagnostics.log("escape → request dismissal")
+                        self.requestDismissal(reason: .escape)
+                    }
                     return nil
                 }
                 return event
             }
         }
 
-        if globalEventMonitor == nil {
-            globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
+        if eventMonitors.globalEventMonitor == nil {
+            eventMonitors.globalEventMonitor = NSEvent.addGlobalMonitorForEvents(
                 matching: [.leftMouseDown, .rightMouseDown]
             ) { [weak self] _ in
-                guard let self,
-                      PanelDismissalEventPolicy.shouldDismissForExternalClick(
-                          hasVisibleAuxiliaryWindow: self.hasVisibleAuxiliaryWindow
-                      ) else { return }
+                guard let self else { return }
+                guard PanelDismissalEventPolicy.shouldDismissForExternalClick(
+                    hasVisibleAuxiliaryWindow: self.hasVisibleAuxiliaryWindow
+                ) else {
+                    PanelDiagnostics.log("external click → suppressed by auxiliary window: \(self.auxiliaryWindowDescription)")
+                    return
+                }
+                PanelDiagnostics.log("external click → request dismissal (state=\(self.state.rawValue))")
                 self.requestDismissal(reason: .externalClick)
             }
         }
@@ -738,19 +843,29 @@ public final class PanelController: NSObject, ObservableObject {
 
     private var hasVisibleAuxiliaryWindow: Bool {
         NSApp.windows.contains { window in
-            window !== panel && window.isVisible && !window.isMiniaturized
+            PanelDismissalEventPolicy.countsAsAuxiliaryDialog(
+                window,
+                panel: panel,
+                modalWindow: NSApp.modalWindow
+            )
         }
     }
 
+    private var auxiliaryWindowDescription: String {
+        NSApp.windows
+            .filter {
+                PanelDismissalEventPolicy.countsAsAuxiliaryDialog(
+                    $0,
+                    panel: panel,
+                    modalWindow: NSApp.modalWindow
+                )
+            }
+            .map { String(describing: type(of: $0)) }
+            .joined(separator: ",")
+    }
+
     private func removeDismissalMonitors() {
-        if let localEventMonitor {
-            NSEvent.removeMonitor(localEventMonitor)
-            self.localEventMonitor = nil
-        }
-        if let globalEventMonitor {
-            NSEvent.removeMonitor(globalEventMonitor)
-            self.globalEventMonitor = nil
-        }
+        eventMonitors.removeAll()
     }
 
     private func scheduleConfirmationDismissal(after delay: TimeInterval = 5) {

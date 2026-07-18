@@ -469,7 +469,10 @@ final class ItemRepository {
         let storedPaths = item.attachments.compactMap(\.relativePath)
         modelContext.delete(item)
         try modelContext.save()
-        try storedPaths.forEach { try attachmentStore?.remove(relativePath: $0) }
+        // Best-effort: the delete already committed, so a failed unlink must not
+        // surface as an error or abort removal of the remaining files. Stragglers
+        // are reclaimed by removeOrphanedAttachmentFiles() on the next launch.
+        storedPaths.forEach { try? attachmentStore?.remove(relativePath: $0) }
     }
 
     @discardableResult
@@ -478,8 +481,19 @@ final class ItemRepository {
         let storedPaths = items.flatMap(\.attachments).compactMap(\.relativePath)
         items.forEach(modelContext.delete)
         try modelContext.save()
-        try storedPaths.forEach { try attachmentStore?.remove(relativePath: $0) }
+        storedPaths.forEach { try? attachmentStore?.remove(relativePath: $0) }
         return items.count
+    }
+
+    /// Deletes stored attachment files that no longer have a database row —
+    /// leftovers from failed unlinks or crashes between file and model writes.
+    /// Call at launch, before any capture can be in flight.
+    @discardableResult
+    func removeOrphanedAttachmentFiles() throws -> Int {
+        guard let attachmentStore else { return 0 }
+        let attachments = try modelContext.fetch(FetchDescriptor<Attachment>())
+        let referenced = Set(attachments.compactMap(\.relativePath))
+        return attachmentStore.removeFiles(notIn: referenced)
     }
 
     private func attachment(from stored: StoredAttachment, order: Int) -> Attachment {

@@ -5,65 +5,6 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppViewModel: ObservableObject {
-    enum SurfaceState: Equatable {
-        case dormant
-        case collapsed
-        case confirmation
-        case expanded
-        case drop
-        case screenshot
-        case onboarding
-        case settings
-    }
-
-    enum InboxFilter: String, CaseIterable, Identifiable {
-        case all = "All"
-        case tasks = "Tasks"
-        case due = "Due"
-        case completed = "Completed"
-        case archive = "Archive"
-        case trash = "Trash"
-
-        var id: Self { self }
-
-        var systemImage: String {
-            switch self {
-            case .all: "tray.full"
-            case .tasks: "checkmark.circle"
-            case .due: "calendar"
-            case .completed: "checkmark.circle.fill"
-            case .archive: "archivebox"
-            case .trash: "trash"
-            }
-        }
-    }
-
-    enum NotchOwnership: String, CaseIterable, Identifiable {
-        case automatic = "Automatic"
-        case companion = "Companion"
-        case primary = "Primary"
-
-        var id: Self { self }
-
-        var explanation: String {
-            switch self {
-            case .automatic:
-                "Yield the notch only when NotchFlow is present."
-            case .companion:
-                "Keep the idle notch completely available to NotchFlow."
-            case .primary:
-                "Keep Notch Capture visible, even when another notch app is running."
-            }
-        }
-    }
-
-    enum TimeFormat: String, CaseIterable, Identifiable {
-        case twelveHour = "12-hour"
-        case twentyFourHour = "24-hour"
-
-        var id: Self { self }
-    }
-
     enum ItemKind: String, Codable, Hashable {
         case note
         case task
@@ -74,325 +15,32 @@ final class AppViewModel: ObservableObject {
         case after
     }
 
-    enum KeyboardFocus: Equatable {
-        case composer
-        case selectedRow
-        case itemEditor
-        case none
-    }
-
-    enum BrowseLocation: Hashable {
-        case root
-        case folder(UUID)
-    }
-
-    struct FolderSummary: Identifiable, Hashable {
-        var id: UUID
-        var name: String
-        var sortOrder: Int
-
-        init(id: UUID = UUID(), name: String, sortOrder: Int = 0) {
-            self.id = id
-            self.name = name
-            self.sortOrder = sortOrder
-        }
-    }
-
-    struct TagSummary: Identifiable, Hashable {
-        var id: UUID
-        var name: String
-        var colorSeed: Double
-
-        init(id: UUID = UUID(), name: String, colorSeed: Double? = nil) {
-            self.id = id
-            self.name = name
-            self.colorSeed = colorSeed ?? TagColorSeed.stable(for: id)
-        }
-    }
-
-    struct TagGroup: Identifiable, Hashable {
-        var tag: TagSummary
-        var count: Int
-
-        var id: UUID { tag.id }
-        var name: String { tag.name }
-    }
-
-    enum TagSuggestion: Identifiable, Hashable {
-        case existing(TagGroup)
-        case create(String)
-
-        var id: String {
-            switch self {
-            case let .existing(group): "tag-\(group.id.uuidString)"
-            case let .create(name): "create-\(CaptureTagParser.normalize(name))"
-            }
-        }
-
-        var name: String {
-            switch self {
-            case let .existing(group): group.name
-            case let .create(name): name
-            }
-        }
-    }
-
-    struct LedgerAttachment: Identifiable, Hashable {
-        enum Kind: String, Hashable {
-            case file
-            case image
-            case link
-            case screenshot
-        }
-
-        var id: UUID
-        var kind: Kind
-        var name: String
-        var subtitle: String?
-        var previewURL: URL?
-
-        init(
-            id: UUID = UUID(),
-            kind: Kind,
-            name: String,
-            subtitle: String? = nil,
-            previewURL: URL? = nil
-        ) {
-            self.id = id
-            self.kind = kind
-            self.name = name
-            self.subtitle = subtitle
-            self.previewURL = previewURL
-        }
-
-        var isImage: Bool {
-            kind == .image || kind == .screenshot
-        }
-    }
-
-    struct LedgerItem: Identifiable, Hashable {
-        var id: UUID
-        var kind: ItemKind
-        var text: String
-        var title: String
-        var detail: String
-        var searchableText: String
-        var createdAt: Date
-        var dueDate: Date?
-        var folderID: UUID?
-        var folderName: String?
-        var sourceApp: String?
-        var isPinned: Bool
-        var isCompleted: Bool
-        var completedAt: Date?
-        var isArchived: Bool
-        var isTrashed: Bool
-        var sortOrder: Int?
-        var tags: [TagSummary]
-        var attachments: [LedgerAttachment]
-
-        init(
-            id: UUID = UUID(),
-            kind: ItemKind = .note,
-            title: String,
-            detail: String = "",
-            text: String? = nil,
-            searchableText: String? = nil,
-            createdAt: Date = .now,
-            dueDate: Date? = nil,
-            folderID: UUID? = nil,
-            folderName: String? = nil,
-            sourceApp: String? = nil,
-            isPinned: Bool = false,
-            isCompleted: Bool = false,
-            completedAt: Date? = nil,
-            isArchived: Bool = false,
-            isTrashed: Bool = false,
-            sortOrder: Int? = nil,
-            tags: [TagSummary] = [],
-            attachments: [LedgerAttachment] = []
-        ) {
-            self.id = id
-            self.kind = kind
-            self.text = text ?? [title, detail].filter { !$0.isEmpty }.joined(separator: "\n")
-            self.title = title
-            self.detail = detail
-            self.searchableText = searchableText ?? CaptureTagParser.removingTagMentions(
-                in: [title, detail].filter { !$0.isEmpty }.joined(separator: "\n"),
-                matching: tags.map(\.name)
-            )
-            self.createdAt = createdAt
-            self.dueDate = dueDate
-            self.folderID = folderID
-            self.folderName = folderName
-            self.sourceApp = sourceApp
-            self.isPinned = isPinned
-            self.isCompleted = isCompleted
-            self.completedAt = completedAt
-            self.isArchived = isArchived
-            self.isTrashed = isTrashed
-            self.sortOrder = sortOrder
-            self.tags = tags
-            self.attachments = attachments
-        }
-
-        var imageAttachments: [LedgerAttachment] {
-            attachments.filter(\.isImage)
-        }
-
-        var hasImageAttachments: Bool {
-            !imageAttachments.isEmpty
-        }
-
-        var displaysOnlyImages: Bool {
-            text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                && tags.isEmpty
-                && hasImageAttachments
-                && imageAttachments.count == attachments.count
-        }
-
-        var displaysAttachmentPrefix: Bool {
-            !attachments.isEmpty && !hasImageAttachments
-        }
-    }
-
-    struct Confirmation: Equatable {
-        static let duration: TimeInterval = 5
-
-        var itemID: UUID?
-        var title: String
-        var destination: String
-        var expiresAt: Date
-        var pausedRemaining: TimeInterval?
-
-        init(
-            itemID: UUID? = nil,
-            title: String,
-            destination: String = "Inbox",
-            expiresAt: Date = .now.addingTimeInterval(Self.duration),
-            pausedRemaining: TimeInterval? = nil
-        ) {
-            self.itemID = itemID
-            self.title = title
-            self.destination = destination
-            self.expiresAt = expiresAt
-            self.pausedRemaining = pausedRemaining
-        }
-
-        var isPaused: Bool {
-            pausedRemaining != nil
-        }
-
-        func remaining(at date: Date) -> TimeInterval {
-            max(0, min(Self.duration, pausedRemaining ?? expiresAt.timeIntervalSince(date)))
-        }
-
-        func progress(at date: Date) -> Double {
-            remaining(at: date) / Self.duration
-        }
-    }
-
-    struct ItemEditSession: Equatable {
-        let itemID: UUID
-        let originalText: String
-        var draft: String
-    }
-
-    struct ComposerImage: Identifiable, Equatable {
-        let id: UUID
-        let data: Data
-        let typeIdentifier: String
-        let filename: String
-
-        init(
-            id: UUID = UUID(),
-            data: Data,
-            typeIdentifier: String,
-            filename: String
-        ) {
-            self.id = id
-            self.data = data
-            self.typeIdentifier = typeIdentifier
-            self.filename = filename
-        }
-    }
-
-    enum CaptureFeedback: Equatable {
-        case stayExpanded
-        case transientConfirmation
-    }
-
-    struct Shortcut: Identifiable, Hashable {
-        enum Action: String, Hashable {
-            case captureSelection
-            case openComposer
-            case captureRegion
-        }
-
-        var action: Action
-        var title: String
-        var displayValue: String
-
-        var id: Action { action }
-    }
-
-    struct ShortcutRecordingRequest: Equatable {
-        let action: Shortcut.Action
-        let title: String
-        let currentValue: String
-    }
-
-    struct Hooks {
-        var onDismiss: () -> Void = {}
-        var onCaptureText: (String, UUID?) -> Void = { _, _ in }
-        var onCaptureComposerImages: (String, [ComposerImage], UUID?) -> String? = { _, _, _ in nil }
-        var onPastedImageProviders: ([NSItemProvider], UUID) -> Void = { _, _ in }
-        var onUndoCapture: (UUID?) -> Void = { _ in }
-        var onConfirmationPauseChanged: (Bool, TimeInterval) -> Void = { _, _ in }
-        var onToggleComplete: (UUID) -> Void = { _ in }
-        var onUpdateText: (UUID, String) -> String? = { _, _ in nil }
-        var onTogglePin: (UUID) -> Void = { _ in }
-        var onReorder: ([ItemOrderAssignment]) -> Void = { _ in }
-        var onArchive: (UUID) -> Void = { _ in }
-        var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
-        var onMove: (UUID, UUID?) -> Void = { _, _ in }
-        var onCreateFolder: (String) -> Void = { _ in }
-        var onRenameFolder: (UUID, String) -> Void = { _, _ in }
-        var onDeleteFolder: (UUID) -> Void = { _ in }
-        var onCreateTag: (String) -> Void = { _ in }
-        var onRenameTag: (UUID, String) -> Void = { _, _ in }
-        var onDeleteTag: (UUID) -> Void = { _ in }
-        var onTrash: (UUID) -> Void = { _ in }
-        var onRestore: (UUID) -> Void = { _ in }
-        var onDeletePermanently: (UUID) -> Void = { _ in }
-        var onDroppedProviders: ([NSItemProvider]) -> Void = { _ in }
-        var onBeginScreenshot: () -> Void = {}
-        var onRequestAccessibility: () -> Void = {}
-        var onRequestScreenRecording: () -> Void = {}
-        var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
-        var onSetOwnership: (NotchOwnership) -> Void = { _ in }
-        var onSetTimeFormat: (TimeFormat) -> Void = { _ in }
-        var onOpenShortcutRecorder: (Shortcut.Action) -> Void = { _ in }
-        var onCommitShortcutRecording: (Shortcut.Action, ShortcutRecording) -> String? = { _, _ in nil }
-        var onCancelShortcutRecording: () -> Void = {}
-        var onImport: () -> Void = {}
-        var onExport: () -> Void = {}
-        var onQuit: () -> Void = {}
-    }
-
     @Published var surfaceState: SurfaceState
-    @Published var items: [LedgerItem]
+    @Published var items: [LedgerItem] {
+        didSet { invalidateDerivedLedger() }
+    }
     @Published var selectedItemID: UUID?
+    @Published var selectedFolderID: UUID?
     @Published private(set) var keyboardFocus: KeyboardFocus = .composer
-    @Published var browseLocation: BrowseLocation = .root
-    @Published var filter: InboxFilter = .all
-    @Published var composerText = ""
+    @Published var browseLocation: BrowseLocation = .root {
+        didSet { invalidateDerivedLedger() }
+    }
+    @Published var filter: InboxFilter = .all {
+        didSet { invalidateDerivedLedger() }
+    }
+    @Published var composerText = "" {
+        didSet { invalidateDerivedLedger() }
+    }
     @Published private(set) var composerImages: [ComposerImage] = []
     @Published var confirmation: Confirmation?
     @Published var itemEditSession: ItemEditSession?
     @Published var errorMessage: String?
-    @Published var folders: [FolderSummary]
-    @Published var tags: [TagSummary]
+    @Published var folders: [FolderSummary] {
+        didSet { invalidateDerivedLedger() }
+    }
+    @Published var tags: [TagSummary] {
+        didSet { invalidateDerivedLedger() }
+    }
     @Published var newFolderName = ""
     @Published private(set) var selectedTagSuggestionIndex = 0
     @Published private(set) var isTagAutocompleteDismissed = false
@@ -412,10 +60,32 @@ final class AppViewModel: ObservableObject {
     @Published var isNotchFlowRunning = false
     @Published var shortcuts: [Shortcut]
     @Published var shortcutRecordingRequest: ShortcutRecordingRequest?
+    /// Items whose completion is committed but still "held" in place so the
+    /// completion choreography (check pop + wash) can land before the row
+    /// reorders or leaves the filtered list. Held items keep their pre-completion
+    /// filter/sort behavior; persistence is not deferred.
+    @Published private(set) var completionHoldIDs: Set<UUID> = [] {
+        didSet { invalidateDerivedLedger() }
+    }
+    private var completionHoldTasks: [UUID: Task<Void, Never>] = [:]
 
     var hooks: Hooks
     private let now: () -> Date
     private var composerDraftID = UUID()
+
+    /// Memoized derived state. The filter/sort pipeline over all items runs
+    /// often (several times per render pass), so it is computed at most once
+    /// per mutation of the inputs instead of on every access.
+    private var cachedVisibleItems: [LedgerItem]?
+    private var cachedVisibleFolders: [FolderSummary]?
+    private var cachedVisibleTagGroups: [TagGroup]?
+    private var cachedParsedQuery: (source: String, parsed: ParsedTagText)?
+
+    private func invalidateDerivedLedger() {
+        cachedVisibleItems = nil
+        cachedVisibleFolders = nil
+        cachedVisibleTagGroups = nil
+    }
 
     init(
         surfaceState: SurfaceState = .collapsed,
@@ -453,8 +123,9 @@ final class AppViewModel: ObservableObject {
     }
 
     var visibleItems: [LedgerItem] {
+        if let cachedVisibleItems { return cachedVisibleItems }
         let query = parsedComposerQuery
-        return items
+        let visible = items
             .filter(matchesFilter)
             .filter(matchesBrowseLocation)
             .filter { item in
@@ -464,12 +135,21 @@ final class AppViewModel: ObservableObject {
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 return itemComesBefore(lhs, rhs)
             }
+        cachedVisibleItems = visible
+        return visible
     }
 
     var pinnedItems: [LedgerItem] { visibleItems.filter(\.isPinned) }
     var unpinnedItems: [LedgerItem] { visibleItems.filter { !$0.isPinned } }
 
     var visibleFolders: [FolderSummary] {
+        if let cachedVisibleFolders { return cachedVisibleFolders }
+        let visible = computeVisibleFolders()
+        cachedVisibleFolders = visible
+        return visible
+    }
+
+    private func computeVisibleFolders() -> [FolderSummary] {
         guard browseLocation == .root else { return [] }
         let query = parsedComposerQuery
         guard query.tagNames.isEmpty else { return [] }
@@ -531,6 +211,13 @@ final class AppViewModel: ObservableObject {
     }
 
     var visibleTagGroups: [TagGroup] {
+        if let cachedVisibleTagGroups { return cachedVisibleTagGroups }
+        let groups = computeVisibleTagGroups()
+        cachedVisibleTagGroups = groups
+        return groups
+    }
+
+    private func computeVisibleTagGroups() -> [TagGroup] {
         guard isAtRoot, !composerHasQuery else { return [] }
         return tags.compactMap { tag in
             let count = filteredItemCount(for: tag.id)
@@ -571,6 +258,7 @@ final class AppViewModel: ObservableObject {
 
     func dismiss() {
         itemEditSession = nil
+        flushCompletionHolds()
         clearSelection()
         resetComposerDraft()
         errorMessage = nil
@@ -578,7 +266,9 @@ final class AppViewModel: ObservableObject {
         hooks.onDismiss()
     }
 
-    func submitComposer() {
+    /// Pass `capturingAnyway` (⌘Return) to create a new item even when the
+    /// text matches existing items; plain Return selects the first match.
+    func submitComposer(capturingAnyway: Bool = false) {
         let text = normalizedComposerText
         if composerHasImages {
             errorMessage = nil
@@ -604,7 +294,10 @@ final class AppViewModel: ObservableObject {
             resetComposerDraft()
             return
         }
-        guard canAddComposerText else {
+        let capturesDespiteMatches = capturingAnyway
+            && composerHasQuery
+            && !parsedComposerQuery.isTagOnly
+        guard canAddComposerText || capturesDespiteMatches else {
             if let folder = visibleFolders.first {
                 openFolder(folder)
             } else if let item = visibleItems.first {
@@ -743,8 +436,26 @@ final class AppViewModel: ObservableObject {
         keyboardFocus = .composer
     }
 
+    /// The user-configured display value for a shortcut, for labels that must
+    /// not go stale when shortcuts are rebound in Settings.
+    func shortcutDisplayValue(for action: Shortcut.Action) -> String {
+        if let display = shortcuts.first(where: { $0.action == action })?.displayValue,
+           !display.isEmpty {
+            return display
+        }
+        switch action {
+        case .captureSelection: return "⌃⇧Space"
+        case .openComposer: return "⌃⇧N"
+        case .captureRegion: return "⌃⇧S"
+        }
+    }
+
     func beginEditing(_ item: LedgerItem) {
-        guard !item.text.isEmpty else { return }
+        // Attachment-only items are editable too: the draft starts empty and
+        // becomes the item's caption (saveEditing allows empty text when
+        // attachments exist).
+        guard !item.text.isEmpty || !item.attachments.isEmpty else { return }
+        selectedFolderID = nil
         selectedItemID = item.id
         keyboardFocus = .itemEditor
         errorMessage = nil
@@ -809,6 +520,10 @@ final class AppViewModel: ObservableObject {
                 cancelEditing()
             } else if !tagSuggestions.isEmpty {
                 dismissTagAutocomplete()
+            } else if keyboardFocus == .selectedRow,
+                      selectedItemID != nil || selectedFolderID != nil {
+                clearSelection()
+                focusComposer()
             } else if composerHasDraft {
                 clearComposerQuery()
             } else if !isAtRoot {
@@ -829,26 +544,114 @@ final class AppViewModel: ObservableObject {
             clearSelection()
             return
         }
+        selectedFolderID = nil
         selectedItemID = item.id
         keyboardFocus = .selectedRow
     }
 
+    private enum LedgerKeyboardRow: Equatable {
+        case folder(UUID)
+        case item(UUID)
+    }
+
+    /// The rows arrow keys walk, in rendered order: folders, then pinned,
+    /// then unpinned items.
+    private var keyboardNavigationRows: [LedgerKeyboardRow] {
+        visibleFolders.map { .folder($0.id) }
+            + (pinnedItems + unpinnedItems).map { .item($0.id) }
+    }
+
+    private var selectedKeyboardRow: LedgerKeyboardRow? {
+        if let selectedFolderID { return .folder(selectedFolderID) }
+        if let selectedItemID { return .item(selectedItemID) }
+        return nil
+    }
+
+    private func applyKeyboardSelection(_ row: LedgerKeyboardRow) {
+        switch row {
+        case let .folder(id):
+            selectedFolderID = id
+            selectedItemID = nil
+        case let .item(id):
+            selectedItemID = id
+            selectedFolderID = nil
+        }
+        keyboardFocus = .selectedRow
+    }
+
+    /// Arrow-key navigation over the visible rows in their rendered order.
+    /// Moving down from the composer enters the ledger at the first row;
+    /// moving up past the first row returns focus to the composer. Returns
+    /// false when there is nothing to navigate.
     @discardableResult
-    func performSelectedRowKeyboardCommand(_ command: LedgerRowKeyboardCommand) -> Bool {
+    func moveLedgerSelection(by offset: Int) -> Bool {
+        let rows = keyboardNavigationRows
+        guard !rows.isEmpty else { return false }
+
         guard keyboardFocus == .selectedRow,
-              let selectedItemID,
-              let item = visibleItems.first(where: { $0.id == selectedItemID }) else {
-            return false
+              let selectedKeyboardRow,
+              let index = rows.firstIndex(of: selectedKeyboardRow) else {
+            guard offset > 0 else { return false }
+            applyKeyboardSelection(rows[0])
+            return true
         }
 
+        let next = index + offset
+        if next < 0 {
+            clearSelection()
+            focusComposer()
+            return true
+        }
+        guard next < rows.count else { return true }
+        applyKeyboardSelection(rows[next])
+        return true
+    }
+
+    func emptyTrash() {
+        // The hook reloads the ledger synchronously, so the trash page's rows
+        // leave inside this transaction rather than vanishing.
+        withAnimation(ledgerRemovalAnimation) {
+            hooks.onEmptyTrash()
+        }
+    }
+
+    @discardableResult
+    func performSelectedRowKeyboardCommand(_ command: LedgerRowKeyboardCommand) -> Bool {
+        guard keyboardFocus == .selectedRow else { return false }
+
         switch command {
+        case .moveSelectionUp:
+            return moveLedgerSelection(by: -1)
+        case .moveSelectionDown:
+            return moveLedgerSelection(by: 1)
         case .toggleCompletion:
+            if let folder = selectedVisibleFolder {
+                openFolder(folder)
+                focusComposer()
+                return true
+            }
+            guard let item = selectedVisibleItem else { return false }
             toggleComplete(item)
+            return true
         case .moveToTrash:
+            // Deleting a folder needs its confirmation dialog; a bare delete
+            // key on a selected folder is swallowed rather than destructive.
+            if selectedVisibleFolder != nil { return true }
+            guard let item = selectedVisibleItem else { return false }
             guard !item.isTrashed else { return true }
             trash(item)
+            return true
         }
-        return true
+    }
+
+    private var selectedVisibleFolder: FolderSummary? {
+        guard let selectedFolderID else { return nil }
+        return visibleFolders.first { $0.id == selectedFolderID }
+    }
+
+    private var selectedVisibleItem: LedgerItem? {
+        guard let selectedItemID else { return nil }
+        return visibleItems.first { $0.id == selectedItemID }
     }
 
     func showCaptureFeedback(
@@ -906,13 +709,57 @@ final class AppViewModel: ObservableObject {
             ? NotchMotion.reducedMotion
             : (willComplete ? NotchMotion.completion : NotchMotion.completionReopen)
 
+        // Undo during the hold is a clean cancel: the row never moved, so its
+        // visuals just retract in place within this transaction.
+        if !willComplete { cancelCompletionHold(item.id) }
+
         withAnimation(animation) {
             mutateItem(item.id) {
                 $0.isCompleted.toggle()
                 $0.completedAt = $0.isCompleted ? .now : nil
             }
+            if willComplete { completionHoldIDs.insert(item.id) }
         }
         hooks.onToggleComplete(item.id)
+
+        if willComplete { scheduleCompletionHoldRelease(item.id) }
+    }
+
+    private func scheduleCompletionHoldRelease(_ id: UUID) {
+        completionHoldTasks[id]?.cancel()
+        completionHoldTasks[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(NotchMotion.completionHoldDuration))
+            guard !Task.isCancelled else { return }
+            self?.releaseCompletionHold(id)
+        }
+    }
+
+    /// Internal rather than private so tests can drive the release
+    /// deterministically instead of awaiting the hold timer.
+    func releaseCompletionHold(_ id: UUID) {
+        completionHoldTasks[id]?.cancel()
+        completionHoldTasks[id] = nil
+        guard completionHoldIDs.contains(id) else { return }
+        let staysVisible = items.first { $0.id == id }
+            .map { matchesFilter($0, ignoringCompletionHold: true) } ?? false
+        let animation = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? NotchMotion.reducedMotion
+            : (staysVisible ? NotchMotion.completionSettle : NotchMotion.completionExit)
+        withAnimation(animation) {
+            _ = completionHoldIDs.remove(id)
+        }
+    }
+
+    private func cancelCompletionHold(_ id: UUID) {
+        completionHoldTasks[id]?.cancel()
+        completionHoldTasks[id] = nil
+        completionHoldIDs.remove(id)
+    }
+
+    private func flushCompletionHolds() {
+        for task in completionHoldTasks.values { task.cancel() }
+        completionHoldTasks.removeAll()
+        completionHoldIDs.removeAll()
     }
 
     func togglePin(_ item: LedgerItem) {
@@ -1026,7 +873,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func archive(_ item: LedgerItem) {
-        mutateItem(item.id) { $0.isArchived = true }
+        withAnimation(ledgerRemovalAnimation) {
+            cancelCompletionHold(item.id)
+            mutateItem(item.id) { $0.isArchived = true }
+        }
         clearSelection()
         hooks.onArchive(item.id)
     }
@@ -1051,10 +901,12 @@ final class AppViewModel: ObservableObject {
             .filter { $0.folderID == folderID && $0.isPinned == item.isPinned }
             .compactMap(\.sortOrder)
             .min() ?? 0) - 1
-        mutateItem(item.id) {
-            $0.folderID = folderID
-            $0.folderName = destinationName
-            $0.sortOrder = topOrder
+        withAnimation(ledgerRemovalAnimation) {
+            mutateItem(item.id) {
+                $0.folderID = folderID
+                $0.folderName = destinationName
+                $0.sortOrder = topOrder
+            }
         }
         clearSelection()
         hooks.onMove(item.id, folderID)
@@ -1139,20 +991,36 @@ final class AppViewModel: ObservableObject {
     }
 
     func trash(_ item: LedgerItem) {
-        mutateItem(item.id) { $0.isTrashed = true }
+        withAnimation(ledgerRemovalAnimation) {
+            cancelCompletionHold(item.id)
+            mutateItem(item.id) { $0.isTrashed = true }
+        }
         clearSelection()
         hooks.onTrash(item.id)
     }
 
     func restore(_ item: LedgerItem) {
-        mutateItem(item.id) { $0.isTrashed = false }
+        withAnimation(ledgerRemovalAnimation) {
+            mutateItem(item.id) { $0.isTrashed = false }
+        }
         hooks.onRestore(item.id)
     }
 
     func deletePermanently(_ item: LedgerItem) {
-        items.removeAll { $0.id == item.id }
+        withAnimation(ledgerRemovalAnimation) {
+            cancelCompletionHold(item.id)
+            items.removeAll { $0.id == item.id }
+        }
         clearSelection()
         hooks.onDeletePermanently(item.id)
+    }
+
+    /// Removals share one motion so a row leaving for any non-completion reason
+    /// (trash, archive, move, restore) dissolves while the list closes the gap.
+    private var ledgerRemovalAnimation: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? NotchMotion.reducedMotion
+            : NotchMotion.ledgerRemoval
     }
 
     func beginDrop() {
@@ -1184,7 +1052,13 @@ final class AppViewModel: ObservableObject {
     }
 
     private var parsedComposerQuery: ParsedTagText {
-        CaptureTagParser.parse(normalizedComposerText)
+        let source = normalizedComposerText
+        if let cachedParsedQuery, cachedParsedQuery.source == source {
+            return cachedParsedQuery.parsed
+        }
+        let parsed = CaptureTagParser.parse(source)
+        cachedParsedQuery = (source, parsed)
+        return parsed
     }
 
     private func matchesQuery(_ item: LedgerItem, query: ParsedTagText) -> Bool {
@@ -1213,7 +1087,15 @@ final class AppViewModel: ObservableObject {
     }
 
     private func matchesFilter(_ item: LedgerItem) -> Bool {
-        switch filter {
+        matchesFilter(item, ignoringCompletionHold: false)
+    }
+
+    private func matchesFilter(_ item: LedgerItem, ignoringCompletionHold: Bool) -> Bool {
+        // A held item stays on completion-excluding pages until the completion
+        // choreography releases it; the release itself asks where the item
+        // truly belongs by ignoring the hold.
+        let heldOpen = !ignoringCompletionHold && completionHoldIDs.contains(item.id)
+        return switch filter {
         case .all:
             !item.isArchived && !item.isTrashed && (
                 !item.isCompleted || item.completedAt.map {
@@ -1221,9 +1103,11 @@ final class AppViewModel: ObservableObject {
                 } == true
             )
         case .tasks:
-            item.kind == .task && !item.isArchived && !item.isTrashed && !item.isCompleted
+            item.kind == .task && !item.isArchived && !item.isTrashed
+                && (!item.isCompleted || heldOpen)
         case .due:
-            item.dueDate != nil && !item.isArchived && !item.isTrashed && !item.isCompleted
+            item.dueDate != nil && !item.isArchived && !item.isTrashed
+                && (!item.isCompleted || heldOpen)
         case .completed:
             item.isCompleted && !item.isTrashed
         case .archive:
@@ -1234,7 +1118,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private func activityDate(for item: LedgerItem) -> Date {
-        item.completedAt ?? item.createdAt
+        // Freeze the sort key while the completion hold is active so the row
+        // doesn't jump position until the choreography releases it.
+        if completionHoldIDs.contains(item.id) { return item.createdAt }
+        return item.completedAt ?? item.createdAt
     }
 
     private func itemComesBefore(_ lhs: LedgerItem, _ rhs: LedgerItem) -> Bool {
@@ -1295,6 +1182,7 @@ final class AppViewModel: ObservableObject {
 
     private func clearSelection() {
         selectedItemID = nil
+        selectedFolderID = nil
         keyboardFocus = .none
     }
 

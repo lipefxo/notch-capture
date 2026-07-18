@@ -11,19 +11,40 @@ final class NotchPresentationCoordinator: ObservableObject {
     var hasModal: Bool { modal != nil }
 
     func present(_ modal: NotchModal) {
+        PanelDiagnostics.log("presentation: modal '\(modal.title)'")
         menu = nil
         self.modal = modal
     }
 
     func present(_ menu: NotchMenu) {
         guard modal == nil else { return }
+        PanelDiagnostics.log("presentation: menu '\(menu.title ?? "-")'")
         self.menu = menu
     }
 
-    func dismissMenu() { menu = nil }
-    func dismissModal() { modal = nil }
+    func dismissMenu() {
+        if menu != nil { PanelDiagnostics.log("presentation: dismiss menu") }
+        menu = nil
+    }
+
+    func dismissModal() {
+        if modal != nil { PanelDiagnostics.log("presentation: dismiss modal") }
+        modal = nil
+    }
+
     func updateModalValidation(_ message: String?) { modal?.validationMessage = message }
     func dismissAll() { menu = nil; modal = nil }
+
+    /// Dismisses everything while honoring the modal's cancel contract — a
+    /// modal torn down by a surface change (e.g. shortcut recording) must run
+    /// its cleanup exactly as if the user had pressed Cancel.
+    func cancelActivePresentation() {
+        if modal != nil || menu != nil {
+            PanelDiagnostics.log("presentation: cancel active (modal=\(modal != nil) menu=\(menu != nil))")
+        }
+        if let modal { modal.onCancel() }
+        dismissAll()
+    }
 }
 
 struct NotchMenuItem: Identifiable {
@@ -39,9 +60,24 @@ struct NotchMenuItem: Identifiable {
 }
 
 struct NotchMenu {
+    let id = UUID()
     let title: String?
-    let anchor: CGPoint
+    /// Frame of the invoking control in `NotchPresentationLayer.coordinateSpace`,
+    /// so the popover opens attached to the control instead of a fixed point.
+    let anchor: CGRect
     let items: [NotchMenuItem]
+}
+
+extension View {
+    /// Publishes the frame of a menu-presenting control in the shared
+    /// presentation coordinate space.
+    func menuAnchor(_ anchor: Binding<CGRect>) -> some View {
+        onGeometryChange(for: CGRect.self) { proxy in
+            proxy.frame(in: .named(NotchPresentationLayer.coordinateSpace))
+        } action: { frame in
+            anchor.wrappedValue = frame
+        }
+    }
 }
 
 struct NotchModal {
@@ -70,12 +106,20 @@ enum NotchPopoverPlacement {
         let horizontal = min(max(anchor.midX - menuSize.width / 2, bounds.minX + margin), bounds.maxX - margin - menuSize.width)
         let below = anchor.maxY + 6
         let above = anchor.minY - 6 - menuSize.height
-        let vertical = below + menuSize.height <= bounds.maxY - margin ? below : max(bounds.minY + margin, above)
+        var vertical = below + menuSize.height <= bounds.maxY - margin ? below : max(bounds.minY + margin, above)
+        // The surface sits flush against the screen's top edge, so anything
+        // past the top is cut off by the screen itself. Clamp both sides,
+        // resolving conflicts in favor of the top edge.
+        vertical = max(min(vertical, bounds.maxY - margin - menuSize.height), bounds.minY + margin)
         return CGRect(origin: CGPoint(x: horizontal, y: vertical), size: menuSize)
     }
 }
 
 struct NotchPresentationLayer: View {
+    /// Menu anchors are captured in this named space; the surface content
+    /// container must declare it so anchor frames and popover placement agree.
+    nonisolated static let coordinateSpace = "notch-presentation"
+
     @EnvironmentObject private var coordinator: NotchPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedModal: Bool
@@ -84,6 +128,10 @@ struct NotchPresentationLayer: View {
         ZStack {
             if coordinator.hasModal {
                 Color.black.opacity(0.50)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        coordinator.cancelActivePresentation()
+                    }
                     .accessibilityHidden(true)
             }
             if let menu = coordinator.menu {
@@ -91,6 +139,9 @@ struct NotchPresentationLayer: View {
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.dismissMenu() }
                 NotchPopoverMenu(menu: menu)
+                    // Keyed by menu identity so a drill-in (present over present)
+                    // resets highlight/focus state instead of inheriting it.
+                    .id(menu.id)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
             }
             if let modal = coordinator.modal {
@@ -115,28 +166,33 @@ struct NotchPresentationLayer: View {
 
 private struct NotchPopoverMenu: View {
     @EnvironmentObject private var coordinator: NotchPresentationCoordinator
+    @FocusState private var isFocused: Bool
+    @State private var highlightedIndex: Int?
     let menu: NotchMenu
+
+    private static let menuWidth: CGFloat = 190
 
     var body: some View {
         GeometryReader { proxy in
-            let height = min(CGFloat(menu.items.count * 31 + (menu.title == nil ? 8 : 34)), 278)
+            let bounds = proxy.frame(in: .local)
+            // The scroll area gets an explicit height: a bare maxHeight lets
+            // the greedy ScrollView inflate the card with empty space and
+            // desynchronizes the placement math from the rendered size.
+            let rowsHeight = max(30, CGFloat(menu.items.count) * 31 - 1)
+            let scrollHeight = min(min(rowsHeight, 270), max(60, bounds.height - 80))
+            let height = scrollHeight + 8
             let frame = NotchPopoverPlacement.frame(
-                anchor: CGRect(origin: menu.anchor, size: .zero),
-                menuSize: CGSize(width: 230, height: height),
-                in: proxy.frame(in: .local)
+                anchor: menu.anchor,
+                menuSize: CGSize(width: Self.menuWidth, height: height),
+                in: bounds
             )
+            // The title is deliberately not rendered: the menu opens anchored
+            // to its source row, so repeating the name is noise. It still
+            // names the menu for accessibility below.
             VStack(alignment: .leading, spacing: 2) {
-                if let title = menu.title {
-                    Text(title.uppercased())
-                        .font(.system(size: 9, weight: .bold))
-                        .tracking(0.7)
-                        .foregroundStyle(NotchTheme.tertiaryText)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                }
                 ScrollView {
                     VStack(spacing: 1) {
-                        ForEach(menu.items) { item in
+                        ForEach(Array(menu.items.enumerated()), id: \.element.id) { index, item in
                             Button {
                                 guard item.isEnabled else { return }
                                 coordinator.dismissMenu()
@@ -149,30 +205,74 @@ private struct NotchPopoverMenu: View {
                                     if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.mint) }
                                 }
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(item.role == .destructive ? Color.red.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
+                                .foregroundStyle(item.role == .destructive ? NotchTheme.destructive.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
                                 .padding(.horizontal, 10)
                                 .frame(height: 30)
+                                .background(
+                                    highlightedIndex == index ? NotchTheme.control : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                )
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .disabled(!item.isEnabled)
+                            .onHover { hovering in
+                                if hovering {
+                                    if item.isEnabled { highlightedIndex = index }
+                                } else if highlightedIndex == index {
+                                    highlightedIndex = nil
+                                }
+                            }
                             .accessibilityLabel(item.title)
                             .accessibilityAddTraits(item.isChecked ? .isSelected : [])
                         }
                     }
                 }
-                .frame(maxHeight: 270)
+                .frame(height: scrollHeight)
             }
-            .frame(width: 230)
+            .frame(width: Self.menuWidth)
             .padding(4)
             .background(NotchTheme.raisedGraphite)
             .overlay { RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(NotchTheme.controlStroke) }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .shadow(color: .black.opacity(0.45), radius: 16, y: 8)
             .position(x: frame.midX, y: frame.midY)
+            .focusable()
+            .focused($isFocused)
+            .focusEffectDisabled()
+            .onKeyPress(.upArrow) {
+                moveHighlight(by: -1)
+                return .handled
+            }
+            .onKeyPress(.downArrow) {
+                moveHighlight(by: 1)
+                return .handled
+            }
+            .onKeyPress(.return) {
+                guard let highlightedIndex,
+                      menu.items.indices.contains(highlightedIndex),
+                      menu.items[highlightedIndex].isEnabled else { return .ignored }
+                let item = menu.items[highlightedIndex]
+                coordinator.dismissMenu()
+                item.action()
+                return .handled
+            }
+            .onAppear { isFocused = true }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(menu.title ?? "Actions")
         }
+    }
+
+    private func moveHighlight(by offset: Int) {
+        let enabled = menu.items.indices.filter { menu.items[$0].isEnabled }
+        guard !enabled.isEmpty else { return }
+        guard let current = highlightedIndex,
+              let position = enabled.firstIndex(of: current) else {
+            highlightedIndex = offset > 0 ? enabled.first : enabled.last
+            return
+        }
+        let next = (position + offset + enabled.count) % enabled.count
+        highlightedIndex = enabled[next]
     }
 }
 
@@ -225,15 +325,25 @@ private struct NotchModalCard: View {
                 .frame(height: 38)
             }
             if let validation = modal.validationMessage {
-                Text(validation).font(.system(size: 9.5)).foregroundStyle(.red.opacity(0.88))
+                Text(validation).font(.system(size: 9.5)).foregroundStyle(NotchTheme.destructive.opacity(0.88))
             }
             HStack {
-                Button(modal.cancelTitle) { cancel() }.buttonStyle(CompactTextButtonStyle())
+                Button(modal.cancelTitle) { cancel() }
+                    .buttonStyle(CompactTextButtonStyle())
+                    .keyboardShortcut(.cancelAction)
                 Spacer()
+                // Shortcut-recording modals must keep Return free so it can be
+                // captured as part of the shortcut being recorded.
                 if modal.kind == .destructive {
-                    Button(modal.primaryTitle) { submit() }.buttonStyle(DestructiveButtonStyle())
-                } else {
+                    Button(modal.primaryTitle) { submit() }
+                        .buttonStyle(DestructiveButtonStyle())
+                        .keyboardShortcut(.defaultAction)
+                } else if modal.kind == .shortcut {
                     Button(modal.primaryTitle) { submit() }.buttonStyle(MintButtonStyle())
+                } else {
+                    Button(modal.primaryTitle) { submit() }
+                        .buttonStyle(MintButtonStyle())
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
@@ -310,13 +420,18 @@ struct NotchToggle: View {
 }
 
 private struct DestructiveButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(.white.opacity(0.92))
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(Color.red.opacity(configuration.isPressed ? 0.65 : 0.82))
+            .background(NotchTheme.destructive.opacity(configuration.isPressed ? 0.65 : 0.82))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
     }
 }

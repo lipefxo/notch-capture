@@ -69,14 +69,14 @@ struct SettingsView: View {
             if viewModel.ownership == .primary {
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(.orange)
+                        .foregroundStyle(NotchTheme.warning)
                     Text("Primary mode can overlap NotchFlow. Use Automatic for seamless coexistence.")
                         .font(.system(size: 10))
                         .foregroundStyle(Color.white.opacity(0.66))
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(9)
-                .background(Color.orange.opacity(0.08))
+                .background(NotchTheme.warning.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .accessibilityElement(children: .combine)
             }
@@ -143,18 +143,9 @@ struct SettingsView: View {
             if !viewModel.folders.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder })) { folder in
-                        Button {
-                            presentFolderMenu(folder)
-                        } label: {
-                            Label(folder.name, systemImage: "folder")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.7))
-                                .padding(.horizontal, 8)
-                                .frame(height: 25)
-                                .background(Color.white.opacity(0.05))
-                                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        FolderChip(folder: folder) { anchor in
+                            presentFolderMenu(folder, anchor: anchor)
                         }
-                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -198,16 +189,39 @@ struct SettingsView: View {
                     .buttonStyle(CompactTextButtonStyle())
                     .notchHitTarget(Rectangle())
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Color.red.opacity(0.78))
+                    .foregroundStyle(NotchTheme.destructive.opacity(0.78))
             }
         }
     }
 
-    private func presentFolderMenu(_ folder: AppViewModel.FolderSummary) {
-        presentation.present(NotchMenu(title: folder.name, anchor: CGPoint(x: 210, y: 235), items: [
+    private func presentFolderMenu(_ folder: AppViewModel.FolderSummary, anchor: CGRect) {
+        presentation.present(NotchMenu(title: folder.name, anchor: anchor, items: [
             NotchMenuItem(title: "Rename Folder", icon: "pencil") { presentRename(folder) },
             NotchMenuItem(title: "Delete Folder", icon: "trash", role: .destructive) { presentDelete(folder) },
         ]))
+    }
+
+    private struct FolderChip: View {
+        let folder: AppViewModel.FolderSummary
+        let onActions: (CGRect) -> Void
+
+        @State private var anchor: CGRect = .zero
+
+        var body: some View {
+            Button {
+                onActions(anchor)
+            } label: {
+                Label(folder.name, systemImage: "folder")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.7))
+                    .padding(.horizontal, 8)
+                    .frame(height: 25)
+                    .background(Color.white.opacity(0.05))
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .menuAnchor($anchor)
+        }
     }
 
     private func presentRename(_ folder: AppViewModel.FolderSummary) {

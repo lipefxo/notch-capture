@@ -78,7 +78,7 @@ struct OnboardingView: View {
                 )
 
             HStack(spacing: 8) {
-                ShortcutKeycap(value: "⌃⇧Space")
+                ShortcutKeycap(value: viewModel.shortcutDisplayValue(for: .captureSelection))
                 Text("captures the current selection")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(NotchTheme.secondaryText)

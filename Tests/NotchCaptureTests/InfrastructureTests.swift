@@ -417,25 +417,27 @@ final class PanelMorphCoordinatorTests: XCTestCase {
 
 final class SurfaceChromeMetricsTests: XCTestCase {
     func testVisibleSurfaceGeometryMatchesThePersistentShell() throws {
+        // Chrome sizes derive from PanelState.nominalSize; these literals pin
+        // the single table against accidental changes.
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .collapsed)).size,
-            CGSize(width: 178, height: 34)
+            CGSize(width: 198, height: 34)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .confirmation)).size,
-            CGSize(width: 280, height: 56)
+            CGSize(width: 300, height: 56)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .expanded)).size,
-            CGSize(width: 420, height: 560)
+            CGSize(width: 440, height: 560)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .onboarding)).size,
-            CGSize(width: 420, height: 500)
+            CGSize(width: 440, height: 500)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .settings)).size,
-            CGSize(width: 420, height: 560)
+            CGSize(width: 440, height: 560)
         )
     }
 
@@ -549,12 +551,27 @@ final class NotchMotionTokenTests: XCTestCase {
             NotchMotion.expandedLedgerDelay,
             NotchMotion.expandedComposerDelay
         )
-        XCTAssertEqual(NotchMotion.completionRevealDuration, 0.30)
+        XCTAssertEqual(NotchMotion.completionRevealDuration, 0.40)
         XCTAssertEqual(NotchMotion.completionRetractDuration, 0.16)
         XCTAssertEqual(NotchMotion.completionReopenDuration, 0.16)
-        XCTAssertEqual(NotchMotion.completionExitDuration, 0.16)
+        XCTAssertEqual(NotchMotion.completionExitDuration, 0.22)
         XCTAssertEqual(NotchMotion.completionSpring.bounce, 0)
         XCTAssertLessThanOrEqual(NotchMotion.completionExitDuration, 0.25)
+        XCTAssertEqual(NotchMotion.completionWashDelay, 0.04)
+        XCTAssertEqual(NotchMotion.completionHoldDuration, 0.60)
+    }
+
+    func testCompletionCheckPopIsPlayfulButBrief() {
+        XCTAssertEqual(NotchMotion.completionCheckPop.perceptualDuration, 0.40)
+        XCTAssertEqual(NotchMotion.completionCheckPop.bounce, 0.30)
+        XCTAssertGreaterThan(NotchMotion.completionCheckPop.bounce, 0)
+    }
+
+    func testCompletionHoldOutlastsTheWashReveal() {
+        XCTAssertLessThan(
+            NotchMotion.completionWashDelay + NotchMotion.completionRevealDuration,
+            NotchMotion.completionHoldDuration
+        )
     }
 }
 
@@ -678,6 +695,84 @@ final class LedgerCompletionRevealGeometryTests: XCTestCase {
             0
         )
     }
+
+    func testBulgeIsZeroDuringCirclePhaseAndAtRest() {
+        for progress: CGFloat in [0, 0.05, 0.13] {
+            XCTAssertEqual(
+                LedgerCompletionRevealGeometry.bulge(in: rowRect, progress: progress),
+                0,
+                "Expected no bulge during the circle phase at \(progress)"
+            )
+        }
+
+        for height: CGFloat in [56, 64, 66] {
+            let rect = CGRect(x: 0, y: 0, width: 420, height: height)
+            XCTAssertEqual(LedgerCompletionRevealGeometry.bulge(in: rect, progress: 1), 0)
+        }
+    }
+
+    func testBulgePeaksMidSweepAndStaysBounded() {
+        let circlePhaseEnd = rowRect.height / rowRect.width
+        let midSweep = (circlePhaseEnd + 1) / 2
+        let mid = LedgerCompletionRevealGeometry.bulge(in: rowRect, progress: midSweep)
+        let early = LedgerCompletionRevealGeometry.bulge(in: rowRect, progress: 0.25)
+        let late = LedgerCompletionRevealGeometry.bulge(in: rowRect, progress: 0.9)
+
+        XCTAssertGreaterThan(mid, early)
+        XCTAssertGreaterThan(mid, late)
+
+        for progress in stride(from: CGFloat.zero, through: 1, by: 0.02) {
+            XCTAssertLessThanOrEqual(
+                LedgerCompletionRevealGeometry.bulge(in: rowRect, progress: progress),
+                LedgerCompletionRevealGeometry.bulgeFactor * rowRect.height
+            )
+        }
+    }
+
+    func testFrontApexNeverLeavesTheRowAndAdvancesMonotonically() {
+        let apexes = stride(from: CGFloat.zero, through: 1, by: 0.02).map {
+            LedgerCompletionRevealGeometry.frontApexX(in: rowRect, progress: $0)
+        }
+
+        for apex in apexes {
+            XCTAssertLessThanOrEqual(apex, rowRect.maxX)
+        }
+        for pair in zip(apexes, apexes.dropFirst()) {
+            XCTAssertLessThanOrEqual(pair.0, pair.1)
+        }
+    }
+
+    func testMeniscusPathExactlyCoversTheRowWhenSettled() {
+        for height: CGFloat in [56, 64, 66] {
+            let rect = CGRect(x: 0, y: 0, width: 420, height: height)
+            let path = LedgerCompletionRevealGeometry.meniscusPath(in: rect, progress: 1)
+
+            XCTAssertEqual(path.boundingRect, rect)
+            XCTAssertTrue(path.contains(CGPoint(x: rect.maxX - 0.5, y: rect.midY)))
+        }
+    }
+
+    func testMeniscusPathMatchesCirclePhaseShape() {
+        let progress: CGFloat = 0.05
+        let frame = LedgerCompletionRevealGeometry.revealFrame(
+            in: rowRect,
+            progress: progress
+        )
+        let bounds = LedgerCompletionRevealGeometry.meniscusPath(
+            in: rowRect,
+            progress: progress
+        ).boundingRect
+
+        XCTAssertEqual(bounds.minX, frame.minX, accuracy: 0.001)
+        XCTAssertEqual(bounds.maxX, frame.maxX, accuracy: 0.001)
+        XCTAssertEqual(bounds.width, bounds.height, accuracy: 0.001)
+    }
+
+    func testMeniscusPathIsEmptyAtZeroProgress() {
+        XCTAssertTrue(
+            LedgerCompletionRevealGeometry.meniscusPath(in: rowRect, progress: 0).isEmpty
+        )
+    }
 }
 
 @MainActor
@@ -688,6 +783,57 @@ final class PanelChromeTests: XCTestCase {
         }
 
         XCTAssertFalse(controller.panel.hasShadow)
+    }
+
+    func testSystemHelperWindowsDoNotSuppressOutsideClickDismissal() {
+        let panel = NSPanel(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: true
+        )
+        // A visible non-dialog window (like the text-input TUINSWindow that
+        // appears whenever a text field is focused) must not count as an
+        // auxiliary dialog — that silently disables outside-click dismissal.
+        let helper = NSWindow(
+            contentRect: CGRect(x: 0, y: 0, width: 10, height: 10),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: true
+        )
+        helper.orderFrontRegardless()
+        defer { helper.orderOut(nil) }
+
+        XCTAssertTrue(helper.isVisible)
+        XCTAssertFalse(
+            PanelDismissalEventPolicy.countsAsAuxiliaryDialog(helper, panel: panel, modalWindow: nil)
+        )
+        // A window running as the app modal (alerts, import/export dialogs)
+        // does count.
+        XCTAssertTrue(
+            PanelDismissalEventPolicy.countsAsAuxiliaryDialog(helper, panel: panel, modalWindow: helper)
+        )
+        // The panel itself never counts.
+        XCTAssertFalse(
+            PanelDismissalEventPolicy.countsAsAuxiliaryDialog(panel, panel: panel, modalWindow: nil)
+        )
+    }
+
+    func testPresentWithoutDisplayGeometryReportsDismissalInsteadOfDesyncing() {
+        let controller = PanelController(
+            displayLocator: UnavailableDisplayLocator(),
+            automaticDismissalEnabled: false
+        ) { _ in
+            AnyView(EmptyView())
+        }
+        var reportedReason: PanelDismissalReason?
+        controller.onRequestDismiss = { reportedReason = $0 }
+
+        controller.present(.expanded, activate: false)
+
+        XCTAssertEqual(controller.state, .dormant)
+        XCTAssertFalse(controller.panel.isVisible)
+        XCTAssertEqual(reportedReason, .automatic)
     }
 
     func testPanelControllerOwnsWindowSizingInsteadOfHostedContent() throws {
@@ -703,6 +849,15 @@ final class PanelChromeTests: XCTestCase {
         XCTAssertTrue(hostingView.sizingOptions.isEmpty)
         XCTAssertEqual(controller.panel.contentMinSize, .zero)
     }
+}
+
+@MainActor
+private final class UnavailableDisplayLocator: DisplayLocating {
+    var screens: [NSScreen] { [] }
+    var pointerScreen: NSScreen? { nil }
+    func screen(withID displayID: CGDirectDisplayID) -> NSScreen? { nil }
+    func displayID(for screen: NSScreen) -> CGDirectDisplayID? { nil }
+    func geometry(for screen: NSScreen) -> NotchGeometry? { nil }
 }
 
 final class PanelWindowInteractionPolicyTests: XCTestCase {
