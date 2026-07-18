@@ -54,7 +54,8 @@ struct ConfirmationView: View {
                 .foregroundStyle(NotchTheme.mint)
                 .buttonStyle(CompactTextButtonStyle())
                 .notchHitTarget(Rectangle())
-                .keyboardShortcut("z", modifiers: .command)
+                // No keyboard shortcut: the confirmation panel never becomes
+                // key (the source app keeps focus), so one could never fire.
                 .opacity(contentIsVisible ? 1 : 0)
                 .offset(y: reduceMotion || contentIsVisible ? 0 : 2)
                 .animation(supportingAnimation, value: contentIsVisible)

@@ -104,6 +104,23 @@ struct AttachmentStore: @unchecked Sendable {
         try fileManager.removeItem(at: url)
     }
 
+    /// Best-effort removal of stored files whose names are not referenced.
+    /// Dotfiles are skipped: in-flight `storeFile` copies use hidden temp names.
+    @discardableResult
+    func removeFiles(notIn referencedRelativePaths: Set<String>) -> Int {
+        guard let contents = try? fileManager.contentsOfDirectory(atPath: rootURL.path) else {
+            return 0
+        }
+        var removed = 0
+        for name in contents where !name.hasPrefix(".") && !referencedRelativePaths.contains(name) {
+            let url = rootURL.appendingPathComponent(name)
+            if (try? fileManager.removeItem(at: url)) != nil {
+                removed += 1
+            }
+        }
+        return removed
+    }
+
     private func uniqueRelativePath(id: UUID, filename: String) -> String {
         let safeName = filename
             .replacingOccurrences(of: "/", with: "-")

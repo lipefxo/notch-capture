@@ -463,6 +463,111 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.composerText, "studio")
     }
 
+    func testCommandReturnCapturesEvenWhenItemsMatch() {
+        var captured: [String] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureText = { text, _ in captured.append(text) }
+        let matchingItem = AppViewModel.LedgerItem(title: "Book studio time")
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [matchingItem],
+            hooks: hooks
+        )
+
+        viewModel.composerText = "studio"
+        XCTAssertTrue(viewModel.composerHasMatches)
+
+        viewModel.submitComposer(capturingAnyway: true)
+
+        XCTAssertEqual(captured, ["studio"])
+        XCTAssertEqual(viewModel.composerText, "")
+    }
+
+    func testArrowKeysNavigateTheVisibleLedgerAndReturnToComposer() {
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [
+                AppViewModel.LedgerItem(title: "First"),
+                AppViewModel.LedgerItem(title: "Second"),
+            ]
+        )
+        let rows = viewModel.pinnedItems + viewModel.unpinnedItems
+        XCTAssertEqual(rows.count, 2)
+
+        XCTAssertFalse(viewModel.moveLedgerSelection(by: -1))
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: 1))
+        XCTAssertEqual(viewModel.selectedItemID, rows[0].id)
+        XCTAssertEqual(viewModel.keyboardFocus, .selectedRow)
+
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: 1))
+        XCTAssertEqual(viewModel.selectedItemID, rows[1].id)
+
+        // Past the last row the selection stays put.
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: 1))
+        XCTAssertEqual(viewModel.selectedItemID, rows[1].id)
+
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: -1))
+        XCTAssertEqual(viewModel.selectedItemID, rows[0].id)
+
+        // Above the first row focus returns to the composer.
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: -1))
+        XCTAssertNil(viewModel.selectedItemID)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
+    func testArrowKeysWalkFoldersBeforeItemsAndReturnOpensTheSelectedFolder() {
+        let folder = AppViewModel.FolderSummary(name: "Bags", sortOrder: 0)
+        let item = AppViewModel.LedgerItem(title: "Loose thought")
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [item],
+            folders: [folder]
+        )
+
+        // Folders render above items, so ↓ selects the folder first.
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: 1))
+        XCTAssertEqual(viewModel.selectedFolderID, folder.id)
+        XCTAssertNil(viewModel.selectedItemID)
+
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: 1))
+        XCTAssertEqual(viewModel.selectedItemID, item.id)
+        XCTAssertNil(viewModel.selectedFolderID)
+
+        XCTAssertTrue(viewModel.moveLedgerSelection(by: -1))
+        XCTAssertEqual(viewModel.selectedFolderID, folder.id)
+
+        // Return (toggleCompletion key command) opens the selected folder.
+        XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.toggleCompletion))
+        XCTAssertEqual(viewModel.browseLocation, .folder(folder.id))
+        XCTAssertNil(viewModel.selectedFolderID)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
+    func testDeleteKeyOnSelectedFolderIsSwallowedWithoutMutation() {
+        let folder = AppViewModel.FolderSummary(name: "Bags", sortOrder: 0)
+        var trashed: [UUID] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onTrash = { trashed.append($0) }
+        let viewModel = AppViewModel(surfaceState: .expanded, folders: [folder], hooks: hooks)
+
+        viewModel.moveLedgerSelection(by: 1)
+        XCTAssertEqual(viewModel.selectedFolderID, folder.id)
+
+        XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.moveToTrash))
+        XCTAssertTrue(trashed.isEmpty)
+        XCTAssertEqual(viewModel.selectedFolderID, folder.id)
+    }
+
+    func testPinnedItemsComeFirstInKeyboardNavigationOrder() {
+        let pinned = AppViewModel.LedgerItem(title: "Pinned", isPinned: true)
+        let plain = AppViewModel.LedgerItem(title: "Plain")
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [plain, pinned])
+
+        viewModel.moveLedgerSelection(by: 1)
+
+        XCTAssertEqual(viewModel.selectedItemID, pinned.id)
+    }
+
     func testUnifiedInputCapturesWhenNoItemMatches() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()
@@ -641,7 +746,7 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.openRoot()
         XCTAssertEqual(viewModel.browseLocation, .root)
-        XCTAssertEqual(viewModel.navigationTitle, "Inbox")
+        XCTAssertEqual(viewModel.navigationTitle, "Capture")
     }
 
     func testMoveUsesFolderIdentityAndDeleteReturnsContentsToInbox() {
@@ -1087,6 +1192,98 @@ final class AppViewModelTests: XCTestCase {
         )
     }
 
+    func testCompletingOnTasksFilterHoldsTheRowUntilReleased() {
+        var completedIDs: [UUID] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onToggleComplete = { completedIDs.append($0) }
+        let task = AppViewModel.LedgerItem(kind: .task, title: "Ship it")
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [task], hooks: hooks)
+        viewModel.filter = .tasks
+
+        viewModel.toggleComplete(task)
+
+        XCTAssertTrue(viewModel.items[0].isCompleted)
+        XCTAssertEqual(completedIDs, [task.id])
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [task.id])
+
+        viewModel.filter = .completed
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [task.id])
+        viewModel.filter = .tasks
+
+        viewModel.releaseCompletionHold(task.id)
+
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+    }
+
+    func testUncompletingDuringTheHoldCancelsItAndKeepsTheRow() {
+        let task = AppViewModel.LedgerItem(kind: .task, title: "Maybe not")
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [task])
+        viewModel.filter = .tasks
+
+        viewModel.toggleComplete(task)
+        viewModel.toggleComplete(viewModel.items[0])
+
+        XCTAssertFalse(viewModel.items[0].isCompleted)
+        XCTAssertNil(viewModel.items[0].completedAt)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [task.id])
+
+        // A stale release must not touch the reopened row.
+        viewModel.releaseCompletionHold(task.id)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [task.id])
+    }
+
+    func testCompletingOnAllKeepsSortPositionUntilTheHoldReleases() {
+        let now = Date.now
+        let older = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Older",
+            createdAt: now.addingTimeInterval(-120)
+        )
+        let newer = AppViewModel.LedgerItem(
+            title: "Newer",
+            createdAt: now.addingTimeInterval(-60)
+        )
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [older, newer])
+
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [newer.id, older.id])
+
+        viewModel.toggleComplete(older)
+
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [newer.id, older.id])
+
+        viewModel.releaseCompletionHold(older.id)
+
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [older.id, newer.id])
+    }
+
+    func testTrashingAHeldItemRemovesItImmediately() {
+        let task = AppViewModel.LedgerItem(kind: .task, title: "Complete then trash")
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [task])
+        viewModel.filter = .tasks
+
+        viewModel.toggleComplete(task)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [task.id])
+
+        viewModel.trash(viewModel.items[0])
+
+        XCTAssertTrue(viewModel.items[0].isTrashed)
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+        XCTAssertTrue(viewModel.completionHoldIDs.isEmpty)
+    }
+
+    func testDismissFlushesCompletionHolds() {
+        let task = AppViewModel.LedgerItem(kind: .task, title: "Done and gone")
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [task])
+        viewModel.filter = .tasks
+
+        viewModel.toggleComplete(task)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [task.id])
+
+        viewModel.dismiss()
+
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+    }
+
     func testOnlyAttachmentItemsDisplayAPrefixIcon() {
         let textNote = AppViewModel.LedgerItem(title: "Text note")
         let textTask = AppViewModel.LedgerItem(kind: .task, title: "Text task")
@@ -1098,11 +1295,17 @@ final class AppViewModelTests: XCTestCase {
             title: "Reference image",
             attachments: [.init(kind: .image, name: "reference.png")]
         )
+        let linkOnly = AppViewModel.LedgerItem(
+            title: "www.youtube.com",
+            text: "",
+            attachments: [.init(kind: .link, name: "www.youtube.com")]
+        )
 
         XCTAssertFalse(textNote.displaysAttachmentPrefix)
         XCTAssertFalse(textTask.displaysAttachmentPrefix)
         XCTAssertTrue(fileAttachment.displaysAttachmentPrefix)
         XCTAssertFalse(imageAttachment.displaysAttachmentPrefix)
+        XCTAssertFalse(linkOnly.displaysAttachmentPrefix)
     }
 
     func testImageAttachmentsPreserveTheirLedgerOrderAndIncludeScreenshots() {

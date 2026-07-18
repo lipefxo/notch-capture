@@ -37,16 +37,18 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         }
     }
 
+    /// Widths include the concave top-flare wings (`NotchTheme.topFlare` per side)
+    /// that merge the surface into the screen edge; the visible body is 20pt narrower.
     var nominalSize: CGSize {
         switch self {
         case .collapsed:
-            CGSize(width: 178, height: 34)
+            CGSize(width: 198, height: 34)
         case .confirmation:
-            CGSize(width: 280, height: 56)
+            CGSize(width: 300, height: 56)
         case .expanded, .dropTarget, .settings:
-            CGSize(width: 420, height: 560)
+            CGSize(width: 440, height: 560)
         case .onboarding:
-            CGSize(width: 420, height: 500)
+            CGSize(width: 440, height: 500)
         case .dormant, .screenshot:
             .zero
         }

@@ -65,6 +65,30 @@ public enum GlobalHotKeyError: LocalizedError {
     }
 }
 
+/// Holds the Carbon registrations outside actor isolation so `deinit` can tear
+/// them down synchronously from any thread. Removing the handler before the
+/// manager deallocates matters: the installed callback holds an unretained
+/// pointer to the manager.
+private final class HotKeyRegistrationLifetime: @unchecked Sendable {
+    var eventHandlerRef: EventHandlerRef?
+    var hotKeyRefs: [GlobalHotKeyAction: EventHotKeyRef] = [:]
+
+    func unregisterHotKeys() {
+        for reference in hotKeyRefs.values {
+            UnregisterEventHotKey(reference)
+        }
+        hotKeyRefs.removeAll()
+    }
+
+    func invalidate() {
+        unregisterHotKeys()
+        if let eventHandlerRef {
+            RemoveEventHandler(eventHandlerRef)
+            self.eventHandlerRef = nil
+        }
+    }
+}
+
 @MainActor
 public final class GlobalHotKeyManager {
     public typealias ActionHandler = @MainActor (GlobalHotKeyAction) -> Void
@@ -87,8 +111,7 @@ public final class GlobalHotKeyManager {
     public var onAction: ActionHandler?
     public private(set) var definitions: [GlobalHotKeyAction: GlobalHotKeyDefinition] = [:]
 
-    private var eventHandlerRef: EventHandlerRef?
-    private var hotKeyRefs: [GlobalHotKeyAction: EventHotKeyRef] = [:]
+    private let registrations = HotKeyRegistrationLifetime()
 
     public init(onAction: ActionHandler? = nil) throws {
         self.onAction = onAction
@@ -96,14 +119,7 @@ public final class GlobalHotKeyManager {
     }
 
     deinit {
-        MainActor.assumeIsolated {
-            for reference in hotKeyRefs.values {
-                UnregisterEventHotKey(reference)
-            }
-            if let eventHandlerRef {
-                RemoveEventHandler(eventHandlerRef)
-            }
-        }
+        registrations.invalidate()
     }
 
     public func registerDefaults() throws {
@@ -134,10 +150,7 @@ public final class GlobalHotKeyManager {
     }
 
     public func unregisterAll() {
-        for reference in hotKeyRefs.values {
-            UnregisterEventHotKey(reference)
-        }
-        hotKeyRefs.removeAll()
+        registrations.unregisterHotKeys()
         definitions.removeAll()
     }
 
@@ -153,7 +166,7 @@ public final class GlobalHotKeyManager {
             1,
             &eventType,
             context,
-            &eventHandlerRef
+            &registrations.eventHandlerRef
         )
         guard status == noErr else {
             throw GlobalHotKeyError.eventHandlerInstallationFailed(status)
@@ -177,7 +190,7 @@ public final class GlobalHotKeyManager {
         guard status == noErr, let hotKeyRef else {
             throw GlobalHotKeyError.registrationFailed(action: action, status: status)
         }
-        hotKeyRefs[action] = hotKeyRef
+        registrations.hotKeyRefs[action] = hotKeyRef
     }
 
     fileprivate func receive(action: GlobalHotKeyAction) {

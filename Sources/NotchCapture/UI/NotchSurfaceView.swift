@@ -7,60 +7,72 @@ struct SurfaceChromeMetrics: Equatable {
     let shadowRadius: CGFloat
     let shadowY: CGFloat
 
+    /// Sizes come from `PanelState.nominalSize` — the AppKit window and the
+    /// SwiftUI chrome must never disagree about surface dimensions.
     static func resolve(for state: AppViewModel.SurfaceState) -> Self? {
         switch state {
         case .dormant, .screenshot:
             nil
         case .collapsed:
             Self(
-                size: CGSize(width: 178, height: 34),
+                size: state.panelState.nominalSize,
                 bottomRadius: 16,
-                shadowOpacity: 0.36,
-                shadowRadius: 16,
-                shadowY: 8
+                shadowOpacity: 0,
+                shadowRadius: 0,
+                shadowY: 0
             )
-        case .confirmation:
+        case .confirmation, .expanded, .drop, .onboarding, .settings:
             Self(
-                size: CGSize(width: 280, height: 56),
-                bottomRadius: 24,
-                shadowOpacity: 0.46,
-                shadowRadius: 24,
-                shadowY: 14
-            )
-        case .expanded, .drop:
-            Self(
-                size: CGSize(width: NotchTheme.width, height: NotchTheme.maxHeight),
-                bottomRadius: 22,
-                shadowOpacity: 0.46,
-                shadowRadius: 24,
-                shadowY: 14
-            )
-        case .onboarding:
-            Self(
-                size: CGSize(width: NotchTheme.width, height: 500),
-                bottomRadius: 24,
-                shadowOpacity: 0.46,
-                shadowRadius: 24,
-                shadowY: 14
-            )
-        case .settings:
-            Self(
-                size: CGSize(width: NotchTheme.width, height: NotchTheme.maxHeight),
-                bottomRadius: 24,
+                size: state.panelState.nominalSize,
+                bottomRadius: NotchTheme.surfaceBottomRadius,
                 shadowOpacity: 0.46,
                 shadowRadius: 24,
                 shadowY: 14
             )
         }
     }
+
+    func replacing(size: CGSize) -> Self {
+        Self(
+            size: size,
+            bottomRadius: bottomRadius,
+            shadowOpacity: shadowOpacity,
+            shadowRadius: shadowRadius,
+            shadowY: shadowY
+        )
+    }
+
+    func anchored(at size: CGSize) -> Self {
+        Self(
+            size: size,
+            bottomRadius: min(bottomRadius, max(1, size.height / 2)),
+            shadowOpacity: 0,
+            shadowRadius: 8,
+            shadowY: 0
+        )
+    }
 }
 
 struct NotchSurfaceView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @EnvironmentObject private var morphCoordinator: PanelMorphCoordinator
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @State private var displayedState: AppViewModel.SurfaceState?
     @State private var chromeMetrics: SurfaceChromeMetrics?
     @State private var activeTransition: AnyTransition = .opacity
+    @State private var surfaceOpacity = 1.0
+    @State private var contentOpacity = 1.0
+    @State private var contentOffsetY: CGFloat = 0
+    @State private var contentScale = 1.0
+    @State private var morphTask: Task<Void, Never>?
+    // The hosting view's very first commit reliably fails to paint the final
+    // glyph run of the scene (the collapsed pill's trailing shortcut hint
+    // renders blank) even though layout is correct; only recreating the content
+    // subtree repaints it. Bumped once shortly after launch, the id change
+    // rebuilds the content with fresh layers. See PanelController's present
+    // pipeline for the launch ordering.
+    @State private var initialCommitRepaint = 0
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
@@ -83,44 +95,41 @@ struct NotchSurfaceView: View {
                         shadowY: metrics.shadowY
                     )
 
-                    surfaceContent(for: displayedState)
-                        .id(contentIdentity(for: displayedState))
-                        .transition(activeTransition)
-                        .clipShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
+                    ZStack {
+                        surfaceContent(for: displayedState)
+                            .id("\(contentIdentity(for: displayedState))#\(initialCommitRepaint)")
+                            .transition(activeTransition)
+                            .disabled(presentation.hasModal)
+                            .accessibilityHidden(presentation.hasModal)
+
+                        NotchPresentationLayer()
+                    }
+                    .coordinateSpace(name: NotchPresentationLayer.coordinateSpace)
+                    .environmentObject(presentation)
+                    // Content lays out in the visible body; the surface frame is
+                    // wider by one top-flare wing per side.
+                    .padding(.horizontal, NotchTheme.topFlare)
+                    .clipShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
+                    .opacity(contentOpacity)
+                    .offset(y: contentOffsetY)
+                    .scaleEffect(contentScale, anchor: .top)
                 }
                 .frame(width: metrics.size.width, height: metrics.size.height, alignment: .top)
                 .contentShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
+                .opacity(surfaceOpacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
         .onChange(of: viewModel.surfaceState) { oldState, newState in
-            // AppKit owns the retreat to hidden states. Keeping the last visible
-            // surface mounted prevents the shrinking panel from becoming empty.
-            guard let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else { return }
-
-            if isDropOnlyTransition(from: oldState, to: newState) {
-                displayedState = newState
-                chromeMetrics = newMetrics
-                return
-            }
-
-            if displayedState == newState {
-                chromeMetrics = newMetrics
-                return
-            }
-
-            let visibleOldState = displayedState ?? oldState
-            activeTransition = transition(from: visibleOldState, to: newState)
-            withAnimation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content) {
-                displayedState = newState
-            }
-            withAnimation(reduceMotion ? NotchMotion.reducedMotion : chromeAnimation(
-                from: visibleOldState,
-                to: newState
-            )) {
-                chromeMetrics = newMetrics
-            }
+            handleSurfaceStateChange(from: oldState, to: newState)
+        }
+        .onChange(of: morphCoordinator.request) { _, request in
+            guard let request else { return }
+            handleMorphRequest(request)
+        }
+        .onDisappear {
+            morphTask?.cancel()
         }
         .preferredColorScheme(.dark)
     }
@@ -149,6 +158,236 @@ struct NotchSurfaceView: View {
     ) -> Bool {
         (oldState == .expanded && newState == .drop)
             || (oldState == .drop && newState == .expanded)
+    }
+
+    private func handleSurfaceStateChange(
+        from oldState: AppViewModel.SurfaceState,
+        to newState: AppViewModel.SurfaceState
+    ) {
+        // Presentation teardown on state changes is owned by AppCoordinator's
+        // state sink, which runs even when this view's updates are deferred.
+
+        guard let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else {
+            // The morph coordinator keeps the last visible shell mounted while
+            // AppKit completes the retreat into the notch.
+            return
+        }
+        if isDropOnlyTransition(from: oldState, to: newState) {
+            morphTask?.cancel()
+            displayedState = newState
+            chromeMetrics = newMetrics
+            surfaceOpacity = 1
+            contentOpacity = 1
+            contentOffsetY = 0
+            contentScale = 1
+            return
+        }
+
+        guard let oldMetrics = SurfaceChromeMetrics.resolve(for: oldState),
+              oldMetrics.size == newMetrics.size else {
+            // Size-changing transitions are staged by PanelMorphCoordinator.
+            return
+        }
+        if displayedState == newState {
+            chromeMetrics = newMetrics
+            return
+        }
+
+        morphTask?.cancel()
+        let visibleOldState = displayedState ?? oldState
+        activeTransition = transition(from: visibleOldState, to: newState)
+        withAnimation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content) {
+            displayedState = newState
+            chromeMetrics = newMetrics
+            surfaceOpacity = 1
+            contentOpacity = 1
+            contentOffsetY = 0
+            contentScale = 1
+        }
+    }
+
+    private func handleMorphRequest(_ request: PanelMorphRequest) {
+        switch request.phase {
+        case .prepared:
+            prepareMorph(request)
+        case .active:
+            beginMorph(request)
+        case .settled:
+            // Repainting mid-morph re-drops the glyphs, so the rebuild waits
+            // for the first settled transition. Scoped to the collapsed pill:
+            // it is the only surface that idles unattended long enough for the
+            // blank text to be seen, and recreating a keyboard surface here
+            // would risk resetting its focus.
+            if initialCommitRepaint == 0, viewModel.surfaceState == .collapsed {
+                withoutAnimation { initialCommitRepaint = 1 }
+            }
+        }
+    }
+
+    private func prepareMorph(_ request: PanelMorphRequest) {
+        morphTask?.cancel()
+        guard request.targetState.isVisible,
+              let targetMetrics = targetMetrics(for: request) else { return }
+        withoutAnimation {
+            activeTransition = .opacity
+            displayedState = viewModel.surfaceState
+            chromeMetrics = targetMetrics.anchored(at: request.geometry.sourceSize)
+            surfaceOpacity = 1
+            contentOpacity = 0
+            contentOffsetY = -NotchMotion.surfaceContentOffset
+            contentScale = 0.97
+        }
+    }
+
+    private func beginMorph(_ request: PanelMorphRequest) {
+        morphTask?.cancel()
+        if request.reduceMotion {
+            beginReducedMotionTransition(request)
+            return
+        }
+
+        switch request.kind {
+        case .expand:
+            beginExpansion(request)
+        case .contract, .hide:
+            beginContraction(request)
+        case .reducedFade, .immediate:
+            break
+        }
+    }
+
+    private func beginExpansion(_ request: PanelMorphRequest) {
+        guard request.targetState.isVisible,
+              let targetMetrics = targetMetrics(for: request) else { return }
+
+        let hasVisibleSource = request.wasVisible && displayedState != nil
+        withoutAnimation {
+            activeTransition = liquidContentTransition
+            if chromeMetrics == nil {
+                chromeMetrics = targetMetrics.anchored(at: request.geometry.sourceSize)
+            }
+            surfaceOpacity = 1
+            if !hasVisibleSource {
+                displayedState = viewModel.surfaceState
+                contentOpacity = 0
+                contentOffsetY = -NotchMotion.surfaceContentOffset
+                contentScale = 0.97
+            }
+        }
+        withAnimation(request.spring?.animation ?? NotchMotion.content) {
+            chromeMetrics = targetMetrics
+        }
+
+        if hasVisibleSource {
+            withAnimation(NotchMotion.surfaceContentReveal) {
+                displayedState = viewModel.surfaceState
+                contentOpacity = 1
+                contentOffsetY = 0
+                contentScale = 1
+            }
+            return
+        }
+
+        morphTask = Task { @MainActor in
+            if request.contentDelay > 0 {
+                try? await Task.sleep(for: .seconds(request.contentDelay))
+            }
+            guard !Task.isCancelled, morphCoordinator.request?.generation == request.generation else { return }
+            withAnimation(NotchMotion.surfaceContentReveal) {
+                contentOpacity = 1
+                contentOffsetY = 0
+                contentScale = 1
+            }
+        }
+    }
+
+    private func beginContraction(_ request: PanelMorphRequest) {
+        surfaceOpacity = 1
+        activeTransition = liquidContentTransition
+
+        let destinationMetrics: SurfaceChromeMetrics?
+        if request.targetState.isVisible {
+            destinationMetrics = targetMetrics(for: request)
+        } else {
+            destinationMetrics = chromeMetrics?.anchored(at: request.geometry.targetSize)
+        }
+        if let destinationMetrics {
+            withAnimation(request.spring?.animation ?? NotchMotion.content) {
+                chromeMetrics = destinationMetrics
+            }
+        }
+
+        if request.targetState.isVisible {
+            withAnimation(NotchMotion.surfaceContentReveal) {
+                displayedState = viewModel.surfaceState
+                contentOpacity = 1
+                contentOffsetY = 0
+                contentScale = 1
+            }
+        } else {
+            withAnimation(NotchMotion.easeOut(duration: 0.20)) {
+                contentOpacity = 0
+                contentOffsetY = -NotchMotion.surfaceContentOffset
+                contentScale = 0.97
+            }
+        }
+    }
+
+    private func beginReducedMotionTransition(_ request: PanelMorphRequest) {
+        if !request.targetState.isVisible {
+            return
+        }
+        guard let targetMetrics = targetMetrics(for: request) else { return }
+        if !request.wasVisible {
+            withoutAnimation {
+                displayedState = viewModel.surfaceState
+                chromeMetrics = targetMetrics
+                surfaceOpacity = 1
+                contentOpacity = 1
+                contentOffsetY = 0
+                contentScale = 1
+            }
+            return
+        }
+
+        let halfDuration = NotchMotion.reducedMotionDuration / 2
+        morphTask = Task { @MainActor in
+            withAnimation(NotchMotion.easeOut(duration: halfDuration)) {
+                surfaceOpacity = 0
+            }
+            try? await Task.sleep(for: .seconds(halfDuration))
+            guard !Task.isCancelled, morphCoordinator.request?.generation == request.generation else { return }
+            withoutAnimation {
+                activeTransition = .opacity
+                displayedState = viewModel.surfaceState
+                chromeMetrics = targetMetrics
+                surfaceOpacity = 0
+                contentOpacity = 1
+                contentOffsetY = 0
+                contentScale = 1
+            }
+            withAnimation(NotchMotion.easeOut(duration: halfDuration)) {
+                surfaceOpacity = 1
+            }
+        }
+    }
+
+    private func targetMetrics(for request: PanelMorphRequest) -> SurfaceChromeMetrics? {
+        SurfaceChromeMetrics.resolve(for: viewModel.surfaceState)?
+            .replacing(size: request.geometry.targetSize)
+    }
+
+    private var liquidContentTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)),
+            removal: .opacity
+        )
+    }
+
+    private func withoutAnimation(_ updates: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, updates)
     }
 
     private func contentIdentity(for state: AppViewModel.SurfaceState) -> String {
@@ -191,20 +430,6 @@ struct NotchSurfaceView: View {
         return .opacity.combined(with: .offset(y: -4))
     }
 
-    private func chromeAnimation(
-        from oldState: AppViewModel.SurfaceState,
-        to newState: AppViewModel.SurfaceState
-    ) -> Animation {
-        guard let oldMetrics = SurfaceChromeMetrics.resolve(for: oldState),
-              let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else {
-            return NotchMotion.content
-        }
-        let oldArea = oldMetrics.size.width * oldMetrics.size.height
-        let newArea = newMetrics.size.width * newMetrics.size.height
-        if newArea > oldArea { return NotchMotion.surfaceExpansion.animation }
-        if newArea < oldArea { return NotchMotion.surfaceContraction.animation }
-        return NotchMotion.content
-    }
 }
 
 struct CollapsedPillView: View {
@@ -222,7 +447,7 @@ struct CollapsedPillView: View {
                 Text("Capture")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.82))
-                Text("⌃⇧N")
+                Text(viewModel.shortcutDisplayValue(for: .openComposer))
                     .font(.system(size: 9, weight: .medium, design: .rounded))
                     .foregroundStyle(NotchTheme.tertiaryText)
             }
@@ -234,10 +459,10 @@ struct CollapsedPillView: View {
                     .scaleEffect(x: isHovered ? 1 : 22 / 38)
                     .padding(.bottom, 3)
             }
-            .contentShape(NotchHugShape(bottomRadius: 16))
+            .contentShape(Rectangle())
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.94))
-        .notchHitTarget(NotchHugShape(bottomRadius: 16))
+        .notchHitTarget(Rectangle())
         .onHover { isHovered = $0 }
         .animation(NotchMotion.hover, value: isHovered)
         .help("Open Notch Capture")
@@ -277,6 +502,7 @@ struct ScreenshotStateView: View {
 #if DEBUG
 #Preview("Expanded") {
     NotchSurfaceView(viewModel: .preview)
+        .environmentObject(PanelMorphCoordinator())
         .padding(40)
         .background(Color.gray.opacity(0.35))
 }
@@ -285,6 +511,7 @@ struct ScreenshotStateView: View {
     let model = AppViewModel.preview
     model.surfaceState = .collapsed
     return NotchSurfaceView(viewModel: model)
+        .environmentObject(PanelMorphCoordinator())
         .padding(40)
 }
 #endif

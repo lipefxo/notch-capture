@@ -240,6 +240,53 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertThrowsError(try store.resolve(relativePath: "../outside"))
     }
 
+    func testOrphanedAttachmentFilesAreSweptWhileReferencedAndHiddenFilesSurvive() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = try AttachmentStore(rootURL: temporary)
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext, attachmentStore: store)
+
+        let item = try repository.createItem(
+            from: .image(Data("pixels".utf8), typeIdentifier: UTType.png.identifier),
+            origin: .screenshot
+        )
+        let referencedPath = try XCTUnwrap(item.attachments.first?.relativePath)
+        let orphan = temporary.appendingPathComponent("orphan.png")
+        try Data("stale".utf8).write(to: orphan)
+        let hidden = temporary.appendingPathComponent(".inflight.tmp")
+        try Data("copying".utf8).write(to: hidden)
+
+        let removed = try repository.removeOrphanedAttachmentFiles()
+
+        XCTAssertEqual(removed, 1)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: orphan.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: hidden.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try store.resolve(relativePath: referencedPath).path))
+    }
+
+    func testDeletePermanentlyRemovesAttachmentFilesFromDisk() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = try AttachmentStore(rootURL: temporary)
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext, attachmentStore: store)
+
+        let item = try repository.createItem(
+            from: .image(Data("pixels".utf8), typeIdentifier: UTType.png.identifier),
+            origin: .screenshot
+        )
+        let path = try XCTUnwrap(item.attachments.first?.relativePath)
+        let fileURL = try store.resolve(relativePath: path)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+
+        try repository.deletePermanently(item)
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+        XCTAssertTrue(try repository.fetch(scope: .trash).isEmpty)
+        XCTAssertTrue(try repository.fetch(scope: .inbox).isEmpty)
+    }
+
     func testPayloadMaterializationStoresImageAndURLAttachments() throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temporary) }

@@ -3,6 +3,8 @@ import AppKit
 enum LedgerRowKeyboardCommand: Equatable {
     case toggleCompletion
     case moveToTrash
+    case moveSelectionUp
+    case moveSelectionDown
 }
 
 /// A panel that can switch between passive, non-key presentation and an active
@@ -59,6 +61,10 @@ public final class NotchPanel: NSPanel {
             return .toggleCompletion
         case 51, 117:
             return .moveToTrash
+        case 126:
+            return .moveSelectionUp
+        case 125:
+            return .moveSelectionDown
         default:
             return nil
         }

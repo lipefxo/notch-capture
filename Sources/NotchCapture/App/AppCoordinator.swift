@@ -7,7 +7,7 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppCoordinator {
-    private enum DefaultsKey {
+    enum DefaultsKey {
         static let onboardingComplete = "onboardingComplete"
         static let ownership = "notchOwnership"
         static let autoHideExternalPill = "autoHideExternalPill"
@@ -18,39 +18,42 @@ final class AppCoordinator {
         }
     }
 
-    private let modelContainer: ModelContainer
-    private let repository: ItemRepository
-    private let attachmentStore: AttachmentStore
-    private let packageService: CapturePackageService
-    private let selectionService: SelectionCaptureService
-    private let screenCaptureService: ScreenCaptureService
-    private let screenshotSelection = ScreenshotSelectionCoordinator()
+    let modelContainer: ModelContainer
+    let repository: ItemRepository
+    let attachmentStore: AttachmentStore
+    let packageService: CapturePackageService
+    let selectionService: SelectionCaptureService
+    let screenCaptureService: ScreenCaptureService
+    let screenshotSelection = ScreenshotSelectionCoordinator()
     private let loginItemService: LoginItemService
     private let displayLocator: DisplayLocator
-    private let occupancyService: SurfaceOccupancyService
-    private let defaults: UserDefaults
-    private let previewMode: Bool
+    let occupancyService: SurfaceOccupancyService
+    let defaults: UserDefaults
+    let previewMode: Bool
 
     let viewModel: AppViewModel
-    private let panelController: PanelController
-    private var hotKeyManager: GlobalHotKeyManager?
+    let panelController: PanelController
+    var hotKeyManager: GlobalHotKeyManager?
     private var cancellables: Set<AnyCancellable> = []
     private var previousSurfaceState: AppViewModel.SurfaceState
-    private var permissionReturnState: AppViewModel.SurfaceState?
-    private var permissionLocalEventMonitor: Any?
-    private var permissionGlobalEventMonitor: Any?
-    private var permissionActivationObserver: NSObjectProtocol?
-    private var permissionRestoreTask: Task<Void, Never>?
-    private var composerPasteTask: Task<Void, Never>?
+    var permissionReturnState: AppViewModel.SurfaceState?
+    var permissionLocalEventMonitor: Any?
+    var permissionGlobalEventMonitor: Any?
+    var permissionActivationObserver: NSObjectProtocol?
+    var permissionRestoreTask: Task<Void, Never>?
+    var composerPasteTask: Task<Void, Never>?
+    var pendingShortcutDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition]?
+    var displayEnvironmentObservers: [NSObjectProtocol] = []
 
     init(defaults: UserDefaults = .standard) throws {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
 
         let schema = Schema([CaptureItem.self, CaptureTag.self, ItemList.self, Attachment.self])
-        let configuration: ModelConfiguration
+        var storeRecoveryBackupURL: URL?
         if previewMode {
-            configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
         } else {
             let support = try FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -60,13 +63,17 @@ final class AppCoordinator {
             )
             let directory = support.appendingPathComponent("NotchCapture", isDirectory: true)
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            configuration = ModelConfiguration(
-                "NotchCapture",
-                schema: schema,
-                url: directory.appendingPathComponent("NotchCapture.store")
-            )
+            let storeURL = directory.appendingPathComponent("NotchCapture.store")
+            let configuration = ModelConfiguration("NotchCapture", schema: schema, url: storeURL)
+            do {
+                self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+            } catch {
+                // An unreadable store (corruption, incompatible schema) must not
+                // brick the app: keep the bad store as a backup and start fresh.
+                storeRecoveryBackupURL = try Self.moveStoreAside(storeURL: storeURL)
+                self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+            }
         }
-        self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
         self.attachmentStore = try AttachmentStore()
         self.repository = ItemRepository(
             modelContext: modelContainer.mainContext,
@@ -120,6 +127,9 @@ final class AppCoordinator {
             )
         }
         self.previousSurfaceState = initialState
+        if let storeRecoveryBackupURL {
+            self.viewModel.errorMessage = "Your capture library couldn't be read, so a new one was started. The previous library was saved to \(storeRecoveryBackupURL.path)."
+        }
 
         let viewModel = self.viewModel
         self.panelController = PanelController(
@@ -142,6 +152,205 @@ final class AppCoordinator {
             configureOccupancy()
         }
     }
+
+    private static func moveStoreAside(storeURL: URL) throws -> URL {
+        let fileManager = FileManager.default
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backupDirectory = storeURL.deletingLastPathComponent()
+            .appendingPathComponent("Unreadable Store \(stamp)", isDirectory: true)
+        try fileManager.createDirectory(at: backupDirectory, withIntermediateDirectories: true)
+        for suffix in ["", "-wal", "-shm"] {
+            let source = URL(fileURLWithPath: storeURL.path + suffix)
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            try fileManager.moveItem(
+                at: source,
+                to: backupDirectory.appendingPathComponent(source.lastPathComponent)
+            )
+        }
+        return backupDirectory
+    }
+
+#if DEBUG
+    /// Replays the "modal, then click away" flows in-process and reports the
+    /// focus/interaction state after each step. Run with `--modal-probe`.
+    private func runModalProbe() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let presentation = self.panelController.presentationCoordinator
+            let panel = self.panelController.panel
+
+            func log(_ message: String) {
+                FileHandle.standardError.write(Data("modal-probe: \(message)\n".utf8))
+            }
+            @MainActor func report(_ label: String) {
+                let responder = panel.firstResponder.map { String(describing: Swift.type(of: $0)) } ?? "nil"
+                log("\(label): surface=\(self.viewModel.surfaceState) hasModal=\(presentation.hasModal) hasMenu=\(presentation.menu != nil) key=\(panel.isKeyWindow) visible=\(panel.isVisible) ignoresMouse=\(panel.ignoresMouseEvents) alpha=\(panel.alphaValue) active=\(NSApp.isActive) frame=\(panel.frame.size) responder=\(responder)")
+            }
+            @MainActor func type(_ character: String, keyCode: UInt16) {
+                for eventType in [NSEvent.EventType.keyDown, .keyUp] {
+                    guard let event = NSEvent.keyEvent(
+                        with: eventType,
+                        location: .zero,
+                        modifierFlags: [],
+                        timestamp: ProcessInfo.processInfo.systemUptime,
+                        windowNumber: panel.windowNumber,
+                        context: nil,
+                        characters: character,
+                        charactersIgnoringModifiers: character,
+                        isARepeat: false,
+                        keyCode: keyCode
+                    ) else { continue }
+                    panel.sendEvent(event)
+                }
+            }
+            @MainActor func probeModal() -> NotchModal {
+                NotchModal(
+                    kind: .standard,
+                    title: "Probe",
+                    message: nil,
+                    textFieldLabel: "Name",
+                    draft: "probe",
+                    primaryTitle: "OK",
+                    cancelTitle: "Cancel",
+                    onSubmit: { _ in nil },
+                    onCancel: {}
+                )
+            }
+
+            try? await Task.sleep(for: .seconds(1.5))
+            self.viewModel.openExpanded()
+            try? await Task.sleep(for: .seconds(1.5))
+            report("baseline expanded")
+            type("a", keyCode: 0)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("baseline typed composerText='\(self.viewModel.composerText)' (expect 'a')")
+            self.viewModel.composerText = ""
+
+            presentation.present(probeModal())
+            try? await Task.sleep(for: .seconds(0.8))
+            report("modal open")
+            presentation.cancelActivePresentation() // scrim-click path
+            try? await Task.sleep(for: .seconds(0.8))
+            report("after in-place cancel")
+            type("b", keyCode: 11)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("in-place cancel composerText='\(self.viewModel.composerText)' (expect 'b')")
+            self.viewModel.composerText = ""
+
+            presentation.present(probeModal())
+            try? await Task.sleep(for: .seconds(0.8))
+            self.viewModel.handleDismissalRequest(.externalClick) // outside-app click path
+            try? await Task.sleep(for: .seconds(1.2))
+            report("after external dismiss")
+            self.viewModel.openExpanded()
+            try? await Task.sleep(for: .seconds(1.5))
+            report("after reopen")
+            type("c", keyCode: 8)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("reopen composerText='\(self.viewModel.composerText)' (expect 'c')")
+
+            // The user-reported flow: an item-actions MENU open, then a click
+            // outside the panel. Poll afterwards so transient contract states
+            // can be told apart from a stuck one.
+            self.viewModel.composerText = ""
+            presentation.present(NotchMenu(
+                title: "Probe menu",
+                anchor: CGRect(x: 330, y: 290, width: 28, height: 28),
+                items: [NotchMenuItem(title: "Item", icon: nil, action: {})]
+            ))
+            try? await Task.sleep(for: .seconds(0.6))
+            report("menu open")
+            self.viewModel.handleDismissalRequest(.externalClick)
+            for step in 1...8 {
+                try? await Task.sleep(for: .seconds(0.4))
+                report("menu dismiss poll \(step)")
+            }
+            self.viewModel.openExpanded()
+            try? await Task.sleep(for: .seconds(1.5))
+            report("after menu reopen")
+            type("d", keyCode: 2)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("menu reopen composerText='\(self.viewModel.composerText)' (expect 'd')")
+
+            // Destructive confirm (Delete Tag shape: no text field), both
+            // teardown paths.
+            self.viewModel.composerText = ""
+            func destructiveModal() -> NotchModal {
+                NotchModal(
+                    kind: .destructive,
+                    title: "Delete @probe?",
+                    message: "The tag will be removed.",
+                    textFieldLabel: nil,
+                    draft: "",
+                    primaryTitle: "Delete Tag",
+                    cancelTitle: "Cancel",
+                    onSubmit: { _ in nil },
+                    onCancel: {}
+                )
+            }
+            presentation.present(destructiveModal())
+            try? await Task.sleep(for: .seconds(0.8))
+            report("destructive modal open")
+            presentation.cancelActivePresentation() // scrim click
+            try? await Task.sleep(for: .seconds(0.8))
+            type("e", keyCode: 14)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("destructive scrim-cancel composerText='\(self.viewModel.composerText)' (expect 'e')")
+            self.viewModel.composerText = ""
+
+            presentation.present(destructiveModal())
+            try? await Task.sleep(for: .seconds(0.8))
+            self.viewModel.handleDismissalRequest(.externalClick)
+            for step in 1...5 {
+                try? await Task.sleep(for: .seconds(0.4))
+                report("destructive dismiss poll \(step)")
+            }
+            self.viewModel.openExpanded()
+            try? await Task.sleep(for: .seconds(1.5))
+            report("after destructive reopen")
+            type("f", keyCode: 3)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("destructive reopen composerText='\(self.viewModel.composerText)' (expect 'f')")
+
+            // Menu → modal handoff (the real Delete Tag path: the focused
+            // menu is replaced by a destructive modal), then outside click.
+            self.viewModel.composerText = ""
+            presentation.present(NotchMenu(
+                title: "@probe",
+                anchor: CGRect(x: 120, y: 150, width: 24, height: 24),
+                items: [NotchMenuItem(title: "Delete Tag", icon: "trash", role: .destructive, action: {})]
+            ))
+            try? await Task.sleep(for: .seconds(0.6))
+            presentation.dismissMenu()
+            presentation.present(destructiveModal())
+            try? await Task.sleep(for: .seconds(0.8))
+            report("handoff modal open")
+            self.viewModel.handleDismissalRequest(.externalClick)
+            try? await Task.sleep(for: .seconds(1.4))
+            report("handoff after dismiss")
+            self.viewModel.openExpanded()
+            try? await Task.sleep(for: .seconds(1.5))
+            report("handoff after reopen")
+            type("g", keyCode: 5)
+            try? await Task.sleep(for: .seconds(0.4))
+            log("handoff reopen composerText='\(self.viewModel.composerText)' (expect 'g')")
+
+            // Occupancy flip-flop: hide to dormant, then re-present while the
+            // hide fade is still in flight. A stale alpha animator can leave
+            // an invisible, hit-testable panel behind (the "click eater").
+            for delay in [0.10, 0.25, 0.40, 0.55] {
+                self.viewModel.surfaceState = .expanded
+                try? await Task.sleep(for: .seconds(1.0))
+                self.viewModel.surfaceState = .dormant
+                try? await Task.sleep(for: .seconds(delay))
+                self.viewModel.surfaceState = .collapsed
+                try? await Task.sleep(for: .seconds(1.4))
+                report("flip-flop delay=\(delay)")
+            }
+            log("done")
+        }
+    }
+#endif
 
     private nonisolated static func requestedPreviewState() -> AppViewModel.SurfaceState {
         guard let argument = CommandLine.arguments.first(where: { $0.hasPrefix("--preview-state=") }) else {
@@ -173,10 +382,22 @@ final class AppCoordinator {
 
         if !previewMode {
             occupancyService.refresh()
+            installDisplayEnvironmentObservers()
+            do {
+                // One-time launch maintenance; not needed on every reload.
+                try repository.backfillMissingSortOrders()
+                try repository.backfillMissingTagColorSeeds()
+                try repository.removeOrphanedAttachmentFiles()
+            } catch {
+                // Maintenance failures are non-fatal; they retry next launch.
+            }
         }
         reloadFromStore()
         synchronizePanel(with: viewModel.surfaceState)
 #if DEBUG
+        if CommandLine.arguments.contains("--modal-probe") {
+            runModalProbe()
+        }
         if CommandLine.arguments.contains("--coexistence-test-sequence") {
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .seconds(1))
@@ -215,6 +436,9 @@ final class AppCoordinator {
         screenshotSelection.cancel()
         composerPasteTask?.cancel()
         clearPermissionSuspension()
+        displayEnvironmentObservers.forEach(NotificationCenter.default.removeObserver)
+        displayEnvironmentObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
+        displayEnvironmentObservers.removeAll()
         panelController.dismiss(restoringFocus: false, animated: false)
     }
 
@@ -286,6 +510,15 @@ final class AppCoordinator {
         hooks.onDeletePermanently = { [weak self] id in
             self?.deletePermanently(id: id)
         }
+        hooks.onEmptyTrash = { [weak self] in
+            guard let self else { return }
+            do {
+                try self.repository.emptyTrash()
+                self.reloadFromStore()
+            } catch {
+                self.show(error)
+            }
+        }
         hooks.onDroppedProviders = { [weak self] providers in
             self?.handleDrop(providers)
         }
@@ -308,7 +541,13 @@ final class AppCoordinator {
             self?.defaults.set(timeFormat.rawValue, forKey: DefaultsKey.timeFormat)
         }
         hooks.onOpenShortcutRecorder = { [weak self] action in
-            self?.recordShortcut(for: action)
+            self?.beginShortcutRecording(for: action)
+        }
+        hooks.onCommitShortcutRecording = { [weak self] action, recording in
+            self?.commitShortcutRecording(recording, for: action)
+        }
+        hooks.onCancelShortcutRecording = { [weak self] in
+            self?.cancelShortcutRecording()
         }
         hooks.onImport = { [weak self] in
             self?.presentImportPanel()
@@ -322,7 +561,10 @@ final class AppCoordinator {
         viewModel.hooks = hooks
 
         panelController.onRequestDismiss = { [weak self] reason in
-            self?.viewModel.handleDismissalRequest(reason)
+            guard let self else { return }
+            let before = self.viewModel.surfaceState
+            self.viewModel.handleDismissalRequest(reason)
+            PanelDiagnostics.log("dismissal(\(reason)) surface \(before)→\(self.viewModel.surfaceState)")
         }
     }
 
@@ -349,6 +591,18 @@ final class AppCoordinator {
                         self.defaults.set(true, forKey: DefaultsKey.onboardingComplete)
                     }
                     self.previousSurfaceState = state
+                    PanelDiagnostics.log("surface state → \(state)")
+                    // Leaving Settings while a shortcut is being recorded must
+                    // restore the temporarily unregistered global hotkeys.
+                    if state != .settings, self.viewModel.shortcutRecordingRequest != nil {
+                        self.cancelShortcutRecording()
+                    }
+                    // Menus and modals never survive a surface change. This
+                    // must live here, not in a SwiftUI onChange: view updates
+                    // for a collapsing/ordered-out panel are not guaranteed to
+                    // run, and a stale modal leaves the next open fully
+                    // disabled behind an invisible scrim.
+                    self.panelController.presentationCoordinator.cancelActivePresentation()
                     self.synchronizePanel(with: state)
                 }
             }
@@ -373,22 +627,12 @@ final class AppCoordinator {
         applyOccupancy(occupancyService.snapshot)
     }
 
-    private func synchronizePanel(with state: AppViewModel.SurfaceState) {
-        let panelState: PanelState
-        switch state {
-        case .dormant: panelState = .dormant
-        case .collapsed: panelState = .collapsed
-        case .confirmation: panelState = .confirmation
-        case .expanded: panelState = .expanded
-        case .drop: panelState = .dropTarget
-        case .screenshot: panelState = .screenshot
-        case .onboarding: panelState = .onboarding
-        case .settings: panelState = .settings
-        }
+    func synchronizePanel(with state: AppViewModel.SurfaceState) {
+        let panelState = state.panelState
         panelController.present(panelState, activate: panelState.acceptsKeyboardInput)
     }
 
-    private func applyOccupancy(_ snapshot: SurfaceOccupancySnapshot) {
+    func applyOccupancy(_ snapshot: SurfaceOccupancySnapshot) {
         let occupied: Bool
         if let screen = displayLocator.pointerScreen,
            let displayID = displayLocator.displayID(for: screen) {
@@ -420,664 +664,6 @@ final class AppCoordinator {
         }
     }
 
-    private func captureCurrentSelection() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await selectionService.captureSelection()
-                let item = try repository.createItem(from: result)
-                presentConfirmation(for: item)
-            } catch {
-                if case SelectionCaptureError.accessibilityPermissionRequired = error {
-                    selectionService.requestAccessibilityAccess()
-                }
-                viewModel.errorMessage = error.localizedDescription
-                viewModel.openExpanded()
-            }
-        }
-    }
-
-    private func captureManualText(_ text: String, folderID: UUID?) {
-        do {
-            let parsed = CaptureTagParser.parse(text)
-            if parsed.isTagOnly, let name = parsed.tagNames.first {
-                _ = try repository.createTag(name: name)
-                reloadFromStore()
-                return
-            }
-            let list = try folderID.map(findList)
-            let payload: CapturePayload = if let url = CaptureURLParser.url(from: parsed.text) {
-                .url(url)
-            } else {
-                .text(text)
-            }
-            let item = try repository.createItem(
-                from: payload,
-                origin: .manual,
-                list: list,
-                tagNames: parsed.tagNames
-            )
-            presentCaptureFeedback(for: item, feedback: .stayExpanded)
-        } catch {
-            show(error)
-        }
-    }
-
-    private func captureComposerImages(
-        text: String,
-        images: [AppViewModel.ComposerImage],
-        folderID: UUID?
-    ) -> String? {
-        do {
-            let parsed = CaptureTagParser.parse(text)
-            let list = try folderID.map(findList)
-            let item = try repository.createItem(
-                text: text,
-                origin: .manual,
-                list: list,
-                tagNames: parsed.tagNames,
-                imageAttachments: images.map {
-                    ImageAttachmentPayload(
-                        data: $0.data,
-                        typeIdentifier: $0.typeIdentifier,
-                        filename: $0.filename
-                    )
-                }
-            )
-            presentCaptureFeedback(for: item, feedback: .stayExpanded)
-            return nil
-        } catch {
-            reloadFromStore()
-            return error.localizedDescription
-        }
-    }
-
-    private func handleComposerImagePaste(from pasteboard: NSPasteboard) -> Bool {
-        guard viewModel.surfaceState == .expanded,
-              viewModel.keyboardFocus == .composer else {
-            return false
-        }
-        let images = Self.composerImages(from: pasteboard)
-        guard !images.isEmpty else { return false }
-        viewModel.appendComposerImages(images)
-        return true
-    }
-
-    static func composerImages(from pasteboard: NSPasteboard) -> [AppViewModel.ComposerImage] {
-        (pasteboard.pasteboardItems ?? []).enumerated().compactMap { offset, item in
-            let fileURL = item.string(forType: .fileURL).flatMap(URL.init(string:))
-            let registeredTypes = item.types.compactMap { UTType($0.rawValue) }
-            let preferredTypes: [UTType] = [.png, .jpeg, .heic, .tiff, .gif]
-            let imageType = preferredTypes.first(where: { registeredTypes.contains($0) })
-                ?? registeredTypes.first(where: { $0 != .image && $0.conforms(to: .image) })
-
-            if let imageType,
-               let data = item.data(forType: NSPasteboard.PasteboardType(imageType.identifier)),
-               !data.isEmpty {
-                let filename = fileURL?.lastPathComponent.isEmpty == false
-                    ? fileURL?.lastPathComponent
-                    : nil
-                return AppViewModel.ComposerImage(
-                    data: data,
-                    typeIdentifier: imageType.identifier,
-                    filename: filename ?? pastedImageFilename(
-                        suggestedName: nil,
-                        type: imageType,
-                        index: offset + 1
-                    )
-                )
-            }
-
-            if let fileURL {
-                return loadPastedImageFile(at: fileURL, index: offset + 1)
-            }
-            return nil
-        }
-    }
-
-    @discardableResult
-    private func createCapture(
-        payload: CapturePayload,
-        origin: CaptureOrigin,
-        source: CaptureSource = CaptureSource()
-    ) throws -> CaptureItem {
-        try repository.createItem(from: payload, origin: origin, source: source)
-    }
-
-    private func fileAttachment(_ url: URL, order: Int) throws -> Attachment {
-        let stored = try attachmentStore.storeFile(at: url)
-        return Attachment(
-            id: stored.id,
-            kind: stored.kind,
-            typeIdentifier: stored.typeIdentifier,
-            originalFilename: stored.originalFilename,
-            relativePath: stored.relativePath,
-            order: order
-        )
-    }
-
-    private func dataAttachment(
-        _ data: Data,
-        filename: String,
-        type: UTType,
-        kind: AttachmentKind,
-        order: Int
-    ) throws -> Attachment {
-        let stored = try attachmentStore.storeData(data, filename: filename, type: type, kind: kind)
-        return Attachment(
-            id: stored.id,
-            kind: stored.kind,
-            typeIdentifier: stored.typeIdentifier,
-            originalFilename: stored.originalFilename,
-            relativePath: stored.relativePath,
-            order: order
-        )
-    }
-
-    private func linkAttachment(_ url: URL, order: Int) -> Attachment {
-        Attachment(
-            kind: .url,
-            typeIdentifier: UTType.url.identifier,
-            originalFilename: url.host(percentEncoded: false) ?? url.absoluteString,
-            url: url,
-            order: order
-        )
-    }
-
-    private func presentConfirmation(for item: CaptureItem) {
-        presentCaptureFeedback(for: item, feedback: .transientConfirmation)
-    }
-
-    private func presentCaptureFeedback(
-        for item: CaptureItem,
-        feedback: AppViewModel.CaptureFeedback
-    ) {
-        reloadFromStore()
-        guard let ledger = viewModel.items.first(where: { $0.id == item.id }) else { return }
-        let refreshesVisibleConfirmation = feedback == .transientConfirmation
-            && viewModel.surfaceState == .confirmation
-        viewModel.showCaptureFeedback(for: ledger, feedback: feedback)
-        if refreshesVisibleConfirmation {
-            panelController.restartConfirmationDismissal()
-        }
-    }
-
-    private func undoCapture(id: UUID?) {
-        guard let id, let item = findItem(id) else { return }
-        do {
-            try repository.deletePermanently(item)
-            reloadFromStore()
-        } catch {
-            show(error)
-        }
-    }
-
-    private func toggleComplete(id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            if item.kind == .note { try repository.setKind(.task, for: item) }
-            try repository.setCompleted(!item.isCompleted, for: item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func updateText(_ text: String, for id: UUID) -> String? {
-        guard let item = findItem(id) else {
-            return ItemRepositoryError.itemNotFound(id).localizedDescription
-        }
-        do {
-            try repository.updateText(item, text: text)
-            reloadFromStore()
-            return nil
-        } catch {
-            reloadFromStore()
-            return error.localizedDescription
-        }
-    }
-
-    private func togglePin(id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            try repository.setPinned(!item.isPinned, for: item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func applyOrderAssignments(_ assignments: [ItemOrderAssignment]) {
-        do {
-            try repository.applyOrderAssignments(assignments)
-            reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
-    }
-
-    private func archive(id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            try repository.archive(item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func setDueDate(_ date: Date?, for id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            try repository.setDueDate(date, for: item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func move(id: UUID, to folderID: UUID?) {
-        guard let item = findItem(id) else { return }
-        do {
-            let list = try folderID.map(findList)
-            try repository.move(item, to: list)
-            reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
-    }
-
-    private func createFolder(named name: String) {
-        do {
-            _ = try repository.createList(name: name)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func renameFolder(id: UUID, to name: String) {
-        do {
-            try repository.renameList(try findList(id), to: name)
-            reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
-    }
-
-    private func deleteFolder(id: UUID) {
-        do {
-            _ = try repository.deleteList(try findList(id))
-            reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
-    }
-
-    private func createTag(named name: String) {
-        do {
-            _ = try repository.createTag(name: name)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func renameTag(id: UUID, to name: String) {
-        do {
-            _ = try repository.renameTag(try findTag(id), to: name)
-            reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
-    }
-
-    private func deleteTag(id: UUID) {
-        do {
-            try repository.deleteTag(try findTag(id))
-            reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
-    }
-
-    private func trash(id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            try repository.trash(item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func restore(id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            try repository.restore(item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func deletePermanently(id: UUID) {
-        guard let item = findItem(id) else { return }
-        do {
-            try repository.deletePermanently(item)
-            reloadFromStore()
-        } catch { show(error) }
-    }
-
-    private func findItem(_ id: UUID) -> CaptureItem? {
-        try? modelContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first { $0.id == id }
-    }
-
-    private func findList(_ id: UUID) throws -> ItemList {
-        let lists = try modelContainer.mainContext.fetch(FetchDescriptor<ItemList>())
-        guard let list = lists.first(where: { $0.id == id }) else {
-            throw ItemRepositoryError.listNotFound(id)
-        }
-        return list
-    }
-
-    private func findTag(_ id: UUID) throws -> CaptureTag {
-        let tags = try modelContainer.mainContext.fetch(FetchDescriptor<CaptureTag>())
-        guard let tag = tags.first(where: { $0.id == id }) else {
-            throw ItemRepositoryError.tagNotFound(id)
-        }
-        return tag
-    }
-
-    private func handleDrop(_ providers: [NSItemProvider]) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            var urls: [URL] = []
-            var textParts: [String] = []
-            var imagePayloads: [(Data, UTType)] = []
-            var storedPaths: [String] = []
-
-            for provider in providers {
-                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
-                   let url = await loadURL(from: provider, type: .fileURL) {
-                    urls.append(url)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
-                          let url = await loadURL(from: provider, type: .url) {
-                    urls.append(url)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier),
-                          let data = await loadData(from: provider, type: .image) {
-                    imagePayloads.append((data, .png))
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
-                          let text = await loadText(from: provider) {
-                    textParts.append(text)
-                }
-            }
-
-            do {
-                var attachments = try urls.enumerated().map { index, url in
-                    url.isFileURL ? try fileAttachment(url, order: index) : linkAttachment(url, order: index)
-                }
-                for (offset, payload) in imagePayloads.enumerated() {
-                    attachments.append(try dataAttachment(
-                        payload.0,
-                        filename: "Dropped Image \(offset + 1).png",
-                        type: payload.1,
-                        kind: .image,
-                        order: attachments.count
-                    ))
-                }
-                storedPaths = attachments.compactMap(\.relativePath)
-                let text = textParts.joined(separator: "\n")
-                let item: CaptureItem
-                if attachments.isEmpty, let url = CaptureURLParser.url(from: text) {
-                    item = try repository.createItem(from: .url(url), origin: .drop)
-                } else {
-                    item = try repository.createItem(text: text, origin: .drop, attachments: attachments)
-                }
-                presentConfirmation(for: item)
-            } catch {
-                storedPaths.forEach { try? attachmentStore.remove(relativePath: $0) }
-                show(error)
-            }
-        }
-    }
-
-    private func loadPastedImages(from providers: [NSItemProvider], forComposerDraft draftID: UUID) {
-        let previousTask = composerPasteTask
-        composerPasteTask = Task { @MainActor [weak self] in
-            _ = await previousTask?.value
-            guard let self else { return }
-            guard !Task.isCancelled else { return }
-            var images: [AppViewModel.ComposerImage] = []
-
-            for (offset, provider) in providers.enumerated() {
-                if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
-                    let type = preferredImageType(for: provider)
-                    guard let data = await loadData(from: provider, type: type), !data.isEmpty else {
-                        continue
-                    }
-                    images.append(
-                        AppViewModel.ComposerImage(
-                            data: data,
-                            typeIdentifier: type.identifier,
-                            filename: Self.pastedImageFilename(
-                                suggestedName: provider.suggestedName,
-                                type: type,
-                                index: offset + 1
-                            )
-                        )
-                    )
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
-                          let url = await loadURL(from: provider, type: .fileURL),
-                          let image = Self.loadPastedImageFile(at: url, index: offset + 1) {
-                    images.append(image)
-                }
-            }
-
-            guard !Task.isCancelled else { return }
-            if images.isEmpty {
-                viewModel.showComposerPasteError(
-                    "The pasted image couldn’t be read.",
-                    forComposerDraft: draftID
-                )
-            } else {
-                viewModel.appendComposerImages(images, toComposerDraft: draftID)
-            }
-        }
-    }
-
-    static func loadPastedImageFile(at url: URL, index: Int) -> AppViewModel.ComposerImage? {
-        guard url.isFileURL else { return nil }
-        let didAccess = url.startAccessingSecurityScopedResource()
-        defer { if didAccess { url.stopAccessingSecurityScopedResource() } }
-
-        let resourceType = try? url.resourceValues(forKeys: [.contentTypeKey]).contentType
-        let type = resourceType ?? UTType(filenameExtension: url.pathExtension)
-        guard let type, type.conforms(to: .image),
-              let data = try? Data(contentsOf: url), !data.isEmpty else {
-            return nil
-        }
-        let filename = url.lastPathComponent.isEmpty
-            ? pastedImageFilename(suggestedName: nil, type: type, index: index)
-            : url.lastPathComponent
-        return AppViewModel.ComposerImage(
-            data: data,
-            typeIdentifier: type.identifier,
-            filename: filename
-        )
-    }
-
-    private func preferredImageType(for provider: NSItemProvider) -> UTType {
-        let registeredTypes = provider.registeredTypeIdentifiers.compactMap(UTType.init)
-        let preferredTypes: [UTType] = [.png, .jpeg, .heic, .tiff, .gif]
-        if let preferred = preferredTypes.first(where: { registeredTypes.contains($0) }) {
-            return preferred
-        }
-        return registeredTypes.first(where: { $0 != .image && $0.conforms(to: .image) }) ?? .image
-    }
-
-    private static func pastedImageFilename(
-        suggestedName: String?,
-        type: UTType,
-        index: Int
-    ) -> String {
-        let trimmedName = suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseName = trimmedName.flatMap { $0.isEmpty ? nil : $0 } ?? "Pasted Image \(index)"
-        guard URL(fileURLWithPath: baseName).pathExtension.isEmpty,
-              let filenameExtension = type.preferredFilenameExtension else {
-            return baseName
-        }
-        return "\(baseName).\(filenameExtension)"
-    }
-
-    private func loadURL(from provider: NSItemProvider, type: UTType) async -> URL? {
-        await withCheckedContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: type.identifier, options: nil) { item, _ in
-                if let url = item as? URL {
-                    continuation.resume(returning: url)
-                } else if let data = item as? Data {
-                    continuation.resume(returning: URL(dataRepresentation: data, relativeTo: nil))
-                } else if let string = item as? String {
-                    continuation.resume(returning: URL(string: string))
-                } else {
-                    continuation.resume(returning: nil)
-                }
-            }
-        }
-    }
-
-    private func loadData(from provider: NSItemProvider, type: UTType) async -> Data? {
-        await withCheckedContinuation { continuation in
-            provider.loadDataRepresentation(forTypeIdentifier: type.identifier) { data, _ in
-                continuation.resume(returning: data)
-            }
-        }
-    }
-
-    private func loadText(from provider: NSItemProvider) async -> String? {
-        await withCheckedContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: UTType.plainText.identifier, options: nil) { item, _ in
-                if let string = item as? String {
-                    continuation.resume(returning: string)
-                } else if let data = item as? Data {
-                    continuation.resume(returning: String(data: data, encoding: .utf8))
-                } else {
-                    continuation.resume(returning: nil)
-                }
-            }
-        }
-    }
-
-    private func beginScreenshotSelection() {
-        guard screenCaptureService.hasPermission else {
-            requestScreenRecording()
-            viewModel.errorMessage = "Allow Screen Recording, then use the shortcut again."
-            viewModel.openExpanded()
-            return
-        }
-        viewModel.surfaceState = .screenshot
-        screenshotSelection.begin { [weak self] selection in
-            guard let self else { return }
-            guard let selection else {
-                self.viewModel.openExpanded()
-                return
-            }
-            Task { @MainActor in
-                do {
-                    let data = try await self.screenCaptureService.captureRegion(selection.rect, on: selection.screen)
-                    let item = try self.repository.createItem(
-                        from: .image(data, typeIdentifier: UTType.png.identifier),
-                        origin: .screenshot
-                    )
-                    self.presentConfirmation(for: item)
-                } catch {
-                    self.show(error)
-                }
-            }
-        }
-    }
-
-    private func requestAccessibility() {
-        suspendForSystemPermissionPrompt()
-        selectionService.requestAccessibilityAccess()
-        pollAccessibilityStatus()
-    }
-
-    private func pollAccessibilityStatus() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            for _ in 0..<20 {
-                viewModel.accessibilityGranted = selectionService.isAccessibilityTrusted
-                if viewModel.accessibilityGranted {
-                    schedulePermissionSurfaceRestore()
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
-    }
-
-    private func requestScreenRecording() {
-        suspendForSystemPermissionPrompt()
-        viewModel.screenRecordingGranted = screenCaptureService.requestPermission()
-        if viewModel.screenRecordingGranted {
-            schedulePermissionSurfaceRestore()
-        }
-    }
-
-    /// The notch panel intentionally sits above other notch utilities during an
-    /// explicit session. System-owned permission prompts use a lower window level,
-    /// so the panel must be removed for the duration of that modal interaction.
-    private func suspendForSystemPermissionPrompt() {
-        clearPermissionSuspension()
-        permissionReturnState = viewModel.surfaceState == .settings ? .settings : .expanded
-        panelController.dismiss(restoringFocus: false, animated: false)
-
-        permissionLocalEventMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
-        ) { [weak self] event in
-            self?.schedulePermissionSurfaceRestore()
-            return event
-        }
-        permissionGlobalEventMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            self?.schedulePermissionSurfaceRestore()
-        }
-        permissionActivationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: NSApp,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.schedulePermissionSurfaceRestore() }
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func schedulePermissionSurfaceRestore() {
-        permissionRestoreTask?.cancel()
-        permissionRestoreTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(650))
-            guard !Task.isCancelled, let self, let returnState = self.permissionReturnState else { return }
-
-            let ownPID = ProcessInfo.processInfo.processIdentifier
-            let appIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == ownPID
-            guard appIsFrontmost, NSApp.modalWindow == nil else { return }
-
-            self.clearPermissionSuspension()
-            self.viewModel.surfaceState = returnState
-            self.synchronizePanel(with: returnState)
-        }
-    }
-
-    private func clearPermissionSuspension() {
-        permissionRestoreTask?.cancel()
-        permissionRestoreTask = nil
-        permissionReturnState = nil
-        if let permissionLocalEventMonitor {
-            NSEvent.removeMonitor(permissionLocalEventMonitor)
-            self.permissionLocalEventMonitor = nil
-        }
-        if let permissionGlobalEventMonitor {
-            NSEvent.removeMonitor(permissionGlobalEventMonitor)
-            self.permissionGlobalEventMonitor = nil
-        }
-        if let permissionActivationObserver {
-            NotificationCenter.default.removeObserver(permissionActivationObserver)
-            self.permissionActivationObserver = nil
-        }
-    }
-
     private func setLaunchAtLogin(_ enabled: Bool) {
         do {
             try loginItemService.setEnabled(enabled)
@@ -1092,215 +678,5 @@ final class AppCoordinator {
     private func setOwnership(_ ownership: AppViewModel.NotchOwnership) {
         defaults.set(ownership.rawValue, forKey: DefaultsKey.ownership)
         applyOccupancy(occupancyService.snapshot)
-    }
-
-    private func recordShortcut(for action: AppViewModel.Shortcut.Action) {
-        guard let hotKeyAction = globalAction(for: action), let manager = hotKeyManager else { return }
-        let currentDisplay = viewModel.shortcuts.first(where: { $0.action == action })?.displayValue ?? ""
-        let oldDefinitions = manager.definitions
-        manager.unregisterAll()
-
-        guard let recording = ShortcutRecorder.capture(
-            title: viewModel.shortcuts.first(where: { $0.action == action })?.title ?? "Shortcut",
-            currentValue: currentDisplay
-        ) else {
-            do { try manager.register(oldDefinitions) } catch { show(error) }
-            return
-        }
-
-        var definitions = oldDefinitions
-        if definitions.contains(where: { $0.key != hotKeyAction && $0.value == recording.definition }) {
-            do { try manager.register(oldDefinitions) } catch { show(error) }
-            viewModel.errorMessage = "That shortcut is already assigned to another Notch Capture action."
-            return
-        }
-        definitions[hotKeyAction] = recording.definition
-
-        do {
-            try manager.register(definitions)
-            persistShortcut(recording, for: hotKeyAction)
-            viewModel.updateShortcut(action, displayValue: recording.displayValue)
-            viewModel.errorMessage = nil
-        } catch {
-            try? manager.register(oldDefinitions)
-            show(error)
-        }
-    }
-
-    private func loadShortcutDefinitions() -> [GlobalHotKeyAction: GlobalHotKeyDefinition] {
-        var definitions = GlobalHotKeyManager.defaultDefinitions
-        for action in GlobalHotKeyAction.allCases {
-            let keyCodeKey = DefaultsKey.shortcut(action, field: "keyCode")
-            let modifiersKey = DefaultsKey.shortcut(action, field: "modifiers")
-            guard defaults.object(forKey: keyCodeKey) != nil,
-                  defaults.object(forKey: modifiersKey) != nil else { continue }
-            definitions[action] = GlobalHotKeyDefinition(
-                keyCode: UInt32(defaults.integer(forKey: keyCodeKey)),
-                modifiers: UInt32(defaults.integer(forKey: modifiersKey))
-            )
-        }
-        return definitions
-    }
-
-    private func persistShortcut(_ recording: ShortcutRecording, for action: GlobalHotKeyAction) {
-        defaults.set(Int(recording.definition.keyCode), forKey: DefaultsKey.shortcut(action, field: "keyCode"))
-        defaults.set(Int(recording.definition.modifiers), forKey: DefaultsKey.shortcut(action, field: "modifiers"))
-        defaults.set(recording.displayValue, forKey: DefaultsKey.shortcut(action, field: "display"))
-    }
-
-    private func updateShortcutDisplayValues() {
-        for shortcut in viewModel.shortcuts {
-            guard let action = globalAction(for: shortcut.action) else { continue }
-            let display = defaults.string(forKey: DefaultsKey.shortcut(action, field: "display"))
-            if let display { viewModel.updateShortcut(shortcut.action, displayValue: display) }
-        }
-    }
-
-    private func globalAction(for action: AppViewModel.Shortcut.Action) -> GlobalHotKeyAction? {
-        switch action {
-        case .captureSelection: .captureSelection
-        case .openComposer: .openComposer
-        case .captureRegion: .captureRegion
-        }
-    }
-
-    private func presentExportPanel() {
-        let panel = NSSavePanel()
-        panel.title = "Export Notch Capture Library"
-        panel.nameFieldStringValue = "Notch Capture Backup.notchcapture"
-        panel.canCreateDirectories = true
-        panel.treatsFilePackagesAsDirectories = false
-        panel.begin { [weak self] response in
-            guard response == .OK, let destination = panel.url else { return }
-            Task { @MainActor in
-                guard let self else { return }
-                do {
-                    if FileManager.default.fileExists(atPath: destination.path) {
-                        try FileManager.default.removeItem(at: destination)
-                    }
-                    _ = try self.packageService.export(to: destination)
-                    self.viewModel.errorMessage = nil
-                } catch { self.show(error) }
-            }
-        }
-    }
-
-    private func presentImportPanel() {
-        let panel = NSOpenPanel()
-        panel.title = "Import Notch Capture Library"
-        panel.allowsMultipleSelection = false
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = true
-        panel.treatsFilePackagesAsDirectories = false
-        panel.begin { [weak self] response in
-            guard response == .OK, let packageURL = panel.url else { return }
-            Task { @MainActor in
-                guard let self else { return }
-                do {
-                    _ = try self.packageService.importPackage(at: packageURL)
-                    self.reloadFromStore()
-                    self.viewModel.openExpanded()
-                } catch { self.show(error) }
-            }
-        }
-    }
-
-    private func reloadFromStore() {
-        guard !previewMode else { return }
-        do {
-            try repository.backfillMissingSortOrders()
-            try repository.backfillMissingTagColorSeeds()
-            let descriptor = FetchDescriptor<CaptureItem>(
-                sortBy: [SortDescriptor(\CaptureItem.createdAt, order: .reverse)]
-            )
-            let items = try modelContainer.mainContext.fetch(descriptor)
-            let lists = try modelContainer.mainContext.fetch(
-                FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
-            )
-            let tags = try modelContainer.mainContext.fetch(FetchDescriptor<CaptureTag>())
-            viewModel.items = items.map(makeLedgerItem)
-            viewModel.folders = lists.map {
-                AppViewModel.FolderSummary(id: $0.id, name: $0.name, sortOrder: $0.sortOrder)
-            }
-            viewModel.tags = tags.map {
-                AppViewModel.TagSummary(
-                    id: $0.id,
-                    name: $0.name,
-                    colorSeed: $0.colorSeed ?? TagColorSeed.stable(for: $0.id)
-                )
-            }
-            viewModel.reconcileBrowsingLocation()
-        } catch {
-            show(error)
-        }
-    }
-
-    private func makeLedgerItem(_ item: CaptureItem) -> AppViewModel.LedgerItem {
-        let lines = item.text
-            .split(whereSeparator: \Character.isNewline)
-            .map(String.init)
-            .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        let detail = lines.dropFirst().joined(separator: "\n")
-        let attachments = item.attachments.sorted { $0.order < $1.order }.map { attachment in
-            let previewURL: URL?
-            if let relativePath = attachment.relativePath {
-                previewURL = try? attachmentStore.resolve(relativePath: relativePath)
-            } else {
-                previewURL = attachment.url
-            }
-            return AppViewModel.LedgerAttachment(
-                id: attachment.id,
-                kind: uiAttachmentKind(attachment.kind),
-                name: attachment.originalFilename,
-                subtitle: attachment.contentType?.localizedDescription,
-                previewURL: previewURL
-            )
-        }
-        return AppViewModel.LedgerItem(
-            id: item.id,
-            kind: item.kind == .task ? .task : .note,
-            title: item.displayTitle,
-            detail: detail,
-            text: item.text,
-            searchableText: CaptureTagParser.removingTagMentions(
-                in: item.text,
-                matching: item.tags.map(\.name)
-            ),
-            createdAt: item.createdAt,
-            dueDate: item.dueDate,
-            folderID: item.list?.id,
-            folderName: item.list?.name,
-            sourceApp: item.sourceApplicationName,
-            isPinned: item.isPinned,
-            isCompleted: item.isCompleted,
-            completedAt: item.completedAt,
-            isArchived: item.isArchived,
-            isTrashed: item.isTrashed,
-            sortOrder: item.sortOrder,
-            tags: item.tags
-                .map {
-                    AppViewModel.TagSummary(
-                        id: $0.id,
-                        name: $0.name,
-                        colorSeed: $0.colorSeed ?? TagColorSeed.stable(for: $0.id)
-                    )
-                }
-                .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending },
-            attachments: attachments
-        )
-    }
-
-    private func uiAttachmentKind(_ kind: AttachmentKind) -> AppViewModel.LedgerAttachment.Kind {
-        switch kind {
-        case .file: .file
-        case .image: .image
-        case .url: .link
-        case .screenshot: .screenshot
-        }
-    }
-
-    private func show(_ error: Error) {
-        viewModel.openExpanded()
-        viewModel.errorMessage = error.localizedDescription
     }
 }

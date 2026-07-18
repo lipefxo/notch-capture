@@ -78,7 +78,7 @@ struct OnboardingView: View {
                 )
 
             HStack(spacing: 8) {
-                ShortcutKeycap(value: "⌃⇧Space")
+                ShortcutKeycap(value: viewModel.shortcutDisplayValue(for: .captureSelection))
                 Text("captures the current selection")
                     .font(.system(size: 10, weight: .medium))
                     .foregroundStyle(NotchTheme.secondaryText)
@@ -175,10 +175,7 @@ struct OnboardingView: View {
                 reduceMotion: reduceMotion
             )
 
-            Toggle("Launch at login", isOn: $viewModel.launchAtLogin)
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .font(.system(size: 11, weight: .medium))
+            NotchToggle(title: "Launch at login", isOn: $viewModel.launchAtLogin)
                 .onboardingSupportingMotion(
                     isVisible: supportingContentIsVisible,
                     reduceMotion: reduceMotion
