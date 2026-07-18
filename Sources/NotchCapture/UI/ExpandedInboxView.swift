@@ -299,9 +299,37 @@ private extension View {
     }
 }
 
+struct ExpandedSurfaceRevealPlan: Equatable {
+    let generation: Int
+    let ledgerDelay: TimeInterval
+    let composerDelay: TimeInterval
+    let revealDuration: TimeInterval
+
+    static func applies(to request: PanelMorphRequest, reduceMotion: Bool) -> Bool {
+        guard !reduceMotion, request.kind == .expand else { return false }
+        return request.targetState == .expanded || request.targetState == .dropTarget
+    }
+
+    static func resolve(
+        for request: PanelMorphRequest?,
+        reduceMotion: Bool
+    ) -> Self? {
+        guard let request,
+              request.phase == .active,
+              applies(to: request, reduceMotion: reduceMotion) else { return nil }
+        return Self(
+            generation: request.generation,
+            ledgerDelay: NotchMotion.expandedLedgerDelay,
+            composerDelay: NotchMotion.expandedComposerDelay,
+            revealDuration: NotchMotion.expandedElementRevealDuration
+        )
+    }
+}
+
 struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
     @EnvironmentObject private var presentation: NotchPresentationCoordinator
+    @EnvironmentObject private var morphCoordinator: PanelMorphCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
@@ -312,6 +340,10 @@ struct ExpandedInboxView: View {
     @State private var dragPresentation: LedgerDragPresentation?
     @State private var dragGeneration = 0
     @State private var navigationDirection: CGFloat = 1
+    @State private var ledgerAppearance = 1.0
+    @State private var composerAppearance = 1.0
+    @State private var appearanceGeneration: Int?
+    @State private var appearanceTask: Task<Void, Never>?
 
     private let floatingComposerMargin: CGFloat = 18
     private let composerTextRowHeight: CGFloat = 48
@@ -358,9 +390,19 @@ struct ExpandedInboxView: View {
                 ledgerBody
                     .id(viewModel.browseLocation)
                     .transition(navigationTransition)
+                    .opacity(ledgerAppearance)
+                    .offset(y: -NotchMotion.expandedLedgerOffset * (1 - ledgerAppearance))
+                    .scaleEffect(
+                        x: 1,
+                        y: 0.99 + (0.01 * ledgerAppearance),
+                        anchor: .top
+                    )
             }
 
             floatingComposer
+                .opacity(composerAppearance)
+                .offset(y: -NotchMotion.expandedComposerOffset * (1 - composerAppearance))
+                .scaleEffect(0.97 + (0.03 * composerAppearance), anchor: .top)
         }
         .frame(width: NotchTheme.width, height: NotchTheme.maxHeight)
         .overlay {
@@ -395,8 +437,16 @@ struct ExpandedInboxView: View {
                 navigate(forward: false) { viewModel.openRoot() }
             }
         }
-        .onAppear { focusComposer() }
-        .onDisappear { resetReorderState() }
+        .onAppear {
+            handleAppearanceRequest(morphCoordinator.request)
+        }
+        .onDisappear {
+            appearanceTask?.cancel()
+            resetReorderState()
+        }
+        .onChange(of: morphCoordinator.request) { _, request in
+            handleAppearanceRequest(request)
+        }
         .onChange(of: viewModel.surfaceState) { _, state in
             if state == .expanded {
                 focusComposer()
@@ -1045,6 +1095,89 @@ struct ExpandedInboxView: View {
             insertion: .identity,
             removal: .opacity.animation(NotchMotion.dropExit)
         )
+    }
+
+    private func handleAppearanceRequest(_ request: PanelMorphRequest?) {
+        if reduceMotion {
+            finishAppearanceImmediately()
+            if viewModel.surfaceState == .expanded { focusComposer() }
+            return
+        }
+
+        guard let request else {
+            finishAppearanceImmediately()
+            if viewModel.surfaceState == .expanded { focusComposer() }
+            return
+        }
+        guard ExpandedSurfaceRevealPlan.applies(to: request, reduceMotion: false) else {
+            appearanceTask?.cancel()
+            return
+        }
+
+        switch request.phase {
+        case .prepared:
+            prepareStaggeredAppearance()
+        case .active:
+            guard let plan = ExpandedSurfaceRevealPlan.resolve(
+                for: request,
+                reduceMotion: false
+            ) else { return }
+            beginStaggeredAppearance(plan)
+        case .settled:
+            finishAppearanceImmediately()
+        }
+    }
+
+    private func prepareStaggeredAppearance() {
+        appearanceTask?.cancel()
+        appearanceGeneration = nil
+        withoutAppearanceAnimation {
+            ledgerAppearance = 0
+            composerAppearance = 0
+        }
+    }
+
+    private func beginStaggeredAppearance(_ plan: ExpandedSurfaceRevealPlan) {
+        guard appearanceGeneration != plan.generation else { return }
+        prepareStaggeredAppearance()
+        appearanceGeneration = plan.generation
+
+        appearanceTask = Task { @MainActor in
+            if plan.ledgerDelay > 0 {
+                try? await Task.sleep(for: .seconds(plan.ledgerDelay))
+            }
+            guard !Task.isCancelled,
+                  morphCoordinator.request?.generation == plan.generation else { return }
+            withAnimation(NotchMotion.easeOut(duration: plan.revealDuration)) {
+                ledgerAppearance = 1
+            }
+
+            let composerGap = max(0, plan.composerDelay - plan.ledgerDelay)
+            if composerGap > 0 {
+                try? await Task.sleep(for: .seconds(composerGap))
+            }
+            guard !Task.isCancelled,
+                  morphCoordinator.request?.generation == plan.generation else { return }
+            withAnimation(NotchMotion.easeOut(duration: plan.revealDuration)) {
+                composerAppearance = 1
+            }
+            if viewModel.surfaceState == .expanded { focusComposer() }
+        }
+    }
+
+    private func finishAppearanceImmediately() {
+        appearanceTask?.cancel()
+        appearanceGeneration = nil
+        withoutAppearanceAnimation {
+            ledgerAppearance = 1
+            composerAppearance = 1
+        }
+    }
+
+    private func withoutAppearanceAnimation(_ updates: () -> Void) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction, updates)
     }
 
     private func focusComposer() {

@@ -491,7 +491,7 @@ final class AppViewModel: ObservableObject {
         return folders.first { $0.id == id }
     }
 
-    var navigationTitle: String { currentFolder?.name ?? "Inbox" }
+    var navigationTitle: String { currentFolder?.name ?? "Capture" }
     var captureDestinationID: UUID? { currentFolder?.id }
     var captureDestinationName: String { currentFolder?.name ?? "Inbox" }
     var isAtRoot: Bool { browseLocation == .root }

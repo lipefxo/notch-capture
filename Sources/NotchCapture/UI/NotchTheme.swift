@@ -95,9 +95,14 @@ struct NotchSpringProfile: Equatable, Sendable {
 }
 
 enum NotchMotion {
-    static let surfaceExpansion = NotchSpringProfile(perceptualDuration: 0.42, bounce: 0)
-    static let surfaceContraction = NotchSpringProfile(perceptualDuration: 0.34, bounce: 0)
-    static let surfaceHide = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
+    // The shell is intentionally under-damped. Its overshoot gives the large
+    // geometry change a soft, elastic edge instead of reading as a staged
+    // window resize. Closing uses progressively less energy so it still feels
+    // like the opening path being pulled back into the notch.
+    static let surfaceExpansion = NotchSpringProfile(perceptualDuration: 0.56, bounce: 0.16)
+    static let surfaceContraction = NotchSpringProfile(perceptualDuration: 0.48, bounce: 0.12)
+    static let surfaceHide = NotchSpringProfile(perceptualDuration: 0.44, bounce: 0.09)
+    static let surfaceContent = NotchSpringProfile(perceptualDuration: 0.38, bounce: 0.07)
     static let contentMorph = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
     static let selection = NotchSpringProfile(perceptualDuration: 0.22, bounce: 0)
     static let reorderDisplacement = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
@@ -119,7 +124,13 @@ enum NotchMotion {
     static let insertionDuration: TimeInterval = 0.18
     static let removalDuration: TimeInterval = 0.14
     static let stagingDelay: TimeInterval = 0.04
-    static let surfaceContentDelay: TimeInterval = 0.07
+    static let surfaceContentDelay: TimeInterval = 0.018
+    static let surfaceContentOffset: CGFloat = 6
+    static let expandedLedgerDelay: TimeInterval = 0.10
+    static let expandedComposerDelay: TimeInterval = 0.24
+    static let expandedElementRevealDuration: TimeInterval = 0.24
+    static let expandedLedgerOffset: CGFloat = 5
+    static let expandedComposerOffset: CGFloat = 8
     static let composerFocusDuration: TimeInterval = 0.18
     static let composerIridescenceCycleDuration: TimeInterval = 10
     static let reducedMotionDuration: TimeInterval = 0.12
@@ -133,6 +144,7 @@ enum NotchMotion {
     }
 
     static let content = contentMorph.animation
+    static let surfaceContentReveal = surfaceContent.animation
     static let navigation = contentMorph.animation
     static let onboarding = onboardingSpring.animation
     static let confirmation = confirmationSpring.animation

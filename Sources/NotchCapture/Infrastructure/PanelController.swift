@@ -79,8 +79,8 @@ struct PanelTransitionPolicy: Equatable {
             return Self(
                 kind: .expand,
                 spring: NotchMotion.surfaceExpansion,
-                opacity: .reveal,
-                fadeDuration: NotchMotion.insertionDuration
+                opacity: .unchanged,
+                fadeDuration: 0
             )
         }
 
@@ -132,16 +132,44 @@ struct PanelDismissalEventPolicy {
     }
 }
 
-/// Transparent margin reserved around the rendered surface inside the panel
-/// window. The SwiftUI shell paints its own drop shadow (up to 24pt of blur
-/// offset 14pt downward); without this apron the shadow clips square at the
-/// window edge and reads as a rectangular frame around the rounded chrome.
-/// The gaussian tail of a 24pt blur stays visible (~1 brightness level on a
-/// white desktop) out to roughly 2.3 sigma, so the apron must comfortably
-/// exceed 56pt — plus the 14pt downward offset on the bottom edge.
-enum PanelShadowApron {
-    static let horizontal: CGFloat = 64
-    static let bottom: CGFloat = 80
+struct PanelWindowInteractionPolicy {
+    static func suspendsHitTesting(
+        during transition: PanelTransitionPolicy,
+        targetState: PanelState,
+        wasVisible: Bool
+    ) -> Bool {
+        guard wasVisible, targetState == .collapsed else { return false }
+        return transition.kind == .contract || transition.kind == .reducedFade
+    }
+
+    static func canRestoreHitTesting(
+        actualFrame: CGRect,
+        targetFrame: CGRect
+    ) -> Bool {
+        actualFrame == targetFrame
+    }
+}
+
+/// Transparent margin reserved around a rendered surface inside the panel
+/// window. Open surfaces need room for their drop shadow, while the collapsed
+/// pill deliberately has no outer shadow so its window can match its hit area.
+struct PanelShadowApron: Equatable {
+    let horizontal: CGFloat
+    let bottom: CGFloat
+
+    static let none = Self(horizontal: 0, bottom: 0)
+    static let standard = Self(horizontal: 64, bottom: 80)
+
+    static func resolve(for state: PanelState) -> Self {
+        state == .collapsed ? .none : .standard
+    }
+
+    func applying(to size: CGSize) -> CGSize {
+        CGSize(
+            width: size.width + horizontal * 2,
+            height: size.height + bottom
+        )
+    }
 }
 
 public enum PanelDismissalReason: Equatable {
@@ -190,8 +218,13 @@ public final class PanelController: NSObject, ObservableObject {
             defer: true
         )
         super.init()
+        // PanelController owns the window geometry. The NSHostingView default
+        // sizing options otherwise feed SwiftUI's current minimum size back
+        // into NSWindow and can clamp a closing panel to its expanded frame.
+        hostingView.sizingOptions = []
         configurePanel()
         panel.contentView = hostingView
+        panel.contentMinSize = .zero
     }
 
     deinit {
@@ -241,7 +274,11 @@ public final class PanelController: NSObject, ObservableObject {
 
         transitionGeneration += 1
         let generation = transitionGeneration
-        let contractsToPill = transition.kind == .contract && newState == .collapsed
+        let contractsToPill = PanelWindowInteractionPolicy.suspendsHitTesting(
+            during: transition,
+            targetState: newState,
+            wasVisible: wasVisible
+        )
         panel.ignoresMouseEvents = contractsToPill
 
         let morphGeometry = PanelMorphGeometry(
@@ -269,6 +306,7 @@ public final class PanelController: NSObject, ObservableObject {
                 transitionCanvasFrame(
                     for: morphGeometry,
                     targetFrame: targetFrame,
+                    targetState: newState,
                     includeCurrentFrame: wasVisible
                 ),
                 display: false
@@ -493,8 +531,7 @@ public final class PanelController: NSObject, ObservableObject {
             size.height = max(size.height, geometry.safeAreaInsets.top + 6)
         }
         guard size.width > 0, size.height > 0 else { return nil }
-        size.width += PanelShadowApron.horizontal * 2
-        size.height += PanelShadowApron.bottom
+        size = PanelShadowApron.resolve(for: state).applying(to: size)
         return geometry.panelFrame(for: size)
     }
 
@@ -528,11 +565,13 @@ public final class PanelController: NSObject, ObservableObject {
     private func transitionCanvasFrame(
         for geometry: PanelMorphGeometry,
         targetFrame: CGRect,
+        targetState: PanelState,
         includeCurrentFrame: Bool
     ) -> CGRect {
+        let apron = PanelShadowApron.resolve(for: targetState)
         let requested = geometry.panelCanvasFrame(
-            horizontalApron: PanelShadowApron.horizontal,
-            bottomApron: PanelShadowApron.bottom
+            horizontalApron: apron.horizontal,
+            bottomApron: apron.bottom
         )
         let width = max(
             requested.width,
@@ -560,11 +599,6 @@ public final class PanelController: NSObject, ObservableObject {
         reduceMotion: Bool,
         wasVisible: Bool
     ) -> PanelMorphRequest {
-        let shellDelay: TimeInterval = if !reduceMotion && [.contract, .hide].contains(transition.kind) {
-            NotchMotion.stagingDelay
-        } else {
-            0
-        }
         return PanelMorphRequest(
             generation: generation,
             phase: .active,
@@ -573,7 +607,7 @@ public final class PanelController: NSObject, ObservableObject {
             kind: transition.kind,
             spring: transition.spring,
             fadeDuration: transition.fadeDuration,
-            shellDelay: shellDelay,
+            shellDelay: 0,
             contentDelay: reduceMotion ? 0 : NotchMotion.surfaceContentDelay,
             reduceMotion: reduceMotion,
             wasVisible: wasVisible
@@ -623,7 +657,12 @@ public final class PanelController: NSObject, ObservableObject {
             } else {
                 self.panel.setFrame(targetFrame, display: true)
                 self.panel.alphaValue = 1
-                if restoreHitTesting { self.panel.ignoresMouseEvents = false }
+                if restoreHitTesting {
+                    self.panel.ignoresMouseEvents = !PanelWindowInteractionPolicy.canRestoreHitTesting(
+                        actualFrame: self.panel.frame,
+                        targetFrame: targetFrame
+                    )
+                }
             }
         }
     }

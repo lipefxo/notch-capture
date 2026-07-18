@@ -641,7 +641,7 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.openRoot()
         XCTAssertEqual(viewModel.browseLocation, .root)
-        XCTAssertEqual(viewModel.navigationTitle, "Inbox")
+        XCTAssertEqual(viewModel.navigationTitle, "Capture")
     }
 
     func testMoveUsesFolderIdentityAndDeleteReturnsContentsToInbox() {

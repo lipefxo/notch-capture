@@ -15,9 +15,9 @@ struct SurfaceChromeMetrics: Equatable {
             Self(
                 size: CGSize(width: 178, height: 34),
                 bottomRadius: 16,
-                shadowOpacity: 0.36,
-                shadowRadius: 16,
-                shadowY: 8
+                shadowOpacity: 0,
+                shadowRadius: 0,
+                shadowY: 0
             )
         case .confirmation:
             Self(
@@ -86,6 +86,7 @@ struct NotchSurfaceView: View {
     @State private var surfaceOpacity = 1.0
     @State private var contentOpacity = 1.0
     @State private var contentOffsetY: CGFloat = 0
+    @State private var contentScale = 1.0
     @State private var morphTask: Task<Void, Never>?
 
     init(viewModel: AppViewModel) {
@@ -122,6 +123,7 @@ struct NotchSurfaceView: View {
                     .clipShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
                     .opacity(contentOpacity)
                     .offset(y: contentOffsetY)
+                    .scaleEffect(contentScale, anchor: .top)
                 }
                 .frame(width: metrics.size.width, height: metrics.size.height, alignment: .top)
                 .contentShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
@@ -189,6 +191,7 @@ struct NotchSurfaceView: View {
             surfaceOpacity = 1
             contentOpacity = 1
             contentOffsetY = 0
+            contentScale = 1
             return
         }
 
@@ -211,6 +214,7 @@ struct NotchSurfaceView: View {
             surfaceOpacity = 1
             contentOpacity = 1
             contentOffsetY = 0
+            contentScale = 1
         }
     }
 
@@ -235,7 +239,8 @@ struct NotchSurfaceView: View {
             chromeMetrics = targetMetrics.anchored(at: request.geometry.sourceSize)
             surfaceOpacity = 1
             contentOpacity = 0
-            contentOffsetY = -4
+            contentOffsetY = -NotchMotion.surfaceContentOffset
+            contentScale = 0.97
         }
     }
 
@@ -260,18 +265,32 @@ struct NotchSurfaceView: View {
         guard request.targetState.isVisible,
               let targetMetrics = targetMetrics(for: request) else { return }
 
+        let hasVisibleSource = request.wasVisible && displayedState != nil
         withoutAnimation {
-            activeTransition = .opacity
-            displayedState = viewModel.surfaceState
+            activeTransition = liquidContentTransition
             if chromeMetrics == nil {
                 chromeMetrics = targetMetrics.anchored(at: request.geometry.sourceSize)
             }
             surfaceOpacity = 1
-            contentOpacity = 0
-            contentOffsetY = -4
+            if !hasVisibleSource {
+                displayedState = viewModel.surfaceState
+                contentOpacity = 0
+                contentOffsetY = -NotchMotion.surfaceContentOffset
+                contentScale = 0.97
+            }
         }
         withAnimation(request.spring?.animation ?? NotchMotion.content) {
             chromeMetrics = targetMetrics
+        }
+
+        if hasVisibleSource {
+            withAnimation(NotchMotion.surfaceContentReveal) {
+                displayedState = viewModel.surfaceState
+                contentOpacity = 1
+                contentOffsetY = 0
+                contentScale = 1
+            }
+            return
         }
 
         morphTask = Task { @MainActor in
@@ -279,56 +298,42 @@ struct NotchSurfaceView: View {
                 try? await Task.sleep(for: .seconds(request.contentDelay))
             }
             guard !Task.isCancelled, morphCoordinator.request?.generation == request.generation else { return }
-            withAnimation(NotchMotion.insertion) {
+            withAnimation(NotchMotion.surfaceContentReveal) {
                 contentOpacity = 1
                 contentOffsetY = 0
+                contentScale = 1
             }
         }
     }
 
     private func beginContraction(_ request: PanelMorphRequest) {
         surfaceOpacity = 1
-        withAnimation(NotchMotion.removal) {
-            contentOpacity = 0
-            contentOffsetY = -4
+        activeTransition = liquidContentTransition
+
+        let destinationMetrics: SurfaceChromeMetrics?
+        if request.targetState.isVisible {
+            destinationMetrics = targetMetrics(for: request)
+        } else {
+            destinationMetrics = chromeMetrics?.anchored(at: request.geometry.targetSize)
+        }
+        if let destinationMetrics {
+            withAnimation(request.spring?.animation ?? NotchMotion.content) {
+                chromeMetrics = destinationMetrics
+            }
         }
 
-        morphTask = Task { @MainActor in
-            if request.shellDelay > 0 {
-                try? await Task.sleep(for: .seconds(request.shellDelay))
-            }
-            guard !Task.isCancelled, morphCoordinator.request?.generation == request.generation else { return }
-
-            let destinationMetrics: SurfaceChromeMetrics?
-            if request.targetState.isVisible {
-                destinationMetrics = targetMetrics(for: request)
-            } else {
-                destinationMetrics = chromeMetrics?.anchored(at: request.geometry.targetSize)
-            }
-            if let destinationMetrics {
-                withAnimation(request.spring?.animation ?? NotchMotion.content) {
-                    chromeMetrics = destinationMetrics
-                }
-            }
-
-            guard request.targetState.isVisible else { return }
-            let remainingFade = max(0, NotchMotion.removalDuration - request.shellDelay)
-            if remainingFade > 0 {
-                try? await Task.sleep(for: .seconds(remainingFade))
-            }
-            guard !Task.isCancelled, morphCoordinator.request?.generation == request.generation else { return }
-            withoutAnimation {
-                activeTransition = .opacity
+        if request.targetState.isVisible {
+            withAnimation(NotchMotion.surfaceContentReveal) {
                 displayedState = viewModel.surfaceState
-                contentOpacity = 0
-            }
-            if request.contentDelay > 0 {
-                try? await Task.sleep(for: .seconds(request.contentDelay))
-            }
-            guard !Task.isCancelled, morphCoordinator.request?.generation == request.generation else { return }
-            withAnimation(NotchMotion.insertion) {
                 contentOpacity = 1
                 contentOffsetY = 0
+                contentScale = 1
+            }
+        } else {
+            withAnimation(NotchMotion.easeOut(duration: 0.20)) {
+                contentOpacity = 0
+                contentOffsetY = -NotchMotion.surfaceContentOffset
+                contentScale = 0.97
             }
         }
     }
@@ -345,6 +350,7 @@ struct NotchSurfaceView: View {
                 surfaceOpacity = 1
                 contentOpacity = 1
                 contentOffsetY = 0
+                contentScale = 1
             }
             return
         }
@@ -363,6 +369,7 @@ struct NotchSurfaceView: View {
                 surfaceOpacity = 0
                 contentOpacity = 1
                 contentOffsetY = 0
+                contentScale = 1
             }
             withAnimation(NotchMotion.easeOut(duration: halfDuration)) {
                 surfaceOpacity = 1
@@ -373,6 +380,13 @@ struct NotchSurfaceView: View {
     private func targetMetrics(for request: PanelMorphRequest) -> SurfaceChromeMetrics? {
         SurfaceChromeMetrics.resolve(for: viewModel.surfaceState)?
             .replacing(size: request.geometry.targetSize)
+    }
+
+    private var liquidContentTransition: AnyTransition {
+        .asymmetric(
+            insertion: .opacity.combined(with: .scale(scale: 0.97, anchor: .top)),
+            removal: .opacity
+        )
     }
 
     private func withoutAnimation(_ updates: () -> Void) {
