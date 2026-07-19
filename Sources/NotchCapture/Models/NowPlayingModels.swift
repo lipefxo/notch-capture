@@ -34,11 +34,35 @@ struct NowPlayingSnapshot: Equatable, Sendable {
         return min(1, max(0, position(at: date) / duration))
     }
 
+    func position(at date: Date, previewing scrubFraction: Double?) -> TimeInterval {
+        guard let scrubFraction else { return position(at: date) }
+        return max(0, duration) * min(1, max(0, scrubFraction))
+    }
+
     func seeking(to requestedPosition: TimeInterval, at date: Date) -> Self {
         var copy = self
         copy.position = min(max(0, requestedPosition), max(0, duration))
         copy.positionAnchor = date
         return copy
+    }
+}
+
+enum MusicTimeFormatter {
+    static func string(from seconds: TimeInterval) -> String {
+        guard seconds.isFinite else { return "0:00" }
+        let value = max(0, Int(seconds.rounded(.down)))
+        let hours = value / 3_600
+        let minutes = (value % 3_600) / 60
+        let remainingSeconds = value % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%d:%02d", minutes, remainingSeconds)
+    }
+
+    static func durationString(from duration: TimeInterval) -> String? {
+        guard duration.isFinite, duration > 0 else { return nil }
+        return string(from: duration)
     }
 }
 

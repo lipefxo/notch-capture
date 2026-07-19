@@ -55,6 +55,7 @@ struct ExpandedInboxView: View {
     @State private var composerAppearance = 1.0
     @State private var appearanceGeneration: Int?
     @State private var appearanceTask: Task<Void, Never>?
+    @State private var ledgerScrollTask: Task<Void, Never>?
     @State private var folderHeaderMenuAnchor: CGRect = .zero
     @State private var pomodoroMenuAnchor: CGRect = .zero
 
@@ -94,6 +95,18 @@ struct ExpandedInboxView: View {
     }
     private enum Field {
         case unifiedInput
+    }
+
+    private enum LedgerScrollTarget: Hashable {
+        case folder(UUID)
+        case item(UUID)
+    }
+
+    private var selectedLedgerScrollTarget: LedgerScrollTarget? {
+        guard viewModel.keyboardFocus == .selectedRow else { return nil }
+        if let folderID = viewModel.selectedFolderID { return .folder(folderID) }
+        if let itemID = viewModel.selectedItemID { return .item(itemID) }
+        return nil
     }
 
     var body: some View {
@@ -156,6 +169,7 @@ struct ExpandedInboxView: View {
         }
         .onDisappear {
             appearanceTask?.cancel()
+            ledgerScrollTask?.cancel()
             resetReorderState()
         }
         .onChange(of: morphCoordinator.request) { _, request in
@@ -983,39 +997,72 @@ struct ExpandedInboxView: View {
     }
 
     private var itemFeed: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
-                feedContent
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
+                    feedContent
 
-                Color.clear
-                    .frame(height: ledgerBottomClearance)
-                    .accessibilityHidden(true)
+                    Color.clear
+                        .frame(height: ledgerBottomClearance)
+                        .accessibilityHidden(true)
+                }
+                .background(HiddenScrollIndicatorConfigurator())
+                .ledgerDragRegion(.feed)
+                .overlay(alignment: .top) {
+                    if draggedItemID != nil, reorderTarget != nil, previewPinnedItems.isEmpty {
+                        emptyGroupDropTarget(title: "Drop to pin", isPinned: true)
+                    }
+                }
             }
-            .background(HiddenScrollIndicatorConfigurator())
-            .ledgerDragRegion(.feed)
-            .overlay(alignment: .top) {
-                if draggedItemID != nil, reorderTarget != nil, previewPinnedItems.isEmpty {
-                    emptyGroupDropTarget(title: "Drop to pin", isPinned: true)
+            .coordinateSpace(name: "ledger-feed")
+            .onPreferenceChange(LedgerDragRegionPreferenceKey.self) { [dragRegionStore] in
+                dragRegionStore.regions = $0
+            }
+            .overlay(alignment: .topLeading) {
+                if let presentation = dragPresentation {
+                    LedgerDragPreview(item: presentation.item, phase: presentation.phase)
+                        .scaleEffect(reduceMotion ? 1 : presentation.scale)
+                        .opacity(presentation.opacity)
+                        .position(presentation.position)
+                        .transition(.opacity.animation(NotchMotion.removal))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .simultaneousGesture(reorderGesture)
+            .scrollIndicators(.hidden)
+            .onChange(of: selectedLedgerScrollTarget) { _, target in
+                scrollToSelectedLedgerRow(target, using: proxy)
+            }
+        }
+    }
+
+    private func scrollToSelectedLedgerRow(
+        _ target: LedgerScrollTarget?,
+        using proxy: ScrollViewProxy
+    ) {
+        ledgerScrollTask?.cancel()
+        guard let target, reorderSession == nil else { return }
+
+        ledgerScrollTask = Task { @MainActor in
+            // Lazy rows and a post-deletion replacement selection may not exist
+            // until the next render turn. Ignore a request if navigation has
+            // already advanced to a newer target by then.
+            await Task.yield()
+            guard !Task.isCancelled,
+                  selectedLedgerScrollTarget == target,
+                  reorderSession == nil else { return }
+
+            if reduceMotion {
+                proxy.scrollTo(target)
+            } else {
+                withAnimation(NotchMotion.keyboardScroll) {
+                    // Omitting an anchor asks SwiftUI for the smallest movement
+                    // that makes the selected row visible.
+                    proxy.scrollTo(target)
                 }
             }
         }
-        .coordinateSpace(name: "ledger-feed")
-        .onPreferenceChange(LedgerDragRegionPreferenceKey.self) { [dragRegionStore] in
-            dragRegionStore.regions = $0
-        }
-        .overlay(alignment: .topLeading) {
-            if let presentation = dragPresentation {
-                LedgerDragPreview(item: presentation.item, phase: presentation.phase)
-                    .scaleEffect(reduceMotion ? 1 : presentation.scale)
-                    .opacity(presentation.opacity)
-                    .position(presentation.position)
-                    .transition(.opacity.animation(NotchMotion.removal))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-        }
-        .simultaneousGesture(reorderGesture)
-        .scrollIndicators(.hidden)
     }
 
     @ViewBuilder
@@ -1121,6 +1168,7 @@ struct ExpandedInboxView: View {
             onDelete: { presentDeleteFolder(folder) }
         )
         .ledgerDragRegion(.folder(folder.id))
+        .id(LedgerScrollTarget.folder(folder.id))
     }
 
     private func reorderableRow(_ item: AppViewModel.LedgerItem) -> some View {
@@ -1139,6 +1187,7 @@ struct ExpandedInboxView: View {
                 LedgerInsertionIndicator(placement: target?.placement)
             }
             .ledgerDragRegion(.row(item.id))
+            .id(LedgerScrollTarget.item(item.id))
             .animation(
                 reduceMotion ? nil : NotchMotion.dragLanding.animation,
                 value: isDragSource

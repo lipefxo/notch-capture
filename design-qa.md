@@ -1,4 +1,4 @@
-# Design QA — Reduced Music Controls + Seekable Progress
+# Design QA — Music Timing + Paused Visualization
 
 ## Selected references and native captures
 
@@ -11,6 +11,13 @@
 - Native hardware-notch music + Pomodoro capture: `.context/qa/reduced-music-timer-controls-notch.png`
 - Native expanded capture: `.context/qa/expanded-seekable-progress.png`
 - Focused expanded-player comparison capture: `.context/qa/expanded-seekable-progress-band.png`
+- Final expanded playing capture: `.context/qa/timing-expanded-playing-final.png`
+- Final expanded paused capture: `.context/qa/timing-expanded-paused-final.png`
+- Focused playing/paused bands: `.context/qa/timing-expanded-playing-band-final.png`, `.context/qa/timing-expanded-paused-band-final.png`
+- External reduced music-only playing/paused: `.context/qa/timing-external-music-playing.png`, `.context/qa/timing-external-music-paused.png`
+- External reduced music + Pomodoro playing/paused: `.context/qa/timing-external-both-playing.png`, `.context/qa/timing-external-both-paused.png`
+- Hardware-notch music-only playing/paused: `.context/qa/timing-notch-music-playing.png`, `.context/qa/timing-notch-music-paused.png`
+- Hardware-notch music + Pomodoro playing/paused: `.context/qa/timing-notch-both-playing.png`, `.context/qa/timing-notch-both-paused.png`
 
 ## Findings
 
@@ -19,14 +26,18 @@
 - Hardware-notch layouts use equal 116-point content wings around the centered 156-point simulated notch gap. Music metadata stays on the left; transport and timer controls stay on the right.
 - Artwork, metadata, and audio bars remain one expand target. Each transport icon is an independent 28-point press target and does not expand the panel.
 - The expanded player preserves the selected 3-point visual line inside a 14-point scrub target. The rendered fill visibly reflects the preview position; hover/drag reveals a mint thumb.
+- The reduced player shows a protected monospaced total duration on the artist row. Artist text yields first when the hardware wing or Pomodoro state constrains width.
+- Playing compact states retain the mint audio bars; paused states remove the bars and reclaim their width without moving or clipping transport and Pomodoro controls.
+- The open player shows timestamp-derived elapsed time on the left of the seek line and total duration on the right. Paused captures hold the elapsed value while changing the center control to Play.
 - SF Symbols, native system typography, ink/graphite/mint tokens, press styles, reduced-motion handling, and accessibility labels reuse the existing design system.
-- Side-by-side visual comparison of the two reported states and five native captures found no P0/P1/P2 clipping, spacing, hierarchy, or legibility issues.
+- Side-by-side visual comparison of the reported states and all playing/paused native captures found no P0/P1/P2 clipping, spacing, hierarchy, or legibility issues.
 
 ## Verification
 
 - Native external and simulated hardware-notch states were rendered through the AppKit-hosted SwiftUI snapshot path for music-only and music + Pomodoro.
 - The expanded player was rendered with a timestamp-derived non-zero progress fill.
-- The Swift package suite passes 202 tests, including locale-independent parsing, playing/paused timestamp math, seek clamping, and reduced transport hook routing without expansion.
+- Formatter and model coverage now includes zero, negative, unavailable, minute, hour, live elapsed, paused elapsed, and scrub-preview values.
+- The complete Swift package suite passes 205 tests, and the release app passes strict ad-hoc signature verification.
 
 ---
 

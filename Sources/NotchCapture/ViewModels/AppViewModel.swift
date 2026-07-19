@@ -1343,6 +1343,12 @@ extension AppViewModel {
             model.nowPlaying = nil
             model.nowPlayingArtwork = nil
         }
+        if CommandLine.arguments.contains("--preview-music-paused"),
+           var snapshot = model.nowPlaying {
+            snapshot.isPlaying = false
+            snapshot.positionAnchor = .now
+            model.nowPlaying = snapshot
+        }
         if CommandLine.arguments.contains("--preview-folder-search") {
             model.composerText = "Projects"
         } else if CommandLine.arguments.contains("--preview-folder") {

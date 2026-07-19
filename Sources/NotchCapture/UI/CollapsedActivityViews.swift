@@ -107,14 +107,16 @@ struct CollapsedActivityPillView: View {
             HStack(spacing: 6) {
                 artwork(size: artworkSize)
                 trackText(snapshot)
-                AudioBarsView(isPlaying: snapshot.isPlaying)
+                if snapshot.isPlaying {
+                    AudioBarsView(isPlaying: true)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: 34, alignment: .leading)
             .contentShape(Rectangle())
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
         .help("Open \(snapshot.title) in Notch Capture")
-        .accessibilityLabel("Open \(snapshot.title) by \(snapshot.artist)")
+        .accessibilityLabel(musicAccessibilityLabel(snapshot))
     }
 
     private func artwork(size: CGFloat) -> some View {
@@ -140,13 +142,33 @@ struct CollapsedActivityPillView: View {
             Text(snapshot.title)
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(NotchTheme.primaryText)
-            Text(snapshot.artist)
-                .font(.system(size: 8.5))
-                .foregroundStyle(NotchTheme.secondaryText)
+            HStack(spacing: 4) {
+                Text(snapshot.artist)
+                    .font(.system(size: 8.5))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+                if let duration = MusicTimeFormatter.durationString(from: snapshot.duration) {
+                    Text(duration)
+                        .font(.system(size: 7.5, weight: .medium, design: .monospaced))
+                        .monospacedDigit()
+                        .foregroundStyle(NotchTheme.secondaryText)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .layoutPriority(2)
+                        .accessibilityHidden(true)
+                }
+            }
         }
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .layoutPriority(1)
+    }
+
+    private func musicAccessibilityLabel(_ snapshot: NowPlayingSnapshot) -> String {
+        let base = "Open \(snapshot.title) by \(snapshot.artist)"
+        guard let duration = MusicTimeFormatter.durationString(from: snapshot.duration) else {
+            return base
+        }
+        return "\(base), duration \(duration)"
     }
 }
 

@@ -2,6 +2,20 @@ import XCTest
 @testable import NotchCapture
 
 final class NowPlayingModelTests: XCTestCase {
+    func testMusicTimeFormatterUsesCompactTrackFormats() {
+        XCTAssertEqual(MusicTimeFormatter.string(from: 0), "0:00")
+        XCTAssertEqual(MusicTimeFormatter.string(from: 214), "3:34")
+        XCTAssertEqual(MusicTimeFormatter.string(from: 3_723), "1:02:03")
+        XCTAssertEqual(MusicTimeFormatter.string(from: -10), "0:00")
+    }
+
+    func testMusicTimeFormatterHidesUnavailableDuration() {
+        XCTAssertNil(MusicTimeFormatter.durationString(from: 0))
+        XCTAssertNil(MusicTimeFormatter.durationString(from: -1))
+        XCTAssertNil(MusicTimeFormatter.durationString(from: .nan))
+        XCTAssertEqual(MusicTimeFormatter.durationString(from: 214), "3:34")
+    }
+
     func testPlayingPositionUsesAnchorAndClampsToDuration() {
         let anchor = Date(timeIntervalSinceReferenceDate: 100)
         let snapshot = NowPlayingSnapshot(
@@ -29,6 +43,17 @@ final class NowPlayingModelTests: XCTestCase {
 
         XCTAssertEqual(snapshot.position(at: anchor.addingTimeInterval(30)), 42)
         XCTAssertEqual(snapshot.progress(at: anchor.addingTimeInterval(30)), 0.42)
+    }
+
+    func testScrubPreviewOverridesTimestampPositionAndClampsFraction() {
+        let anchor = Date(timeIntervalSinceReferenceDate: 100)
+        let snapshot = makeSnapshot(source: .spotify, isPlaying: true, anchor: anchor)
+        let date = anchor.addingTimeInterval(30)
+
+        XCTAssertEqual(snapshot.position(at: date, previewing: nil), 40)
+        XCTAssertEqual(snapshot.position(at: date, previewing: 0.75), 75)
+        XCTAssertEqual(snapshot.position(at: date, previewing: -1), 0)
+        XCTAssertEqual(snapshot.position(at: date, previewing: 2), 100)
     }
 
     func testOptimisticSeekingClampsAndReanchorsPosition() {

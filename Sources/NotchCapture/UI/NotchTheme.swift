@@ -175,6 +175,7 @@ enum NotchMotion {
     static let onboarding = onboardingSpring.animation
     static let confirmation = confirmationSpring.animation
     static let filter = selection.animation
+    static let keyboardScroll = selection.animation
     static let controlPress = easeOut(duration: controlPressDuration)
     static let hover = easeOut(duration: hoverDuration)
     static let insertion = easeOut(duration: insertionDuration)
