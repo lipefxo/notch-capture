@@ -17,10 +17,18 @@ private struct MusicPlayerBand: View {
 
     var body: some View {
         HStack(spacing: 11) {
-            artwork
+            ArtworkPlaybackControl(
+                artwork: viewModel.nowPlayingArtwork,
+                trackKey: snapshot.trackKey,
+                title: snapshot.title,
+                isPlaying: snapshot.isPlaying,
+                size: 40,
+                cornerRadius: 8,
+                action: viewModel.musicPlayPause
+            )
 
             VStack(alignment: .leading, spacing: 4) {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                VStack(alignment: .leading, spacing: 0) {
                     Text(snapshot.title)
                         .font(.system(size: 11.5, weight: .semibold))
                         .foregroundStyle(NotchTheme.primaryText)
@@ -42,9 +50,8 @@ private struct MusicPlayerBand: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 2) {
-                transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious)
-                transportButton(snapshot.isPlaying ? "pause.fill" : "play.fill", label: snapshot.isPlaying ? "Pause" : "Play", action: viewModel.musicPlayPause)
-                transportButton("forward.fill", label: "Next track", action: viewModel.musicNext)
+                transportButton("chevron.left", label: "Previous track", action: viewModel.musicPrevious, compact: true)
+                transportButton("chevron.right", label: "Next track", action: viewModel.musicNext, compact: true)
             }
         }
         .padding(.horizontal, 14)
@@ -57,27 +64,16 @@ private struct MusicPlayerBand: View {
         .accessibilityLabel(playerAccessibilityLabel)
     }
 
-    private var artwork: some View {
-        Group {
-            if let image = viewModel.nowPlayingArtwork {
-                Image(nsImage: image).resizable().scaledToFill()
-            } else {
-                Image(systemName: "music.note")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(NotchTheme.mint)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.white.opacity(0.055))
-            }
-        }
-        .frame(width: 40, height: 40)
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-
-    private func transportButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+    private func transportButton(
+        _ icon: String,
+        label: String,
+        action: @escaping () -> Void,
+        compact: Bool = false
+    ) -> some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 10.5, weight: .semibold))
-                .frame(width: 25, height: 25)
+                .frame(width: compact ? 16 : 25, height: 25)
         }
         .buttonStyle(PressableIconButtonStyle())
         .notchHitTarget(Circle())

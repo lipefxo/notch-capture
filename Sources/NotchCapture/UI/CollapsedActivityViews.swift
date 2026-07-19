@@ -32,10 +32,10 @@ struct CollapsedActivityPillView: View {
         switch viewModel.collapsedActivityContent {
         case let .musicOnly(snapshot):
             HStack(spacing: 6) {
-                musicInfoButton(snapshot, artworkSize: 22)
+                musicInfoView(snapshot, artworkSize: 22)
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
-                    .frame(width: 84)
+                    .frame(width: 52)
             }
             .padding(.horizontal, 12)
             .frame(width: 280, height: 34)
@@ -53,10 +53,10 @@ struct CollapsedActivityPillView: View {
             .accessibilityLabel("Open focus timer")
         case let .both(snapshot, state):
             HStack(spacing: 6) {
-                musicInfoButton(snapshot, artworkSize: 22)
+                musicInfoView(snapshot, artworkSize: 22)
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
-                    .frame(width: 64)
+                    .frame(width: 42)
                 PomodoroCountdownLabel(state: state)
                     .frame(width: 42)
             }
@@ -70,7 +70,7 @@ struct CollapsedActivityPillView: View {
     @ViewBuilder
     private var leadingWing: some View {
         if let snapshot = viewModel.nowPlaying {
-            musicInfoButton(snapshot, artworkSize: 22)
+            musicInfoView(snapshot, artworkSize: 22)
                 .padding(.leading, 2)
                 .frame(maxHeight: 34)
         }
@@ -81,7 +81,7 @@ struct CollapsedActivityPillView: View {
         if let snapshot = viewModel.nowPlaying {
             HStack(spacing: viewModel.pomodoro.isActive ? 6 : 0) {
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
-                    .frame(width: viewModel.pomodoro.isActive ? 64 : nil)
+                    .frame(width: viewModel.pomodoro.isActive ? 42 : nil)
                 if viewModel.pomodoro.isActive {
                     PomodoroCountdownLabel(state: viewModel.pomodoro)
                         .frame(width: 42)
@@ -99,42 +99,30 @@ struct CollapsedActivityPillView: View {
         }
     }
 
-    private func musicInfoButton(
+    private func musicInfoView(
         _ snapshot: NowPlayingSnapshot,
         artworkSize: CGFloat
     ) -> some View {
-        Button { viewModel.openExpanded() } label: {
-            HStack(spacing: 6) {
-                artwork(size: artworkSize)
-                trackText(snapshot)
-                if snapshot.isPlaying {
-                    AudioBarsView(isPlaying: true)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: 34, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
-        .help("Open \(snapshot.title) in Notch Capture")
-        .accessibilityLabel(musicAccessibilityLabel(snapshot))
-    }
+        HStack(spacing: 6) {
+            ArtworkPlaybackControl(
+                artwork: viewModel.nowPlayingArtwork,
+                trackKey: snapshot.trackKey,
+                title: snapshot.title,
+                isPlaying: snapshot.isPlaying,
+                size: artworkSize,
+                cornerRadius: 5,
+                action: viewModel.musicPlayPause
+            )
 
-    private func artwork(size: CGFloat) -> some View {
-        Group {
-            if let image = viewModel.nowPlayingArtwork {
-                Image(nsImage: image)
-                    .resizable()
-                    .scaledToFill()
-            } else {
-                Image(systemName: "music.note")
-                    .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(NotchTheme.mint)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(Color.white.opacity(0.07))
+            Button { viewModel.openExpanded() } label: {
+                trackText(snapshot)
+                    .frame(maxWidth: .infinity, maxHeight: 34, alignment: .leading)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
+            .help("Open \(snapshot.title) in Notch Capture")
+            .accessibilityLabel(musicAccessibilityLabel(snapshot))
         }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 
     private func trackText(_ snapshot: NowPlayingSnapshot) -> some View {
@@ -142,21 +130,9 @@ struct CollapsedActivityPillView: View {
             Text(snapshot.title)
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(NotchTheme.primaryText)
-            HStack(spacing: 4) {
-                Text(snapshot.artist)
-                    .font(.system(size: 8.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
-                if let duration = MusicTimeFormatter.durationString(from: snapshot.duration) {
-                    Text(duration)
-                        .font(.system(size: 7.5, weight: .medium, design: .monospaced))
-                        .monospacedDigit()
-                        .foregroundStyle(NotchTheme.secondaryText)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .layoutPriority(2)
-                        .accessibilityHidden(true)
-                }
-            }
+            Text(snapshot.artist)
+                .font(.system(size: 8.5))
+                .foregroundStyle(NotchTheme.secondaryText)
         }
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -164,11 +140,7 @@ struct CollapsedActivityPillView: View {
     }
 
     private func musicAccessibilityLabel(_ snapshot: NowPlayingSnapshot) -> String {
-        let base = "Open \(snapshot.title) by \(snapshot.artist)"
-        guard let duration = MusicTimeFormatter.durationString(from: snapshot.duration) else {
-            return base
-        }
-        return "\(base), duration \(duration)"
+        "Open \(snapshot.title) by \(snapshot.artist)"
     }
 }
 
@@ -178,13 +150,10 @@ private struct CollapsedTransportControls: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            control("backward.fill", label: "Previous track") {
+            control("chevron.left", label: "Previous track") {
                 viewModel.musicPrevious()
             }
-            control(snapshot.isPlaying ? "pause.fill" : "play.fill", label: snapshot.isPlaying ? "Pause" : "Play") {
-                viewModel.musicPlayPause()
-            }
-            control("forward.fill", label: "Next track") {
+            control("chevron.right", label: "Next track") {
                 viewModel.musicNext()
             }
         }
@@ -217,31 +186,6 @@ private struct CollapsedTransportButtonStyle: ButtonStyle {
             .notchHitTarget(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
-    }
-}
-
-struct AudioBarsView: View {
-    let isPlaying: Bool
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-
-    var body: some View {
-        TimelineView(.animation(minimumInterval: 1 / 20, paused: !isPlaying || reduceMotion)) { context in
-            let time = context.date.timeIntervalSinceReferenceDate
-            HStack(alignment: .center, spacing: 1.5) {
-                ForEach(0..<4, id: \.self) { index in
-                    Capsule()
-                        .fill(NotchTheme.mint)
-                        .frame(width: 1.5, height: height(index: index, time: time))
-                }
-            }
-            .frame(width: 10, height: 15)
-        }
-        .accessibilityHidden(true)
-    }
-
-    private func height(index: Int, time: TimeInterval) -> CGFloat {
-        guard isPlaying, !reduceMotion else { return [5, 10, 7, 12][index] }
-        return 4 + CGFloat((sin((time * 5.2) + Double(index) * 1.7) + 1) * 4.5)
     }
 }
 

@@ -1,3 +1,51 @@
+# Design QA — Adaptive Album Playback Control
+
+## Comparison
+
+- Source visual truth: `/Users/lipe/.codex/generated_images/019f7aff-1a34-7880-8ccf-48a886dfa905/exec-58ad5f97-8750-42df-ae0d-14a988d62bb0.png` (1536 × 1024 pixels)
+- Implementation state board: `.context/qa/album-control-implementation-state-board.png` (1536 × 1024 pixels)
+- Full-view comparison: `.context/qa/album-control-full-comparison.png` (source board beside the full expanded playing surface)
+- Focused comparison: `.context/qa/album-control-focused-comparison.png` (source state board beside all eight focused implementation states)
+- Expanded captures: `.context/qa/album-control-expanded-playing-final.png`, `.context/qa/album-control-expanded-playing-hover-final.png`, `.context/qa/album-control-expanded-paused-final.png`, `.context/qa/album-control-expanded-paused-hover-final.png`
+- Compact captures: `.context/qa/album-control-compact-playing-final.png`, `.context/qa/album-control-compact-playing-hover-final.png`, `.context/qa/album-control-compact-paused-final.png`, `.context/qa/album-control-compact-paused-hover-final.png`
+- Hardware-notch captures: `.context/qa/album-control-hardware-playing-final.png`, `.context/qa/album-control-hardware-playing-hover-final.png`
+- Viewports: expanded 568 × 640 points at 2×; compact 300 × 34 points at 2×; simulated hardware-notch 800 × 36 points at 2×
+- States: playing/rest, playing/hover-or-focus, paused/rest, and paused/hover-or-focus
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The 40 × 40 and 22 × 22 album tiles preserve the established radii, spacing, system typography, graphite surface, mint progress control, and separate previous/next affordances.
+- Playing/rest displays four lightweight activity bars inside the artwork. Playing/hover-or-focus replaces them with Pause; paused/rest leaves the cover unobstructed; paused/hover-or-focus displays Play.
+- The activity bars and transport glyph are the only blended pixels. Their base color is extracted from the cover's dominant usable hue, with a high-brightness neutral fallback for monochrome artwork, and difference compositing supplies local contrast without a cover-wide veil.
+- Compact metadata now contains title and artist only. The prior duration/current-time line is intentionally absent per the final direction, and the two-line stack remains legible in both external and hardware-notch layouts.
+- Expanded elapsed and total timestamps remain unchanged around the progress control. Previous and next remain independent controls; the standalone play/pause control and external waveform are removed.
+- Typography, spacing, color, artwork crop quality, SF Symbol weight, and copy were compared in the combined evidence. The implementation remains denser than the conceptual board because it preserves the production player's existing dimensions and spacing as requested.
+
+## Comparison history
+
+1. The first live SwiftUI difference-blend pass produced correct rest states but exposed a persistent-host rendering defect in static hover captures, where sibling labels and controls disappeared.
+2. The overlay was moved into an offscreen artwork render using Core Graphics difference compositing. The shared control was then reduced to one mounted visual state at a time, preserving the quick crossfade while stopping hidden waveform updates.
+3. Final expanded, compact, and simulated hardware-notch captures retain every surrounding label and control in hover/focus states. The waveform and Play/Pause glyph remain confined to the artwork, with no global dimming layer.
+
+## Interaction and accessibility checks
+
+- The artwork is its own button and routes directly to the existing play/pause intent; compact metadata remains a separate button that opens the expanded surface.
+- Pointer hover and keyboard focus share the same visible transport state. Help text, accessibility labels, and the playing/paused accessibility value describe the artwork action.
+- Reduce Motion freezes the playing waveform and uses the existing reduced-motion transition. The control keeps a static playback indicator rather than removing state information.
+- Dominant-hue extraction is keyed to artwork identity instead of running on every animation frame. The animated renderer is mounted only while playing at rest.
+- Existing view-model hook coverage confirms music intents route without changing the surface. Added color-extraction tests cover dominant chromatic artwork and monochrome fallback.
+
+## Verification
+
+- Native AppKit-hosted SwiftUI snapshots cover all eight expanded/compact playback combinations plus the simulated hardware-notch playing and hover states.
+- The complete Swift package suite passes 207 tests with zero failures.
+- The debug app is rebuilt and ad-hoc signed for native snapshot verification.
+
+final result: passed
+
+---
+
 # Design QA — Music Timing + Paused Visualization
 
 ## Selected references and native captures
