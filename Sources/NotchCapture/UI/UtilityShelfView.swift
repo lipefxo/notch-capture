@@ -93,7 +93,7 @@ private struct MusicPlayerBand: View {
     }
 }
 
-private struct MusicDurationLabel: View {
+struct MusicDurationLabel: View {
     let duration: String
 
     var body: some View {
@@ -118,7 +118,7 @@ private struct MusicDurationLabel: View {
     }
 }
 
-private struct MusicProgressControl: View {
+struct MusicProgressControl: View {
     let snapshot: NowPlayingSnapshot
     let onSeek: (TimeInterval) -> Void
 

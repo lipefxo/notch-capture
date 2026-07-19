@@ -483,6 +483,45 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         XCTAssertEqual(anchored.shadowY, 0)
         XCTAssertLessThanOrEqual(anchored.bottomRadius, 19)
     }
+
+    func testExtendedCompactChromeUsesTheSharedPresetGeometry() throws {
+        let capture = try XCTUnwrap(
+            SurfaceChromeMetrics.resolve(for: .collapsed, compactPresentationSize: .extended)
+        )
+        let activity = try XCTUnwrap(
+            SurfaceChromeMetrics.resolve(for: .collapsedActivity, compactPresentationSize: .extended)
+        )
+
+        XCTAssertEqual(capture.size, CGSize(width: 300, height: 50))
+        XCTAssertEqual(activity.size, CGSize(width: 440, height: 56))
+        XCTAssertEqual(capture.bottomRadius, 22)
+        XCTAssertEqual(activity.bottomRadius, 22)
+        XCTAssertEqual(capture.shadowOpacity, 0)
+        XCTAssertEqual(activity.shadowOpacity, 0)
+    }
+
+    func testHardwareNotchActivityPreservesNotchAndUsesPresetWings() {
+        let layout = AppViewModel.CollapsedActivityLayout(
+            hasHardwareNotch: true,
+            notchWidth: 188,
+            notchBandHeight: 32
+        )
+        let minimal = CompactSurfaceMetrics.resolve(
+            state: .collapsedActivity,
+            presentationSize: .minimal,
+            activityLayout: layout
+        )
+        let extended = CompactSurfaceMetrics.resolve(
+            state: .collapsedActivity,
+            presentationSize: .extended,
+            activityLayout: layout
+        )
+
+        XCTAssertEqual(minimal?.contentSize.width, 188 + (116 * 2))
+        XCTAssertEqual(extended?.contentSize.width, 188 + (176 * 2))
+        XCTAssertEqual(extended?.shellSize.width, 188 + (176 * 2) + 20)
+        XCTAssertEqual(extended?.shellSize.height, 56)
+    }
 }
 
 final class PanelShadowApronTests: XCTestCase {

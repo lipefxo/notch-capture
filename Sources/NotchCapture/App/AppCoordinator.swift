@@ -10,6 +10,7 @@ final class AppCoordinator {
         static let onboardingComplete = "onboardingComplete"
         static let autoHideExternalPill = "autoHideExternalPill"
         static let timeFormat = "timeFormat"
+        static let compactPresentationSize = "compactPresentationSize"
         static let pomodoroDuration = "pomodoroDuration"
 
         static func shortcut(_ action: GlobalHotKeyAction, field: String) -> String {
@@ -90,6 +91,9 @@ final class AppCoordinator {
         let timeFormat = AppViewModel.TimeFormat.fromStoredValue(
             defaults.string(forKey: DefaultsKey.timeFormat)
         )
+        let compactPresentationSize = CompactPresentationSize.fromStoredValue(
+            defaults.string(forKey: DefaultsKey.compactPresentationSize)
+        )
         let initialState: AppViewModel.SurfaceState
         if previewMode {
             initialState = Self.requestedPreviewState()
@@ -116,7 +120,8 @@ final class AppCoordinator {
                 surfaceState: initialState,
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
                 launchAtLogin: loginItemService.isEnabled,
-                timeFormat: timeFormat
+                timeFormat: timeFormat,
+                compactPresentationSize: compactPresentationSize
             )
         }
         if let storeRecoveryBackupURL {
@@ -130,6 +135,9 @@ final class AppCoordinator {
             automaticDismissalEnabled: !previewMode
         ) { _ in
             AnyView(NotchSurfaceView(viewModel: viewModel))
+        }
+        self.panelController.compactPresentationSizeProvider = { [weak viewModel] in
+            viewModel?.compactPresentationSize ?? .minimal
         }
         self.panelController.panel.onLedgerRowKeyboardCommand = { [weak viewModel] command in
             viewModel?.performSelectedRowKeyboardCommand(command) ?? false
@@ -308,7 +316,7 @@ final class AppCoordinator {
             presentation.present(NotchMenu(
                 title: "@probe",
                 anchor: CGRect(x: 120, y: 150, width: 24, height: 24),
-                items: [NotchMenuItem(title: "Delete Tag", icon: "trash", role: .destructive, action: {})]
+                items: [NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive, action: {})]
             ))
             try? await Task.sleep(for: .seconds(0.6))
             presentation.dismissMenu()
@@ -519,6 +527,9 @@ final class AppCoordinator {
         hooks.onSetTimeFormat = { [weak self] timeFormat in
             self?.defaults.set(timeFormat.rawValue, forKey: DefaultsKey.timeFormat)
         }
+        hooks.onSetCompactPresentationSize = { [weak self] presentationSize in
+            self?.defaults.set(presentationSize.rawValue, forKey: DefaultsKey.compactPresentationSize)
+        }
         hooks.onMusicPlayPause = { [weak self] in self?.nowPlayingService.playPause() }
         hooks.onMusicNext = { [weak self] in self?.nowPlayingService.nextTrack() }
         hooks.onMusicPrevious = { [weak self] in self?.nowPlayingService.previousTrack() }
@@ -603,6 +614,18 @@ final class AppCoordinator {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
                     self.updateIdlePillVisibility()
+                }
+            }
+            .store(in: &cancellables)
+
+        viewModel.$compactPresentationSize
+            .dropFirst()
+            .sink { [weak self] _ in
+                guard let self, [.collapsed, .collapsedActivity].contains(self.viewModel.surfaceState) else { return }
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.updateCollapsedActivityLayout()
+                    self.panelController.refreshCompactPresentation()
                 }
             }
             .store(in: &cancellables)

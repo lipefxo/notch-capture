@@ -9,20 +9,29 @@ struct SurfaceChromeMetrics: Equatable {
 
     /// Sizes come from `PanelState.nominalSize` — the AppKit window and the
     /// SwiftUI chrome must never disagree about surface dimensions.
-    static func resolve(for state: AppViewModel.SurfaceState) -> Self? {
+    static func resolve(
+        for state: AppViewModel.SurfaceState,
+        compactPresentationSize: CompactPresentationSize = .minimal,
+        activityLayout: AppViewModel.CollapsedActivityLayout? = nil
+    ) -> Self? {
         switch state {
         case .dormant:
-            nil
+            return nil
         case .collapsed, .collapsedActivity:
-            Self(
-                size: state.panelState.nominalSize,
-                bottomRadius: 16,
+            let compactMetrics = CompactSurfaceMetrics.resolve(
+                state: state.panelState,
+                presentationSize: compactPresentationSize,
+                activityLayout: activityLayout
+            )!
+            return Self(
+                size: compactMetrics.shellSize,
+                bottomRadius: compactMetrics.bottomRadius,
                 shadowOpacity: 0,
                 shadowRadius: 0,
                 shadowY: 0
             )
         case .confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings:
-            Self(
+            return Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: NotchTheme.surfaceBottomRadius,
                 shadowOpacity: 0.46,
@@ -77,11 +86,11 @@ struct NotchSurfaceView: View {
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
         _displayedState = State(
-            initialValue: SurfaceChromeMetrics.resolve(for: viewModel.surfaceState) == nil
+            initialValue: chromeMetrics(for: viewModel) == nil
                 ? nil
                 : viewModel.surfaceState
         )
-        _chromeMetrics = State(initialValue: SurfaceChromeMetrics.resolve(for: viewModel.surfaceState))
+        _chromeMetrics = State(initialValue: Self.chromeMetrics(for: viewModel))
     }
 
     var body: some View {
@@ -123,6 +132,12 @@ struct NotchSurfaceView: View {
         .clipped()
         .onChange(of: viewModel.surfaceState) { oldState, newState in
             handleSurfaceStateChange(from: oldState, to: newState)
+        }
+        .onChange(of: viewModel.compactPresentationSize) { _, _ in
+            refreshCompactChrome()
+        }
+        .onChange(of: viewModel.collapsedActivityLayout) { _, _ in
+            refreshCompactChrome()
         }
         .onChange(of: morphCoordinator.request) { _, request in
             guard let request else { return }
@@ -171,7 +186,7 @@ struct NotchSurfaceView: View {
         // Presentation teardown on state changes is owned by AppCoordinator's
         // state sink, which runs even when this view's updates are deferred.
 
-        guard let newMetrics = SurfaceChromeMetrics.resolve(for: newState) else {
+        guard let newMetrics = chromeMetrics(for: viewModel, state: newState) else {
             // The morph coordinator keeps the last visible shell mounted while
             // AppKit completes the retreat into the notch.
             return
@@ -187,7 +202,7 @@ struct NotchSurfaceView: View {
             return
         }
 
-        guard let oldMetrics = SurfaceChromeMetrics.resolve(for: oldState),
+        guard let oldMetrics = chromeMetrics(for: viewModel, state: oldState),
               oldMetrics.size == newMetrics.size else {
             // Size-changing transitions are staged by PanelMorphCoordinator.
             return
@@ -379,8 +394,34 @@ struct NotchSurfaceView: View {
     }
 
     private func targetMetrics(for request: PanelMorphRequest) -> SurfaceChromeMetrics? {
-        SurfaceChromeMetrics.resolve(for: viewModel.surfaceState)?
+        chromeMetrics(for: viewModel)?
             .replacing(size: request.geometry.targetSize)
+    }
+
+    private static func chromeMetrics(
+        for viewModel: AppViewModel,
+        state: AppViewModel.SurfaceState? = nil
+    ) -> SurfaceChromeMetrics? {
+        SurfaceChromeMetrics.resolve(
+            for: state ?? viewModel.surfaceState,
+            compactPresentationSize: viewModel.compactPresentationSize,
+            activityLayout: viewModel.collapsedActivityLayout
+        )
+    }
+
+    private func chromeMetrics(
+        for viewModel: AppViewModel,
+        state: AppViewModel.SurfaceState? = nil
+    ) -> SurfaceChromeMetrics? {
+        Self.chromeMetrics(for: viewModel, state: state)
+    }
+
+    private func refreshCompactChrome() {
+        guard [.collapsed, .collapsedActivity].contains(viewModel.surfaceState),
+              let metrics = chromeMetrics(for: viewModel) else { return }
+        withAnimation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content) {
+            chromeMetrics = metrics
+        }
     }
 
     private var liquidContentTransition: AnyTransition {
@@ -448,28 +489,36 @@ struct CollapsedPillView: View {
     @ObservedObject var viewModel: AppViewModel
     @State private var isHovered = false
 
+    private var metrics: CompactSurfaceMetrics {
+        CompactSurfaceMetrics.capture(for: viewModel.compactPresentationSize)
+    }
+
+    private var isExtended: Bool { viewModel.compactPresentationSize == .extended }
+
     var body: some View {
         Button {
             viewModel.openExpanded()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: isExtended ? 12 : 8) {
                 Image(systemName: "square.and.pencil")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: isExtended ? 16 : 11, weight: .semibold))
                     .foregroundStyle(NotchTheme.mint)
                 Text("Capture")
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: isExtended ? 14 : 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.82))
                 Text(viewModel.shortcutDisplayValue(for: .openComposer))
-                    .font(.system(size: 9, weight: .medium, design: .rounded))
+                    .font(.system(size: isExtended ? 11 : 9, weight: .medium, design: .rounded))
                     .foregroundStyle(NotchTheme.tertiaryText)
             }
-            .frame(width: 178, height: 34)
+            .frame(width: metrics.contentSize.width, height: metrics.contentSize.height)
             .overlay(alignment: .bottom) {
-                Capsule()
-                    .fill(isHovered ? NotchTheme.mint.opacity(0.65) : Color.white.opacity(0.1))
-                    .frame(width: 38, height: 1)
-                    .scaleEffect(x: isHovered ? 1 : 22 / 38)
-                    .padding(.bottom, 3)
+                if !isExtended {
+                    Capsule()
+                        .fill(isHovered ? NotchTheme.mint.opacity(0.65) : Color.white.opacity(0.1))
+                        .frame(width: 38, height: 1)
+                        .scaleEffect(x: isHovered ? 1 : 22 / 38)
+                        .padding(.bottom, 3)
+                }
             }
             .contentShape(Rectangle())
         }

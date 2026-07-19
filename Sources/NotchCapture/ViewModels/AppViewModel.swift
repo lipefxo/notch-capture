@@ -74,6 +74,9 @@ final class AppViewModel: ObservableObject {
     @Published var timeFormat: TimeFormat {
         didSet { hooks.onSetTimeFormat(timeFormat) }
     }
+    @Published var compactPresentationSize: CompactPresentationSize {
+        didSet { hooks.onSetCompactPresentationSize(compactPresentationSize) }
+    }
     /// False when Sparkle is inert (bare `swift run`, design previews).
     @Published var updatesEnabled = false
     @Published var nowPlaying: NowPlayingSnapshot?
@@ -121,6 +124,7 @@ final class AppViewModel: ObservableObject {
         autoHideExternalPill: Bool = false,
         launchAtLogin: Bool = false,
         timeFormat: TimeFormat = .twelveHour,
+        compactPresentationSize: CompactPresentationSize = .minimal,
         nowPlaying: NowPlayingSnapshot? = nil,
         nowPlayingArtwork: NSImage? = nil,
         pomodoro: PomodoroState = PomodoroState(),
@@ -138,6 +142,7 @@ final class AppViewModel: ObservableObject {
         self.autoHideExternalPill = autoHideExternalPill
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
+        self.compactPresentationSize = compactPresentationSize
         self.nowPlaying = nowPlaying
         self.nowPlayingArtwork = nowPlayingArtwork
         self.pomodoro = pomodoro
@@ -1502,6 +1507,12 @@ extension AppViewModel {
                 phase: .running(endsAt: .now.addingTimeInterval(24 * 60 + 23))
             )
         )
+        if let compactSizeArgument = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--preview-compact-size=")
+        }) {
+            let value = String(compactSizeArgument.dropFirst("--preview-compact-size=".count))
+            model.compactPresentationSize = CompactPresentationSize.fromStoredValue(value)
+        }
         model.selectedItemID = selectedTask.id
         if CommandLine.arguments.contains("--preview-music-only") {
             model.pomodoro = PomodoroState(duration: 25 * 60)

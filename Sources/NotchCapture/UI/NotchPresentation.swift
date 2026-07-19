@@ -483,7 +483,7 @@ struct NotchSegmentedControl<Option: Hashable & Identifiable & RawRepresentable>
     var body: some View {
         HStack(spacing: 3) {
             ForEach(options, id: \.id) { option in
-                Button(option.rawValue) { selection = option }
+                Button(option.rawValue.capitalized) { selection = option }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(selection == option ? Color.black.opacity(0.8) : NotchTheme.secondaryText)

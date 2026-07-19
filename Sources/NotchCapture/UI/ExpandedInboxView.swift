@@ -466,7 +466,7 @@ struct ExpandedInboxView: View {
     private func presentFolderActions(_ folder: AppViewModel.FolderSummary) {
         presentation.present(NotchMenu(title: folder.name, anchor: folderHeaderMenuAnchor, items: [
             NotchMenuItem(title: "Rename Folder", icon: "pencil") { beginRenaming(folder) },
-            NotchMenuItem(title: "Delete Folder", icon: "trash", role: .destructive) { presentDeleteFolder(folder) },
+            NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { presentDeleteFolder(folder) },
         ]))
     }
 
@@ -485,7 +485,7 @@ struct ExpandedInboxView: View {
                 focusComposer()
             },
             NotchMenuItem(title: "Rename Tag", icon: "pencil") { presentRenameTag(tag) },
-            NotchMenuItem(title: "Delete Tag", icon: "trash", role: .destructive) { presentDeleteTag(tag, count: count) },
+            NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { presentDeleteTag(tag, count: count) },
         ]))
     }
 

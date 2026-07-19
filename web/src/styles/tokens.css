@@ -1,0 +1,25 @@
+:root {
+  --page-bg: #ffffff;
+  --page-alt: #f5f5f7;
+  --page-text: #1d1d1f;
+  --page-secondary: #6e6e73;
+  --page-hairline: #d2d2d7;
+  --mint: #3ac780;
+  --mint-hover: #31b973;
+  --ink: #060607;
+  --graphite: #121314;
+  --raised-graphite: #1c1d1f;
+  --field: #111112;
+  --due: #7a7ddb;
+  --tag-cyan: #4fe3ff;
+  --tag-indigo: #766bff;
+  --tag-magenta: #ee57f0;
+  --tag-rose: #ff6b8c;
+  --tag-amber: #ffc74d;
+  --tag-green: #47f0a6;
+  --content-width: 980px;
+  --wide-width: 1180px;
+  --section-space: clamp(6rem, 11vw, 9.5rem);
+  --radius-large: 28px;
+  --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
+}

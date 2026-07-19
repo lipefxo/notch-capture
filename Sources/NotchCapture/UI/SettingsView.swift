@@ -79,6 +79,15 @@ struct SettingsView: View {
                 isOn: $viewModel.autoHideExternalPill
             )
             SettingsDivider()
+            SettingsControlRow(title: "Compact size", detail: "Minimal or Extended") {
+                NotchSegmentedControl(
+                    options: CompactPresentationSize.allCases,
+                    selection: $viewModel.compactPresentationSize
+                )
+                .frame(width: 164)
+                .accessibilityLabel("Compact size")
+            }
+            SettingsDivider()
             SettingsControlRow(title: "Time format", detail: "Capture timestamps") {
                 NotchSegmentedControl(
                     options: AppViewModel.TimeFormat.allCases,

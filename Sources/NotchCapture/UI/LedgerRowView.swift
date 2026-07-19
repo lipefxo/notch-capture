@@ -890,7 +890,7 @@ struct LedgerRowView: View, Equatable {
             items.append(NotchMenuItem(title: item.isArchived ? "Restore to Inbox" : "Archive", icon: item.isArchived ? "arrow.uturn.backward" : "archivebox") {
                 item.isArchived ? viewModel.restore(item) : viewModel.archive(item)
             })
-            items.append(NotchMenuItem(title: "Move to Trash", icon: "trash", role: .destructive) { viewModel.trash(item) })
+            items.append(NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { viewModel.trash(item) })
         }
         return items
     }

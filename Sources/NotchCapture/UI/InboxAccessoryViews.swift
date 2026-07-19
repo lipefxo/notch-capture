@@ -150,7 +150,7 @@ struct FolderLedgerRow: View {
                 presentation.present(NotchMenu(title: folder.name, anchor: actionsAnchor, items: [
                     NotchMenuItem(title: "Open Folder", icon: "folder") { onOpen() },
                     NotchMenuItem(title: "Rename Folder", icon: "pencil") { onRename() },
-                    NotchMenuItem(title: "Delete Folder", icon: "trash", role: .destructive) { onDelete() },
+                    NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { onDelete() },
                 ]))
             } label: {
                 // "ellipsis.vertical" is not a real SF Symbol; rotate the real one.

@@ -404,6 +404,7 @@ extension AppViewModel {
         var onCompleteOnboarding: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
         var onSetTimeFormat: (TimeFormat) -> Void = { _ in }
+        var onSetCompactPresentationSize: (CompactPresentationSize) -> Void = { _ in }
         var onMusicPlayPause: () -> Void = {}
         var onMusicNext: () -> Void = {}
         var onMusicPrevious: () -> Void = {}
