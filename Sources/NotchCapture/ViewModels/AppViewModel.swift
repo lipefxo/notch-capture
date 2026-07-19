@@ -74,6 +74,8 @@ final class AppViewModel: ObservableObject {
     @Published var timeFormat: TimeFormat {
         didSet { hooks.onSetTimeFormat(timeFormat) }
     }
+    /// False when Sparkle is inert (bare `swift run`, design previews).
+    @Published var updatesEnabled = false
     @Published var nowPlaying: NowPlayingSnapshot?
     @Published var nowPlayingArtwork: NSImage?
     @Published var pomodoro: PomodoroState

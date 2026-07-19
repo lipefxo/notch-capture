@@ -22,6 +22,7 @@ final class AppCoordinator {
     let attachmentStore: AttachmentStore
     let packageService: CapturePackageService
     private let loginItemService: LoginItemService
+    private let updaterService: UpdaterService
     let displayLocator: DisplayLocator
     let nowPlayingService: NowPlayingService
     let pomodoroService: PomodoroService
@@ -75,6 +76,7 @@ final class AppCoordinator {
             attachmentStore: attachmentStore
         )
         self.loginItemService = LoginItemService()
+        self.updaterService = UpdaterService(previewMode: previewMode)
         self.displayLocator = DisplayLocator()
         let storedPomodoroDuration = defaults.double(forKey: DefaultsKey.pomodoroDuration)
         self.pomodoroService = PomodoroService(
@@ -118,6 +120,7 @@ final class AppCoordinator {
         if let storeRecoveryBackupURL {
             self.viewModel.errorMessage = "Your capture library couldn't be read, so a new one was started. The previous library was saved to \(storeRecoveryBackupURL.path)."
         }
+        self.viewModel.updatesEnabled = updaterService.isEnabled
 
         let viewModel = self.viewModel
         self.panelController = PanelController(
@@ -533,6 +536,9 @@ final class AppCoordinator {
         }
         hooks.onExport = { [weak self] in
             self?.presentExportPanel()
+        }
+        hooks.onCheckForUpdates = { [weak self] in
+            self?.updaterService.checkForUpdates()
         }
         hooks.onQuit = {
             NSApp.terminate(nil)

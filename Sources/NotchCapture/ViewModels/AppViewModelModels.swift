@@ -405,6 +405,7 @@ extension AppViewModel {
         var onCancelShortcutRecording: () -> Void = {}
         var onImport: () -> Void = {}
         var onExport: () -> Void = {}
+        var onCheckForUpdates: () -> Void = {}
         var onQuit: () -> Void = {}
     }
 }

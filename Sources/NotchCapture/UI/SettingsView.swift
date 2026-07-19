@@ -153,7 +153,31 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 46)
+
+            SettingsDivider()
+            HStack(spacing: 8) {
+                SettingsRowIcon(symbol: "arrow.triangle.2.circlepath")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Updates")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(NotchTheme.primaryText)
+                    Text("Version \(Self.appVersion)")
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                }
+                Spacer()
+                if viewModel.updatesEnabled {
+                    Button("Check for Updates…", action: viewModel.hooks.onCheckForUpdates)
+                        .buttonStyle(SettingsButtonStyle())
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 46)
         }
+    }
+
+    private static var appVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "dev"
     }
 
     private var quitAction: some View {
