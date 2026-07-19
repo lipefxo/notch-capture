@@ -1,6 +1,15 @@
 import AppKit
 import Foundation
 
+enum IdlePillVisibilityPolicy {
+    static func shouldHide(
+        autoHideExternalPill: Bool,
+        pointerHasHardwareNotch: Bool?
+    ) -> Bool {
+        autoHideExternalPill && pointerHasHardwareNotch == false
+    }
+}
+
 extension AppViewModel {
     enum SurfaceState: Equatable {
         case dormant
@@ -52,23 +61,14 @@ extension AppViewModel {
         }
     }
 
-    enum NotchOwnership: String, CaseIterable, Identifiable {
-        case automatic = "Automatic"
-        case companion = "Companion"
-        case primary = "Primary"
+    enum OnboardingStep: Int, CaseIterable, Identifiable {
+        case welcome
+        case shortcuts
+        case permission
 
         var id: Self { self }
 
-        var explanation: String {
-            switch self {
-            case .automatic:
-                "Yield the notch only when NotchFlow is present."
-            case .companion:
-                "Keep the idle notch completely available to NotchFlow."
-            case .primary:
-                "Keep Notch Capture visible, even when another notch app is running."
-            }
-        }
+        var number: Int { rawValue + 1 }
     }
 
     enum TimeFormat: String, CaseIterable, Identifiable {
@@ -392,8 +392,8 @@ extension AppViewModel {
         var onEmptyTrash: () -> Void = {}
         var onDroppedProviders: ([NSItemProvider]) -> Void = { _ in }
         var onRequestAccessibility: () -> Void = {}
+        var onCompleteOnboarding: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
-        var onSetOwnership: (NotchOwnership) -> Void = { _ in }
         var onSetTimeFormat: (TimeFormat) -> Void = { _ in }
         var onMusicPlayPause: () -> Void = {}
         var onMusicNext: () -> Void = {}

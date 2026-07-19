@@ -438,6 +438,55 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persistedFormat, .twentyFourHour)
     }
 
+    func testOnboardingNavigationStaysWithinTypedSteps() {
+        let viewModel = AppViewModel(surfaceState: .onboarding)
+
+        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+        viewModel.retreatOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+
+        viewModel.advanceOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .shortcuts)
+        viewModel.advanceOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .permission)
+        viewModel.advanceOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .permission)
+
+        viewModel.retreatOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .shortcuts)
+    }
+
+    func testFinishingOnboardingPersistsOnceAndOpensInbox() {
+        var completionCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onCompleteOnboarding = { completionCount += 1 }
+        let viewModel = AppViewModel(surfaceState: .onboarding, hooks: hooks)
+        viewModel.onboardingStep = .permission
+
+        viewModel.finishOnboarding()
+        viewModel.finishOnboarding()
+
+        XCTAssertEqual(completionCount, 1)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
+    func testIdleVisibilityControlsDismissalAndPomodoroAcknowledgement() {
+        let viewModel = AppViewModel(surfaceState: .expanded)
+        viewModel.setIdlePillHidden(true)
+
+        viewModel.dismiss()
+        XCTAssertEqual(viewModel.surfaceState, .dormant)
+
+        viewModel.setIdlePillHidden(false)
+        XCTAssertEqual(viewModel.surfaceState, .collapsed)
+
+        viewModel.surfaceState = .pomodoroComplete
+        viewModel.setIdlePillHidden(true)
+        viewModel.handleDismissalRequest(.escape)
+        XCTAssertEqual(viewModel.surfaceState, .dormant)
+    }
+
     func testUnifiedInputFiltersMatchingItemsInsteadOfCapturing() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()

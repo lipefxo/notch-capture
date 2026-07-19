@@ -373,7 +373,8 @@ struct ExpandedInboxView: View {
             .frame(height: 28)
         }
         .buttonStyle(PressableIconButtonStyle(
-            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.mint : NotchTheme.secondaryText
+            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.mint : NotchTheme.secondaryText,
+            width: viewModel.pomodoro.isActive ? 42 : 28
         ))
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .menuAnchor($pomodoroMenuAnchor)

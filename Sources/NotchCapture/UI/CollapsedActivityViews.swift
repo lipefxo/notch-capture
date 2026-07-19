@@ -57,7 +57,7 @@ struct CollapsedActivityPillView: View {
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 42)
-                PomodoroCountdownLabel(state: state)
+                compactPomodoroButton(state)
                     .frame(width: 42)
             }
             .padding(.horizontal, 12)
@@ -83,7 +83,7 @@ struct CollapsedActivityPillView: View {
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: viewModel.pomodoro.isActive ? 42 : nil)
                 if viewModel.pomodoro.isActive {
-                    PomodoroCountdownLabel(state: viewModel.pomodoro)
+                    compactPomodoroButton(viewModel.pomodoro)
                         .frame(width: 42)
                 }
             }
@@ -97,6 +97,16 @@ struct CollapsedActivityPillView: View {
             .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
             .accessibilityLabel("Open focus timer")
         }
+    }
+
+    private func compactPomodoroButton(_ state: PomodoroState) -> some View {
+        Button { viewModel.openExpanded() } label: {
+            PomodoroCountdownLabel(state: state)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
+        .help("Open focus timer")
+        .accessibilityLabel("Open focus timer")
     }
 
     private func musicInfoView(
@@ -150,10 +160,10 @@ private struct CollapsedTransportControls: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            control("chevron.left", label: "Previous track") {
+            control("backward.fill", label: "Previous track") {
                 viewModel.musicPrevious()
             }
-            control("chevron.right", label: "Next track") {
+            control("forward.fill", label: "Next track") {
                 viewModel.musicNext()
             }
         }
@@ -194,10 +204,14 @@ struct PomodoroCountdownLabel: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
-            Text(Self.format(state.remaining(at: context.date)))
+            let remaining = state.remaining(at: context.date)
+            Text(Self.format(remaining))
                 .font(.system(size: 11, weight: .semibold, design: .monospaced))
                 .monospacedDigit()
-                .foregroundStyle(NotchTheme.mint)
+                .foregroundStyle(NotchTheme.pomodoroTimerColor(
+                    remaining: remaining,
+                    duration: state.duration
+                ).color)
         }
     }
 

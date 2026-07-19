@@ -40,9 +40,8 @@ extension AppCoordinator {
 
     private func handleDisplayEnvironmentChange() {
         panelController.reposition()
+        updateIdlePillVisibility()
         synchronizePanel(with: viewModel.surfaceState)
-        occupancyService.refresh()
-        applyOccupancy(occupancyService.snapshot)
     }
 
     func requestAccessibility() {
@@ -70,7 +69,14 @@ extension AppCoordinator {
     /// so the panel must be removed for the duration of that modal interaction.
     private func suspendForSystemPermissionPrompt() {
         clearPermissionSuspension()
-        permissionReturnState = viewModel.surfaceState == .settings ? .settings : .expanded
+        switch viewModel.surfaceState {
+        case .settings:
+            permissionReturnState = .settings
+        case .onboarding:
+            permissionReturnState = .onboarding
+        default:
+            permissionReturnState = .expanded
+        }
         panelController.dismiss(restoringFocus: false, animated: false)
 
         permissionLocalEventMonitor = NSEvent.addLocalMonitorForEvents(

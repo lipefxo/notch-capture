@@ -53,4 +53,85 @@ final class NotchThemeTests: XCTestCase {
         XCTAssertEqual(NotchTheme.tagPaletteIndex(seed: -0.01), 5)
         XCTAssertEqual(NotchTheme.tagPaletteIndex(seed: -1), 0)
     }
+
+    func testPomodoroTimerColorUsesMintThroughTheFirstHalf() {
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 25 * 60, duration: 25 * 60),
+            red: 0.23,
+            green: 0.78,
+            blue: 0.50
+        )
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 12.5 * 60, duration: 25 * 60),
+            red: 0.23,
+            green: 0.78,
+            blue: 0.50
+        )
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 30 * 60, duration: 25 * 60),
+            red: 0.23,
+            green: 0.78,
+            blue: 0.50
+        )
+    }
+
+    func testPomodoroTimerColorInterpolatesMintToAmber() {
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 8.75 * 60, duration: 25 * 60),
+            red: 0.615,
+            green: 0.64,
+            blue: 0.25
+        )
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 5 * 60, duration: 25 * 60),
+            red: 1,
+            green: 0.5,
+            blue: 0
+        )
+    }
+
+    func testPomodoroTimerColorInterpolatesAmberToRed() {
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 2.5 * 60, duration: 25 * 60),
+            red: 1,
+            green: 0.25,
+            blue: 0
+        )
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: 0, duration: 25 * 60),
+            red: 1,
+            green: 0,
+            blue: 0
+        )
+        assertPomodoroColor(
+            NotchTheme.pomodoroTimerColor(remaining: -60, duration: 25 * 60),
+            red: 1,
+            green: 0,
+            blue: 0
+        )
+    }
+
+    func testPomodoroTimerColorTreatsInvalidDurationsAsCritical() {
+        for duration in [0, -60, .infinity, .nan] {
+            assertPomodoroColor(
+                NotchTheme.pomodoroTimerColor(remaining: 60, duration: duration),
+                red: 1,
+                green: 0,
+                blue: 0
+            )
+        }
+    }
+
+    private func assertPomodoroColor(
+        _ color: NotchTheme.PomodoroTimerColor,
+        red: Double,
+        green: Double,
+        blue: Double,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(color.red, red, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(color.green, green, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(color.blue, blue, accuracy: 0.000_001, file: file, line: line)
+    }
 }

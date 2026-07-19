@@ -339,9 +339,10 @@ public final class PanelController: NSObject, ObservableObject {
 
         state = newState
         panel.permitsKeyWindow = newState.acceptsKeyboardInput
-        panel.level = newState.isExplicitSession
-            ? NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 4)
-            : .statusBar
+        // Keep the panel at the status-bar level even while it is expanded.
+        // Raising it above that level can cover macOS notification and system
+        // modal surfaces, preventing the user from interacting with them.
+        panel.level = .statusBar
         installDismissalMonitorsIfNeeded()
 
         transitionGeneration += 1

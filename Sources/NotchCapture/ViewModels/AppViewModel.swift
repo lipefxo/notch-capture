@@ -44,9 +44,6 @@ final class AppViewModel: ObservableObject {
     @Published var newFolderName = ""
     @Published private(set) var selectedTagSuggestionIndex = 0
     @Published private(set) var isTagAutocompleteDismissed = false
-    @Published var ownership: NotchOwnership {
-        didSet { hooks.onSetOwnership(ownership) }
-    }
     @Published var autoHideExternalPill: Bool
     @Published var launchAtLogin: Bool {
         didSet { hooks.onSetLaunchAtLogin(launchAtLogin) }
@@ -61,8 +58,8 @@ final class AppViewModel: ObservableObject {
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
     @Published var isPomodoroCardVisible = false
     @Published var expandedUtilityFocus: UtilityFocus?
-    @Published var onboardingPage = 0
-    @Published var isNotchFlowRunning = false
+    @Published var onboardingStep: OnboardingStep = .welcome
+    @Published private(set) var isIdlePillHidden = false
     @Published var shortcuts: [Shortcut]
     @Published var shortcutRecordingRequest: ShortcutRecordingRequest?
     /// Items whose completion is committed but still "held" in place so the
@@ -97,7 +94,6 @@ final class AppViewModel: ObservableObject {
         items: [LedgerItem] = [],
         folders: [FolderSummary] = [],
         tags: [TagSummary] = [],
-        ownership: NotchOwnership = .automatic,
         autoHideExternalPill: Bool = false,
         launchAtLogin: Bool = false,
         timeFormat: TimeFormat = .twelveHour,
@@ -117,7 +113,6 @@ final class AppViewModel: ObservableObject {
         self.itemEditSession = nil
         self.folders = folders
         self.tags = tags
-        self.ownership = ownership
         self.autoHideExternalPill = autoHideExternalPill
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
@@ -265,13 +260,35 @@ final class AppViewModel: ObservableObject {
         surfaceState = .expanded
     }
 
+    func advanceOnboarding() {
+        guard let next = OnboardingStep(rawValue: onboardingStep.rawValue + 1) else { return }
+        onboardingStep = next
+    }
+
+    func retreatOnboarding() {
+        guard let previous = OnboardingStep(rawValue: onboardingStep.rawValue - 1) else { return }
+        onboardingStep = previous
+    }
+
+    func finishOnboarding() {
+        guard surfaceState == .onboarding else { return }
+        hooks.onCompleteOnboarding()
+        openExpanded()
+    }
+
+    func setIdlePillHidden(_ isHidden: Bool) {
+        isIdlePillHidden = isHidden
+        guard [.dormant, .collapsed, .collapsedActivity].contains(surfaceState) else { return }
+        surfaceState = isHidden ? .dormant : idleSurfaceState
+    }
+
     func dismiss() {
         itemEditSession = nil
         flushCompletionHolds()
         clearSelection()
         resetComposerDraft()
         errorMessage = nil
-        surfaceState = shouldYieldIdleSurface ? .dormant : idleSurfaceState
+        surfaceState = isIdlePillHidden ? .dormant : idleSurfaceState
         hooks.onDismiss()
     }
 
@@ -524,7 +541,7 @@ final class AppViewModel: ObservableObject {
     func handleDismissalRequest(_ reason: PanelDismissalReason) {
         if surfaceState == .pomodoroComplete {
             acknowledgePomodoro()
-            surfaceState = shouldYieldIdleSurface ? .dormant : idleSurfaceState
+            surfaceState = isIdlePillHidden ? .dormant : idleSurfaceState
             return
         }
         switch reason {
@@ -1092,10 +1109,6 @@ final class AppViewModel: ObservableObject {
 
     func acknowledgePomodoro() {
         hooks.onPomodoroAcknowledge()
-    }
-
-    private var shouldYieldIdleSurface: Bool {
-        ownership == .companion || (ownership == .automatic && isNotchFlowRunning)
     }
 
     private var normalizedComposerText: String {

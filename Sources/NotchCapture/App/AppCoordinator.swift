@@ -9,7 +9,6 @@ import UniformTypeIdentifiers
 final class AppCoordinator {
     enum DefaultsKey {
         static let onboardingComplete = "onboardingComplete"
-        static let ownership = "notchOwnership"
         static let autoHideExternalPill = "autoHideExternalPill"
         static let timeFormat = "timeFormat"
         static let pomodoroDuration = "pomodoroDuration"
@@ -26,7 +25,6 @@ final class AppCoordinator {
     let selectionService: SelectionCaptureService
     private let loginItemService: LoginItemService
     let displayLocator: DisplayLocator
-    let occupancyService: SurfaceOccupancyService
     let nowPlayingService: NowPlayingService
     let pomodoroService: PomodoroService
     let defaults: UserDefaults
@@ -36,7 +34,6 @@ final class AppCoordinator {
     let panelController: PanelController
     var hotKeyManager: GlobalHotKeyManager?
     private var cancellables: Set<AnyCancellable> = []
-    private var previousSurfaceState: AppViewModel.SurfaceState
     var permissionReturnState: AppViewModel.SurfaceState?
     var permissionLocalEventMonitor: Any?
     var permissionGlobalEventMonitor: Any?
@@ -87,7 +84,6 @@ final class AppCoordinator {
         self.selectionService = SelectionCaptureService()
         self.loginItemService = LoginItemService()
         self.displayLocator = DisplayLocator()
-        self.occupancyService = SurfaceOccupancyService()
         let storedPomodoroDuration = defaults.double(forKey: DefaultsKey.pomodoroDuration)
         self.pomodoroService = PomodoroService(
             duration: storedPomodoroDuration > 0 ? storedPomodoroDuration : PomodoroState.defaultDuration,
@@ -95,9 +91,6 @@ final class AppCoordinator {
         )
         self.nowPlayingService = NowPlayingService()
 
-        let ownership = AppViewModel.NotchOwnership(
-            rawValue: defaults.string(forKey: DefaultsKey.ownership) ?? ""
-        ) ?? .automatic
         let timeFormat = AppViewModel.TimeFormat(
             rawValue: defaults.string(forKey: DefaultsKey.timeFormat) ?? ""
         ) ?? .twelveHour
@@ -114,6 +107,10 @@ final class AppCoordinator {
         if previewMode {
             let preview = AppViewModel.preview
             preview.surfaceState = initialState
+            preview.onboardingStep = Self.requestedPreviewOnboardingStep()
+            preview.accessibilityGranted = Self.requestedPreviewAccessibilityGranted(
+                defaultValue: preview.accessibilityGranted
+            )
             if initialState == .confirmation {
                 preview.confirmation = AppViewModel.Confirmation(
                     title: "Send the revised capture flow",
@@ -124,14 +121,12 @@ final class AppCoordinator {
         } else {
             self.viewModel = AppViewModel(
                 surfaceState: initialState,
-                ownership: ownership,
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
                 launchAtLogin: loginItemService.isEnabled,
                 timeFormat: timeFormat,
                 accessibilityGranted: selectionService.isAccessibilityTrusted
             )
         }
-        self.previousSurfaceState = initialState
         if let storeRecoveryBackupURL {
             self.viewModel.errorMessage = "Your capture library couldn't be read, so a new one was started. The previous library was saved to \(storeRecoveryBackupURL.path)."
         }
@@ -140,7 +135,6 @@ final class AppCoordinator {
         self.panelController = PanelController(
             displayLocator: displayLocator,
             automaticDismissalEnabled: !previewMode
-                && !CommandLine.arguments.contains("--coexistence-test-sequence")
         ) { _ in
             AnyView(NotchSurfaceView(viewModel: viewModel))
         }
@@ -154,9 +148,6 @@ final class AppCoordinator {
         configureHooks()
         configureMedia()
         configureStateSynchronization()
-        if !previewMode {
-            configureOccupancy()
-        }
     }
 
     private static func moveStoreAside(storeURL: URL) throws -> URL {
@@ -373,6 +364,30 @@ final class AppCoordinator {
         }
     }
 
+    private nonisolated static func requestedPreviewOnboardingStep() -> AppViewModel.OnboardingStep {
+        guard let argument = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--preview-onboarding-step=")
+        }) else {
+            return .welcome
+        }
+        switch argument.dropFirst("--preview-onboarding-step=".count) {
+        case "shortcuts": return .shortcuts
+        case "permission": return .permission
+        default: return .welcome
+        }
+    }
+
+    private nonisolated static func requestedPreviewAccessibilityGranted(
+        defaultValue: Bool
+    ) -> Bool {
+        guard let argument = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--preview-accessibility=")
+        }) else {
+            return defaultValue
+        }
+        return argument.dropFirst("--preview-accessibility=".count) != "denied"
+    }
+
     func start() {
         if !previewMode {
             nowPlayingService.setActivityLevel(.compact)
@@ -390,8 +405,8 @@ final class AppCoordinator {
         }
 
         if !previewMode {
-            occupancyService.refresh()
             installDisplayEnvironmentObservers()
+            updateIdlePillVisibility()
             do {
                 // One-time launch maintenance; not needed on every reload.
                 try repository.backfillMissingSortOrders()
@@ -406,24 +421,6 @@ final class AppCoordinator {
 #if DEBUG
         if CommandLine.arguments.contains("--modal-probe") {
             runModalProbe()
-        }
-        if CommandLine.arguments.contains("--coexistence-test-sequence") {
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1))
-                self?.handleHotKey(.openComposer)
-                if let self {
-                    FileHandle.standardError.write(Data(
-                        "Coexistence test opened: state=\(self.viewModel.surfaceState), visible=\(self.panelController.panel.isVisible), frame=\(self.panelController.panel.frame)\n".utf8
-                    ))
-                }
-                try? await Task.sleep(for: .seconds(30))
-                self?.viewModel.dismiss()
-                if let self {
-                    FileHandle.standardError.write(Data(
-                        "Coexistence test dismissed: state=\(self.viewModel.surfaceState), visible=\(self.panelController.panel.isVisible)\n".utf8
-                    ))
-                }
-            }
         }
         if previewMode, let output = snapshotOutputURL() {
             Task { @MainActor [weak self] in
@@ -441,7 +438,6 @@ final class AppCoordinator {
     func stop() {
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
-        occupancyService.stop()
         nowPlayingService.stop()
         composerPasteTask?.cancel()
         clearPermissionSuspension()
@@ -534,11 +530,11 @@ final class AppCoordinator {
         hooks.onRequestAccessibility = { [weak self] in
             self?.requestAccessibility()
         }
+        hooks.onCompleteOnboarding = { [weak self] in
+            self?.defaults.set(true, forKey: DefaultsKey.onboardingComplete)
+        }
         hooks.onSetLaunchAtLogin = { [weak self] enabled in
             self?.setLaunchAtLogin(enabled)
-        }
-        hooks.onSetOwnership = { [weak self] ownership in
-            self?.setOwnership(ownership)
         }
         hooks.onSetTimeFormat = { [weak self] timeFormat in
             self?.defaults.set(timeFormat.rawValue, forKey: DefaultsKey.timeFormat)
@@ -596,12 +592,9 @@ final class AppCoordinator {
             .sink { [weak self] state in
                 Task { @MainActor in
                     guard let self else { return }
-                    if self.previousSurfaceState == .onboarding,
-                       state == .expanded,
-                       self.viewModel.onboardingPage == 2 {
-                        self.defaults.set(true, forKey: DefaultsKey.onboardingComplete)
+                    if [.confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings].contains(state) {
+                        self.updateIdlePillVisibility()
                     }
-                    self.previousSurfaceState = state
                     self.updateMediaActivityLevel(for: state)
                     PanelDiagnostics.log("surface state → \(state)")
                     // Leaving Settings while a shortcut is being recorded must
@@ -626,17 +619,10 @@ final class AppCoordinator {
                 self?.defaults.set(value, forKey: DefaultsKey.autoHideExternalPill)
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.applyOccupancy(self.occupancyService.snapshot)
+                    self.updateIdlePillVisibility()
                 }
             }
             .store(in: &cancellables)
-    }
-
-    private func configureOccupancy() {
-        occupancyService.onChange = { [weak self] snapshot in
-            self?.applyOccupancy(snapshot)
-        }
-        applyOccupancy(occupancyService.snapshot)
     }
 
     func synchronizePanel(with state: AppViewModel.SurfaceState) {
@@ -645,24 +631,13 @@ final class AppCoordinator {
         panelController.present(panelState, activate: panelState.acceptsKeyboardInput)
     }
 
-    func applyOccupancy(_ snapshot: SurfaceOccupancySnapshot) {
-        let occupied: Bool
-        if let screen = displayLocator.pointerScreen,
-           let displayID = displayLocator.displayID(for: screen) {
-            occupied = snapshot.isOccupied(displayID: displayID)
-        } else {
-            occupied = snapshot.hasKnownUtilityRunning
-        }
-        viewModel.isNotchFlowRunning = occupied
-
-        guard [.collapsed, .collapsedActivity, .dormant].contains(viewModel.surfaceState) else { return }
+    func updateIdlePillVisibility() {
         let pointerGeometry = displayLocator.pointerScreen.flatMap(displayLocator.geometry(for:))
-        let shouldAutoHideExternalPill = viewModel.autoHideExternalPill
-            && pointerGeometry?.hasHardwareNotch == false
-        let shouldYield = shouldAutoHideExternalPill
-            || viewModel.ownership == .companion
-            || (viewModel.ownership == .automatic && occupied)
-        viewModel.surfaceState = shouldYield ? .dormant : viewModel.idleSurfaceState
+        let shouldHide = IdlePillVisibilityPolicy.shouldHide(
+            autoHideExternalPill: viewModel.autoHideExternalPill,
+            pointerHasHardwareNotch: pointerGeometry?.hasHardwareNotch
+        )
+        viewModel.setIdlePillHidden(shouldHide)
     }
 
     private func handleHotKey(_ action: GlobalHotKeyAction) {
@@ -686,8 +661,4 @@ final class AppCoordinator {
         }
     }
 
-    private func setOwnership(_ ownership: AppViewModel.NotchOwnership) {
-        defaults.set(ownership.rawValue, forKey: DefaultsKey.ownership)
-        applyOccupancy(occupancyService.snapshot)
-    }
 }

@@ -50,13 +50,13 @@ private struct MusicPlayerBand: View {
             .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 2) {
-                transportButton("chevron.left", label: "Previous track", action: viewModel.musicPrevious, compact: true)
-                transportButton("chevron.right", label: "Next track", action: viewModel.musicNext, compact: true)
+                transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)
+                transportButton("forward.fill", label: "Next track", action: viewModel.musicNext, compact: true)
             }
         }
         .padding(.horizontal, 14)
         .frame(height: 62)
-        .background(NotchTheme.graphite)
+        .background(NotchTheme.ink)
         .overlay(alignment: .bottom) {
             Rectangle().fill(NotchTheme.hairline).frame(height: 1)
         }

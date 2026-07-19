@@ -38,6 +38,38 @@ final class PanelStateTests: XCTestCase {
     }
 }
 
+final class IdlePillVisibilityPolicyTests: XCTestCase {
+    func testIdlePillStaysVisibleByDefaultAndOnHardwareNotchDisplays() {
+        XCTAssertFalse(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: false,
+                pointerHasHardwareNotch: false
+            )
+        )
+        XCTAssertFalse(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: true,
+                pointerHasHardwareNotch: true
+            )
+        )
+    }
+
+    func testIdlePillHidesOnlyOnKnownExternalDisplays() {
+        XCTAssertTrue(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: true,
+                pointerHasHardwareNotch: false
+            )
+        )
+        XCTAssertFalse(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: true,
+                pointerHasHardwareNotch: nil
+            )
+        )
+    }
+}
+
 final class PanelTransitionPolicyTests: XCTestCase {
     func testHiddenExpandedSurfaceStartsWithExpansionMorph() {
         let policy = PanelTransitionPolicy.resolve(
@@ -157,7 +189,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.duration, NotchMotion.reducedMotionDuration)
     }
 
-    func testNotchFlowHandoffMorphsAndFadesBeforeOrderingOut() {
+    func testPassiveSurfaceHideMorphsAndFadesBeforeOrderingOut() {
         let policy = PanelTransitionPolicy.resolve(
             from: .expanded,
             to: .dormant,
@@ -510,7 +542,7 @@ final class NotchMotionTokenTests: XCTestCase {
             (NotchMotion.reorderDisplacement, 0.30),
             (NotchMotion.dragLift, 0.20),
             (NotchMotion.dragLanding, 0.34),
-            (NotchMotion.onboardingSpring, 0.36),
+            (NotchMotion.onboardingSpring, 0.28),
             (NotchMotion.confirmationSpring, 0.32),
             (NotchMotion.completionSpring, 0.16),
         ]
@@ -1144,50 +1176,5 @@ final class NotchGeometryTests: XCTestCase {
             safeAreaInsets: NSEdgeInsets(top: safeTop, left: 0, bottom: 0, right: 0),
             notchRect: notchRect
         )
-    }
-}
-
-final class SurfaceOccupancySnapshotTests: XCTestCase {
-    func testMappedOccupancyIsDisplaySpecific() {
-        let snapshot = SurfaceOccupancySnapshot(
-            occupiedDisplayIDs: [7],
-            detectedBundleIdentifiers: [SurfaceOccupancyService.notchFlowBundleIdentifier]
-        )
-
-        XCTAssertTrue(snapshot.hasKnownUtilityRunning)
-        XCTAssertTrue(snapshot.isOccupied(displayID: 7))
-        XCTAssertFalse(snapshot.isOccupied(displayID: 8))
-        XCTAssertFalse(snapshot.usesConservativeFallback)
-    }
-
-    func testConservativeFallbackTreatsEveryDisplayAsOccupied() {
-        let snapshot = SurfaceOccupancySnapshot(
-            detectedBundleIdentifiers: [SurfaceOccupancyService.notchFlowBundleIdentifier],
-            usesConservativeFallback: true
-        )
-
-        XCTAssertTrue(snapshot.isOccupied(displayID: 1))
-        XCTAssertTrue(snapshot.isOccupied(displayID: 999))
-    }
-
-    func testEmptySnapshotHasNoDetectedUtilityOrOccupancy() {
-        let snapshot = SurfaceOccupancySnapshot()
-
-        XCTAssertFalse(snapshot.hasKnownUtilityRunning)
-        XCTAssertFalse(snapshot.isOccupied(displayID: 1))
-        XCTAssertTrue(snapshot.occupiedDisplayIDs.isEmpty)
-    }
-
-    @MainActor
-    func testServiceWithNoKnownBundleIdentifiersPublishesEmptySnapshot() {
-        let service = SurfaceOccupancyService(
-            knownBundleIdentifiers: [],
-            refreshInterval: 0,
-            windowInfoProvider: { [] }
-        )
-
-        service.refresh()
-
-        XCTAssertEqual(service.snapshot, SurfaceOccupancySnapshot())
     }
 }
