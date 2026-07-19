@@ -937,9 +937,8 @@ private final class UnavailableDisplayLocator: DisplayLocating {
 }
 
 final class PanelWindowInteractionPolicyTests: XCTestCase {
-    func testSurfaceFloatsBelowTheStatusBarLevelUsedBySystemNotifications() {
-        XCTAssertEqual(PanelWindowLevelPolicy.surfaceLevel, .floating)
-        XCTAssertLessThan(PanelWindowLevelPolicy.surfaceLevel, .statusBar)
+    func testSurfaceStaysInTheStatusBarPlane() {
+        XCTAssertEqual(PanelWindowLevelPolicy.surfaceLevel, .statusBar)
     }
 
     func testCollapsedContractionSuspendsHitTestingUntilTheIdleFrameSettles() {

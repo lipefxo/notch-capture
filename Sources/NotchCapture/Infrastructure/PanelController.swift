@@ -195,10 +195,10 @@ struct PanelWindowInteractionPolicy {
     }
 }
 
-/// The surface needs to float over ordinary application windows, but it must
-/// remain beneath notification banners and other system-owned UI.
+/// The notch surface must live in the status-bar plane so the menu bar does
+/// not occlude its top-anchored chrome.
 struct PanelWindowLevelPolicy {
-    static let surfaceLevel = NSWindow.Level.floating
+    static let surfaceLevel = NSWindow.Level.statusBar
 }
 
 /// Transparent margin reserved around a rendered surface inside the panel
