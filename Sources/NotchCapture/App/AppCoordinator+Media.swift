@@ -1,0 +1,86 @@
+import AppKit
+import Combine
+@preconcurrency import UserNotifications
+
+extension AppCoordinator {
+    func configureMedia() {
+        guard !previewMode else { return }
+
+        nowPlayingService.onSnapshotChange = { [weak self] snapshot in
+            guard let self else { return }
+            let previousTrackKey = self.viewModel.nowPlaying?.trackKey
+            self.viewModel.nowPlaying = snapshot
+            if snapshot?.trackKey != previousTrackKey {
+                self.viewModel.nowPlayingArtwork = nil
+            }
+            self.refreshIdleActivitySurface()
+        }
+        nowPlayingService.onArtworkChange = { [weak self] trackKey, artwork in
+            guard let self, self.viewModel.nowPlaying?.trackKey == trackKey else { return }
+            self.viewModel.nowPlayingArtwork = artwork
+        }
+        nowPlayingService.onAutomationDenied = { [weak self] source in
+            self?.viewModel.errorMessage = "Allow Notch Capture to control \(source.applicationName) in System Settings → Privacy & Security → Automation."
+        }
+
+        pomodoroService.onChange = { [weak self] state in
+            guard let self else { return }
+            self.viewModel.pomodoro = state
+            self.refreshIdleActivitySurface()
+        }
+        pomodoroService.onCompleted = { [weak self] in
+            self?.handlePomodoroCompletion()
+        }
+        viewModel.pomodoro = pomodoroService.state
+    }
+
+    func updateMediaActivityLevel(for state: AppViewModel.SurfaceState) {
+        guard !previewMode else { return }
+        let level: NowPlayingService.ActivityLevel = switch state {
+        case .expanded, .settings: .full
+        case .collapsed, .collapsedActivity, .confirmation, .pomodoroComplete: .compact
+        case .dormant, .drop, .onboarding: .hidden
+        }
+        nowPlayingService.setActivityLevel(level)
+    }
+
+    func updateCollapsedActivityLayout() {
+        guard let screen = displayLocator.pointerScreen,
+              let geometry = displayLocator.geometry(for: screen) else { return }
+        let simulatesNotch = previewMode && CommandLine.arguments.contains("--preview-hardware-notch")
+        viewModel.collapsedActivityLayout = AppViewModel.CollapsedActivityLayout(
+            hasHardwareNotch: simulatesNotch || (geometry.notchRect != nil && geometry.safeAreaInsets.top > 0),
+            notchWidth: simulatesNotch ? 156 : (geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width),
+            notchBandHeight: simulatesNotch ? 32 : max(geometry.notchRect?.height ?? 0, geometry.safeAreaInsets.top)
+        )
+    }
+
+    private func refreshIdleActivitySurface() {
+        guard [.collapsed, .collapsedActivity].contains(viewModel.surfaceState) else { return }
+        viewModel.surfaceState = viewModel.idleSurfaceState
+    }
+
+    private func handlePomodoroCompletion() {
+        if Bundle.main.bundleIdentifier != nil {
+            let content = UNMutableNotificationContent()
+            content.title = "Focus session complete"
+            content.sound = .default
+            let center = UNUserNotificationCenter.current()
+            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
+                guard granted else { return }
+                center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+            }
+        }
+
+        switch viewModel.surfaceState {
+        case .collapsed, .collapsedActivity, .dormant:
+            viewModel.surfaceState = .pomodoroComplete
+        case .confirmation:
+            // Preserve Capture's Undo window; the finished timer remains visible
+            // the next time the user opens the expanded surface.
+            break
+        case .expanded, .drop, .settings, .onboarding, .pomodoroComplete:
+            viewModel.isPomodoroCardVisible = true
+        }
+    }
+}

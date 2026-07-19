@@ -7,9 +7,8 @@ import XCTest
 final class PanelStateTests: XCTestCase {
     func testVisibilityMatchesWindowOwnership() {
         XCTAssertFalse(PanelState.dormant.isVisible)
-        XCTAssertFalse(PanelState.screenshot.isVisible)
 
-        for state in PanelState.allCases.filter({ $0 != .dormant && $0 != .screenshot }) {
+        for state in PanelState.allCases.filter({ $0 != .dormant }) {
             XCTAssertTrue(state.isVisible, "Expected \(state) to own a visible panel")
         }
     }
@@ -27,7 +26,7 @@ final class PanelStateTests: XCTestCase {
     }
 
     func testExplicitSessionsExcludePassiveStates() {
-        let passiveStates: Set<PanelState> = [.dormant, .collapsed, .screenshot]
+        let passiveStates: Set<PanelState> = [.dormant, .collapsed, .collapsedActivity]
 
         for state in PanelState.allCases {
             XCTAssertEqual(
@@ -36,6 +35,38 @@ final class PanelStateTests: XCTestCase {
                 "Unexpected session behavior for \(state)"
             )
         }
+    }
+}
+
+final class IdlePillVisibilityPolicyTests: XCTestCase {
+    func testIdlePillStaysVisibleByDefaultAndOnHardwareNotchDisplays() {
+        XCTAssertFalse(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: false,
+                pointerHasHardwareNotch: false
+            )
+        )
+        XCTAssertFalse(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: true,
+                pointerHasHardwareNotch: true
+            )
+        )
+    }
+
+    func testIdlePillHidesOnlyOnKnownExternalDisplays() {
+        XCTAssertTrue(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: true,
+                pointerHasHardwareNotch: false
+            )
+        )
+        XCTAssertFalse(
+            IdlePillVisibilityPolicy.shouldHide(
+                autoHideExternalPill: true,
+                pointerHasHardwareNotch: nil
+            )
+        )
     }
 }
 
@@ -158,7 +189,7 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.duration, NotchMotion.reducedMotionDuration)
     }
 
-    func testNotchFlowHandoffMorphsAndFadesBeforeOrderingOut() {
+    func testPassiveSurfaceHideMorphsAndFadesBeforeOrderingOut() {
         let policy = PanelTransitionPolicy.resolve(
             from: .expanded,
             to: .dormant,
@@ -185,19 +216,6 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertFalse(policy.animatesMorph)
         XCTAssertEqual(policy.opacity, .hide)
         XCTAssertEqual(policy.fadeDuration, NotchMotion.reducedMotionDuration)
-    }
-
-    func testScreenshotSelectionIsImmediate() {
-        let policy = PanelTransitionPolicy.resolve(
-            from: .expanded,
-            to: .screenshot,
-            wasVisible: true,
-            reduceMotion: false
-        )
-
-        XCTAssertEqual(policy.kind, .immediate)
-        XCTAssertFalse(policy.animatesMorph)
-        XCTAssertFalse(policy.ordersOutOnCompletion)
     }
 
     func testExplicitlyNonAnimatedDismissalIsImmediate() {
@@ -443,7 +461,6 @@ final class SurfaceChromeMetricsTests: XCTestCase {
 
     func testHiddenStatesDoNotReplaceTheLastVisibleChrome() {
         XCTAssertNil(SurfaceChromeMetrics.resolve(for: .dormant))
-        XCTAssertNil(SurfaceChromeMetrics.resolve(for: .screenshot))
     }
 
     func testCollapsedChromeDropsTheOuterShadowAtTheTightWindowBoundary() throws {
@@ -525,7 +542,7 @@ final class NotchMotionTokenTests: XCTestCase {
             (NotchMotion.reorderDisplacement, 0.30),
             (NotchMotion.dragLift, 0.20),
             (NotchMotion.dragLanding, 0.34),
-            (NotchMotion.onboardingSpring, 0.36),
+            (NotchMotion.onboardingSpring, 0.28),
             (NotchMotion.confirmationSpring, 0.32),
             (NotchMotion.completionSpring, 0.16),
         ]
@@ -1159,50 +1176,5 @@ final class NotchGeometryTests: XCTestCase {
             safeAreaInsets: NSEdgeInsets(top: safeTop, left: 0, bottom: 0, right: 0),
             notchRect: notchRect
         )
-    }
-}
-
-final class SurfaceOccupancySnapshotTests: XCTestCase {
-    func testMappedOccupancyIsDisplaySpecific() {
-        let snapshot = SurfaceOccupancySnapshot(
-            occupiedDisplayIDs: [7],
-            detectedBundleIdentifiers: [SurfaceOccupancyService.notchFlowBundleIdentifier]
-        )
-
-        XCTAssertTrue(snapshot.hasKnownUtilityRunning)
-        XCTAssertTrue(snapshot.isOccupied(displayID: 7))
-        XCTAssertFalse(snapshot.isOccupied(displayID: 8))
-        XCTAssertFalse(snapshot.usesConservativeFallback)
-    }
-
-    func testConservativeFallbackTreatsEveryDisplayAsOccupied() {
-        let snapshot = SurfaceOccupancySnapshot(
-            detectedBundleIdentifiers: [SurfaceOccupancyService.notchFlowBundleIdentifier],
-            usesConservativeFallback: true
-        )
-
-        XCTAssertTrue(snapshot.isOccupied(displayID: 1))
-        XCTAssertTrue(snapshot.isOccupied(displayID: 999))
-    }
-
-    func testEmptySnapshotHasNoDetectedUtilityOrOccupancy() {
-        let snapshot = SurfaceOccupancySnapshot()
-
-        XCTAssertFalse(snapshot.hasKnownUtilityRunning)
-        XCTAssertFalse(snapshot.isOccupied(displayID: 1))
-        XCTAssertTrue(snapshot.occupiedDisplayIDs.isEmpty)
-    }
-
-    @MainActor
-    func testServiceWithNoKnownBundleIdentifiersPublishesEmptySnapshot() {
-        let service = SurfaceOccupancyService(
-            knownBundleIdentifiers: [],
-            refreshInterval: 0,
-            windowInfoProvider: { [] }
-        )
-
-        service.refresh()
-
-        XCTAssertEqual(service.snapshot, SurfaceOccupancySnapshot())
     }
 }

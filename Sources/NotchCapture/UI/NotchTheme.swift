@@ -1,6 +1,25 @@
 import SwiftUI
 
 enum NotchTheme {
+    struct PomodoroTimerColor: Equatable {
+        let red: Double
+        let green: Double
+        let blue: Double
+
+        var color: Color {
+            Color(red: red, green: green, blue: blue)
+        }
+
+        func interpolated(to target: Self, amount: Double) -> Self {
+            let progress = min(max(amount, 0), 1)
+            return Self(
+                red: red + ((target.red - red) * progress),
+                green: green + ((target.green - green) * progress),
+                blue: blue + ((target.blue - blue) * progress)
+            )
+        }
+    }
+
     private struct TagPaletteAnchor {
         let red: Double
         let green: Double
@@ -32,6 +51,8 @@ enum NotchTheme {
     static let headerHeight: CGFloat = 62
     /// Width of the concave fillets that merge the surface into the top screen edge.
     static let topFlare: CGFloat = 10
+    /// Equal content width on either side of a hardware notch while a live activity is visible.
+    static let collapsedActivityWingWidth: CGFloat = 116
     static let mint = Color(red: 0.23, green: 0.78, blue: 0.50)
     static let ink = Color(red: 0.022, green: 0.024, blue: 0.027)
     static let graphite = Color(red: 0.070, green: 0.074, blue: 0.080)
@@ -60,6 +81,29 @@ enum NotchTheme {
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
     static let warning = Color.orange
     static let destructive = Color.red
+
+    /// Maps the remaining share of a focus session from calm mint through amber to red.
+    static func pomodoroTimerColor(remaining: TimeInterval, duration: TimeInterval) -> PomodoroTimerColor {
+        guard duration.isFinite, duration > 0, remaining.isFinite else {
+            return pomodoroDestructive
+        }
+
+        let remainingFraction = min(max(remaining / duration, 0), 1)
+        switch remainingFraction {
+        case 0.5...:
+            return pomodoroMint
+        case 0.2...:
+            let progress = (0.5 - remainingFraction) / 0.3
+            return pomodoroMint.interpolated(to: pomodoroWarning, amount: progress)
+        default:
+            let progress = (0.2 - remainingFraction) / 0.2
+            return pomodoroWarning.interpolated(to: pomodoroDestructive, amount: progress)
+        }
+    }
+
+    private static let pomodoroMint = PomodoroTimerColor(red: 0.23, green: 0.78, blue: 0.50)
+    private static let pomodoroWarning = PomodoroTimerColor(red: 1, green: 0.5, blue: 0)
+    private static let pomodoroDestructive = PomodoroTimerColor(red: 1, green: 0, blue: 0)
     /// Bottom corner radius shared by every open surface state and the composer.
     static let surfaceBottomRadius: CGFloat = 24
     private static let tagPaletteAnchors = [
@@ -123,7 +167,7 @@ enum NotchMotion {
     static let reorderDisplacement = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
     static let dragLift = NotchSpringProfile(perceptualDuration: 0.20, bounce: 0)
     static let dragLanding = NotchSpringProfile(perceptualDuration: 0.34, bounce: 0)
-    static let onboardingSpring = NotchSpringProfile(perceptualDuration: 0.36, bounce: 0)
+    static let onboardingSpring = NotchSpringProfile(perceptualDuration: 0.28, bounce: 0)
     static let confirmationSpring = NotchSpringProfile(perceptualDuration: 0.32, bounce: 0)
     static let completionSpring = NotchSpringProfile(perceptualDuration: 0.16, bounce: 0)
     // The checkmark is the one deliberately playful element in the completion
@@ -173,6 +217,7 @@ enum NotchMotion {
     static let onboarding = onboardingSpring.animation
     static let confirmation = confirmationSpring.animation
     static let filter = selection.animation
+    static let keyboardScroll = selection.animation
     static let controlPress = easeOut(duration: controlPressDuration)
     static let hover = easeOut(duration: hoverDuration)
     static let insertion = easeOut(duration: insertionDuration)
@@ -267,11 +312,12 @@ extension View {
 struct PressableIconButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var idleForeground: Color = NotchTheme.secondaryText
+    var width: CGFloat = 28
 
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .foregroundStyle(configuration.isPressed ? NotchTheme.primaryText : idleForeground)
-            .frame(width: 28, height: 28)
+            .frame(width: width, height: 28)
             .background(configuration.isPressed ? Color.white.opacity(0.07) : Color.clear)
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))

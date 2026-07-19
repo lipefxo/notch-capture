@@ -1,4 +1,128 @@
-# Design QA — Floating Glass Composer
+# Design QA — Adaptive Album Playback Control
+
+## Comparison
+
+- Source visual truth: `/Users/lipe/.codex/generated_images/019f7aff-1a34-7880-8ccf-48a886dfa905/exec-58ad5f97-8750-42df-ae0d-14a988d62bb0.png` (1536 × 1024 pixels)
+- Implementation state board: `.context/qa/album-control-implementation-state-board.png` (1536 × 1024 pixels)
+- Full-view comparison: `.context/qa/album-control-full-comparison.png` (source board beside the full expanded playing surface)
+- Focused comparison: `.context/qa/album-control-focused-comparison.png` (source state board beside all eight focused implementation states)
+- Expanded captures: `.context/qa/album-control-expanded-playing-final.png`, `.context/qa/album-control-expanded-playing-hover-final.png`, `.context/qa/album-control-expanded-paused-final.png`, `.context/qa/album-control-expanded-paused-hover-final.png`
+- Compact captures: `.context/qa/album-control-compact-playing-final.png`, `.context/qa/album-control-compact-playing-hover-final.png`, `.context/qa/album-control-compact-paused-final.png`, `.context/qa/album-control-compact-paused-hover-final.png`
+- Hardware-notch captures: `.context/qa/album-control-hardware-playing-final.png`, `.context/qa/album-control-hardware-playing-hover-final.png`
+- Viewports: expanded 568 × 640 points at 2×; compact 300 × 34 points at 2×; simulated hardware-notch 800 × 36 points at 2×
+- States: playing/rest, playing/hover-or-focus, paused/rest, and paused/hover-or-focus
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The 40 × 40 and 22 × 22 album tiles preserve the established radii, spacing, system typography, graphite surface, mint progress control, and separate previous/next affordances.
+- Playing/rest displays four lightweight activity bars inside the artwork. Playing/hover-or-focus replaces them with Pause; paused/rest leaves the cover unobstructed; paused/hover-or-focus displays Play.
+- The activity bars and transport glyph are the only blended pixels. Their base color is extracted from the cover's dominant usable hue, with a high-brightness neutral fallback for monochrome artwork, and difference compositing supplies local contrast without a cover-wide veil.
+- Compact metadata now contains title and artist only. The prior duration/current-time line is intentionally absent per the final direction, and the two-line stack remains legible in both external and hardware-notch layouts.
+- Expanded elapsed and total timestamps remain unchanged around the progress control. Previous and next remain independent controls; the standalone play/pause control and external waveform are removed.
+- Typography, spacing, color, artwork crop quality, SF Symbol weight, and copy were compared in the combined evidence. The implementation remains denser than the conceptual board because it preserves the production player's existing dimensions and spacing as requested.
+
+## Comparison history
+
+1. The first live SwiftUI difference-blend pass produced correct rest states but exposed a persistent-host rendering defect in static hover captures, where sibling labels and controls disappeared.
+2. The overlay was moved into an offscreen artwork render using Core Graphics difference compositing. The shared control was then reduced to one mounted visual state at a time, preserving the quick crossfade while stopping hidden waveform updates.
+3. Final expanded, compact, and simulated hardware-notch captures retain every surrounding label and control in hover/focus states. The waveform and Play/Pause glyph remain confined to the artwork, with no global dimming layer.
+
+## Interaction and accessibility checks
+
+- The artwork is its own button and routes directly to the existing play/pause intent; compact metadata remains a separate button that opens the expanded surface.
+- Pointer hover and keyboard focus share the same visible transport state. Help text, accessibility labels, and the playing/paused accessibility value describe the artwork action.
+- Reduce Motion freezes the playing waveform and uses the existing reduced-motion transition. The control keeps a static playback indicator rather than removing state information.
+- Dominant-hue extraction is keyed to artwork identity instead of running on every animation frame. The animated renderer is mounted only while playing at rest.
+- Existing view-model hook coverage confirms music intents route without changing the surface. Added color-extraction tests cover dominant chromatic artwork and monochrome fallback.
+
+## Verification
+
+- Native AppKit-hosted SwiftUI snapshots cover all eight expanded/compact playback combinations plus the simulated hardware-notch playing and hover states.
+- The complete Swift package suite passes 207 tests with zero failures.
+- The debug app is rebuilt and ad-hoc signed for native snapshot verification.
+
+final result: passed
+
+---
+
+# Design QA — Text-Only Pomodoro Toggle
+
+## Comparison
+
+- Source visual truth: `/Users/lipe/.codex/generated_images/019f7b71-2d79-75a3-b72e-6dfa3840f8ee/exec-08ee969c-106a-4434-82c7-2a2308d6dad5.png`
+- Combined source and native implementation comparison: `.context/qa/pomodoro-toggle/source-vs-implementation.png`
+- External-display states: `.context/qa/pomodoro-toggle/external-rest.png`, `external-hover.png`, `external-focus.png`, `external-pressed.png`, `external-paused.png`, and `external-paused-hover.png`
+- Hardware-notch states: `.context/qa/pomodoro-toggle/hardware-rest.png`, `hardware-hover.png`, and `hardware-paused.png`
+- Mixed activity layouts: `.context/qa/pomodoro-toggle/external-combined.png` and `hardware-combined.png`
+- Completion and expanded surfaces: `.context/qa/pomodoro-toggle/completion.png` and `expanded.png`
+- Environment: native AppKit `NSPanel` hosting SwiftUI, 2× snapshots; external compact pill and simulated 156-point hardware notch with 116-point content wings
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The compact timer is plain monospaced text at rest, with no timer icon, persistent capsule, border, progress line, or transport glyph.
+- Hover and keyboard focus reveal the same tightly fitted 54 × 28-point, 7-point-radius control-tint backdrop. The pressed snapshot confirms a stronger tint and the existing 120 ms press treatment without layout shift.
+- Running states preserve the existing mint urgency color. Paused states freeze at the deterministic preview value and use the neutral secondary-text token.
+- External Pomodoro-only layouts center the hit target; hardware-notch layouts right-align it inside the 116-point wing. Music-plus-Pomodoro snapshots retain transport controls and show no clipping.
+- Typography, spacing, color tokens, corner geometry, and alignment match the selected Quiet Hit Area direction. No source image assets were needed because this is a code-native control treatment.
+- The expanded header remains visually unchanged, while the completion surface fits both Done and Restart without truncation.
+
+## Interaction and accessibility checks
+
+- The compact action routes through `togglePomodoro()` and preserves `surfaceState`; service tests cover running → paused → running with a stable remaining value.
+- Native Button behavior retains Return/Space activation. Pointer hover and keyboard focus share the same visible treatment, and Reduce Motion removes the press scale animations.
+- Help and accessibility action copy changes between Pause and Resume according to phase. The remaining time is exposed in spoken minute/second units.
+- The complete Swift test suite passes 220 tests. The native snapshot matrix covers rest, hover, keyboard focus, press, running, paused, external, hardware-notch, mixed activity, expanded, and completion states.
+
+final result: passed
+
+---
+
+# Design QA — Music Timing + Paused Visualization
+
+## Selected references and native captures
+
+- Current app structure: `.context/attachments/qmpRhp/CleanShot 2026-07-19 at 10.37.21@2x.jpg`
+- Reported reduced player: `.context/attachments/7ozLwb/CleanShot 2026-07-19 at 11.37.30@2x.jpg`
+- Reported expanded player: `.context/attachments/3NsZmQ/CleanShot 2026-07-19 at 11.39.20@2x.jpg`
+- Native external music-only capture: `.context/qa/reduced-music-controls.png`
+- Native hardware-notch music-only capture: `.context/qa/reduced-music-controls-notch.png`
+- Native external music + Pomodoro capture: `.context/qa/reduced-music-timer-controls.png`
+- Native hardware-notch music + Pomodoro capture: `.context/qa/reduced-music-timer-controls-notch.png`
+- Native expanded capture: `.context/qa/expanded-seekable-progress.png`
+- Focused expanded-player comparison capture: `.context/qa/expanded-seekable-progress-band.png`
+- Final expanded playing capture: `.context/qa/timing-expanded-playing-final.png`
+- Final expanded paused capture: `.context/qa/timing-expanded-paused-final.png`
+- Focused playing/paused bands: `.context/qa/timing-expanded-playing-band-final.png`, `.context/qa/timing-expanded-paused-band-final.png`
+- External reduced music-only playing/paused: `.context/qa/timing-external-music-playing.png`, `.context/qa/timing-external-music-paused.png`
+- External reduced music + Pomodoro playing/paused: `.context/qa/timing-external-both-playing.png`, `.context/qa/timing-external-both-paused.png`
+- Hardware-notch music-only playing/paused: `.context/qa/timing-notch-music-playing.png`, `.context/qa/timing-notch-music-paused.png`
+- Hardware-notch music + Pomodoro playing/paused: `.context/qa/timing-notch-both-playing.png`, `.context/qa/timing-notch-both-paused.png`
+
+## Findings
+
+- The external reduced surface remains 300 × 34 points. Music-only uses the recovered empty width for track metadata while retaining artwork, audio bars, and all three controls.
+- Music + Pomodoro keeps previous, play/pause, next, and the ring-free numeric timer visible without clipping.
+- Hardware-notch layouts use equal 116-point content wings around the centered 156-point simulated notch gap. Music metadata stays on the left; transport and timer controls stay on the right.
+- Artwork, metadata, and audio bars remain one expand target. Each transport icon is an independent 28-point press target and does not expand the panel.
+- The expanded player preserves the selected 3-point visual line inside a 14-point scrub target. The rendered fill visibly reflects the preview position; hover/drag reveals a mint thumb.
+- The reduced player shows a protected monospaced total duration on the artist row. Artist text yields first when the hardware wing or Pomodoro state constrains width.
+- Playing compact states retain the mint audio bars; paused states remove the bars and reclaim their width without moving or clipping transport and Pomodoro controls.
+- The open player shows timestamp-derived elapsed time on the left of the seek line and total duration on the right. Paused captures hold the elapsed value while changing the center control to Play.
+- SF Symbols, native system typography, ink/graphite/mint tokens, press styles, reduced-motion handling, and accessibility labels reuse the existing design system.
+- Side-by-side visual comparison of the reported states and all playing/paused native captures found no P0/P1/P2 clipping, spacing, hierarchy, or legibility issues.
+
+## Verification
+
+- Native external and simulated hardware-notch states were rendered through the AppKit-hosted SwiftUI snapshot path for music-only and music + Pomodoro.
+- The expanded player was rendered with a timestamp-derived non-zero progress fill.
+- Formatter and model coverage now includes zero, negative, unavailable, minute, hour, live elapsed, paused elapsed, and scrub-preview values.
+- The complete Swift package suite passes 205 tests, and the release app passes strict ad-hoc signature verification.
+
+---
+
+# Previous Design QA — Floating Glass Composer
 
 ## Comparison
 
@@ -31,12 +155,6 @@
 - The glass layer ignores hit testing and accessibility. Reduce Transparency receives an opaque graphite-to-ink fallback; Increased Contrast strengthens the field border; the static effect introduces no Reduce Motion dependency.
 - Empty, error, filtered, attachment, and drop-target branches retain their existing controls; the drop target remains the topmost full-panel overlay.
 
-## Coexistence evidence
-
-- Dormant with NotchFlow 1.2.2: NotchFlow was the only on-screen notch window; Notch Capture had no visible window or hit surface.
-- Explicit session: Notch Capture used a tightly bounded 420 × 560 panel at window layer 29, above NotchFlow’s layer 27.
-- Dismissal: Notch Capture ordered out completely; NotchFlow immediately returned to being the only on-screen notch window.
-
 ## Result
 
 The native implementation faithfully matches the requested floating-bottom layout and adds a balanced glass fade that preserves both ledger continuity and composer prominence.
@@ -44,7 +162,7 @@ The native implementation faithfully matches the requested floating-bottom layou
 ## Motion and interaction QA
 
 - Visible surface changes now use one persistent SwiftUI host and a top-centered AppKit frame morph: 220 ms expansion and 160 ms contraction with a strong ease-out curve. In-flight frame changes retarget from their current value.
-- Dormant/NotchFlow handoff remains immediate. A contraction to the owned idle pill stops intercepting pointer input before its visual settle completes.
+- A contraction to the idle pill stops intercepting pointer input before its visual settle completes.
 - Reduce Motion disables window resizing motion and uses short opacity-only content changes. Existing Reduce Transparency and Increased Contrast fallbacks remain intact.
 - Inbox/Settings navigation, onboarding direction, drop targeting, filter selection, press feedback, and row-hover actions use scoped transitions; typing and search-result updates remain immediate.
 - The composer takes focus after expansion and after returning from Settings. Confirmation expiry pauses while Undo is hovered and resumes from the remaining duration.

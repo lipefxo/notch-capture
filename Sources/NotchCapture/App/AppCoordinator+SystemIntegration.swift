@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Foundation
 
 extension AppCoordinator {
@@ -40,100 +39,8 @@ extension AppCoordinator {
 
     private func handleDisplayEnvironmentChange() {
         panelController.reposition()
+        updateIdlePillVisibility()
         synchronizePanel(with: viewModel.surfaceState)
-        occupancyService.refresh()
-        applyOccupancy(occupancyService.snapshot)
-    }
-
-    func requestAccessibility() {
-        suspendForSystemPermissionPrompt()
-        selectionService.requestAccessibilityAccess()
-        pollAccessibilityStatus()
-    }
-
-    private func pollAccessibilityStatus() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            for _ in 0..<20 {
-                viewModel.accessibilityGranted = selectionService.isAccessibilityTrusted
-                if viewModel.accessibilityGranted {
-                    schedulePermissionSurfaceRestore()
-                    return
-                }
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
-    }
-
-    func requestScreenRecording() {
-        suspendForSystemPermissionPrompt()
-        viewModel.screenRecordingGranted = screenCaptureService.requestPermission()
-        if viewModel.screenRecordingGranted {
-            schedulePermissionSurfaceRestore()
-        }
-    }
-
-    /// The notch panel intentionally sits above other notch utilities during an
-    /// explicit session. System-owned permission prompts use a lower window level,
-    /// so the panel must be removed for the duration of that modal interaction.
-    private func suspendForSystemPermissionPrompt() {
-        clearPermissionSuspension()
-        permissionReturnState = viewModel.surfaceState == .settings ? .settings : .expanded
-        panelController.dismiss(restoringFocus: false, animated: false)
-
-        permissionLocalEventMonitor = NSEvent.addLocalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown, .keyDown]
-        ) { [weak self] event in
-            self?.schedulePermissionSurfaceRestore()
-            return event
-        }
-        permissionGlobalEventMonitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDown, .rightMouseDown]
-        ) { [weak self] _ in
-            self?.schedulePermissionSurfaceRestore()
-        }
-        permissionActivationObserver = NotificationCenter.default.addObserver(
-            forName: NSApplication.didBecomeActiveNotification,
-            object: NSApp,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor in self?.schedulePermissionSurfaceRestore() }
-        }
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func schedulePermissionSurfaceRestore() {
-        permissionRestoreTask?.cancel()
-        permissionRestoreTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(650))
-            guard !Task.isCancelled, let self, let returnState = self.permissionReturnState else { return }
-
-            let ownPID = ProcessInfo.processInfo.processIdentifier
-            let appIsFrontmost = NSWorkspace.shared.frontmostApplication?.processIdentifier == ownPID
-            guard appIsFrontmost, NSApp.modalWindow == nil else { return }
-
-            self.clearPermissionSuspension()
-            self.viewModel.surfaceState = returnState
-            self.synchronizePanel(with: returnState)
-        }
-    }
-
-    func clearPermissionSuspension() {
-        permissionRestoreTask?.cancel()
-        permissionRestoreTask = nil
-        permissionReturnState = nil
-        if let permissionLocalEventMonitor {
-            NSEvent.removeMonitor(permissionLocalEventMonitor)
-            self.permissionLocalEventMonitor = nil
-        }
-        if let permissionGlobalEventMonitor {
-            NSEvent.removeMonitor(permissionGlobalEventMonitor)
-            self.permissionGlobalEventMonitor = nil
-        }
-        if let permissionActivationObserver {
-            NotificationCenter.default.removeObserver(permissionActivationObserver)
-            self.permissionActivationObserver = nil
-        }
     }
 
     func beginShortcutRecording(for action: AppViewModel.Shortcut.Action) {
@@ -218,9 +125,7 @@ extension AppCoordinator {
 
     private func globalAction(for action: AppViewModel.Shortcut.Action) -> GlobalHotKeyAction? {
         switch action {
-        case .captureSelection: .captureSelection
         case .openComposer: .openComposer
-        case .captureRegion: .captureRegion
         }
     }
 

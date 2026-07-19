@@ -376,6 +376,7 @@ private struct NotchModalCard: View {
 struct NotchSegmentedControl<Option: Hashable & Identifiable & RawRepresentable>: View where Option.RawValue == String {
     let options: [Option]
     @Binding var selection: Option
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 3) {
@@ -393,18 +394,23 @@ struct NotchSegmentedControl<Option: Hashable & Identifiable & RawRepresentable>
         .padding(3)
         .background(NotchTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .animation(reduceMotion ? nil : NotchMotion.filter, value: selection)
     }
 }
 
 struct NotchToggle: View {
     let title: String
+    var showsTitle = true
     @Binding var isOn: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Button { isOn.toggle() } label: {
             HStack {
-                Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(NotchTheme.primaryText)
-                Spacer()
+                if showsTitle {
+                    Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(NotchTheme.primaryText)
+                    Spacer()
+                }
                 Capsule().fill(isOn ? NotchTheme.mint : NotchTheme.control).frame(width: 34, height: 20)
                     .overlay(alignment: isOn ? .trailing : .leading) {
                         Circle().fill(Color.white.opacity(0.92)).frame(width: 16, height: 16).padding(2)
@@ -412,7 +418,8 @@ struct NotchToggle: View {
             }
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.9))
+        .animation(reduceMotion ? nil : NotchMotion.filter, value: isOn)
         .accessibilityLabel(title)
         .accessibilityValue(isOn ? "On" : "Off")
         .accessibilityAddTraits(isOn ? .isSelected : [])

@@ -1,14 +1,24 @@
 import AppKit
 import Foundation
 
+enum IdlePillVisibilityPolicy {
+    static func shouldHide(
+        autoHideExternalPill: Bool,
+        pointerHasHardwareNotch: Bool?
+    ) -> Bool {
+        autoHideExternalPill && pointerHasHardwareNotch == false
+    }
+}
+
 extension AppViewModel {
     enum SurfaceState: Equatable {
         case dormant
         case collapsed
+        case collapsedActivity
         case confirmation
+        case pomodoroComplete
         case expanded
         case drop
-        case screenshot
         case onboarding
         case settings
 
@@ -18,10 +28,11 @@ extension AppViewModel {
             switch self {
             case .dormant: .dormant
             case .collapsed: .collapsed
+            case .collapsedActivity: .collapsedActivity
             case .confirmation: .confirmation
+            case .pomodoroComplete: .confirmation
             case .expanded: .expanded
             case .drop: .dropTarget
-            case .screenshot: .screenshot
             case .onboarding: .onboarding
             case .settings: .settings
             }
@@ -50,23 +61,13 @@ extension AppViewModel {
         }
     }
 
-    enum NotchOwnership: String, CaseIterable, Identifiable {
-        case automatic = "Automatic"
-        case companion = "Companion"
-        case primary = "Primary"
+    enum OnboardingStep: Int, CaseIterable, Identifiable {
+        case welcome
+        case shortcuts
 
         var id: Self { self }
 
-        var explanation: String {
-            switch self {
-            case .automatic:
-                "Yield the notch only when NotchFlow is present."
-            case .companion:
-                "Keep the idle notch completely available to NotchFlow."
-            case .primary:
-                "Keep Notch Capture visible, even when another notch app is running."
-            }
-        }
+        var number: Int { rawValue + 1 }
     }
 
     enum TimeFormat: String, CaseIterable, Identifiable {
@@ -81,6 +82,23 @@ extension AppViewModel {
         case selectedRow
         case itemEditor
         case none
+    }
+
+    struct CollapsedActivityLayout: Equatable {
+        var hasHardwareNotch = false
+        var notchWidth: CGFloat = 156
+        var notchBandHeight: CGFloat = 32
+    }
+
+    enum UtilityFocus: Equatable {
+        case music
+        case pomodoro
+    }
+
+    enum CollapsedActivityContent: Equatable {
+        case musicOnly(NowPlayingSnapshot)
+        case pomodoroOnly(PomodoroState)
+        case both(NowPlayingSnapshot, PomodoroState)
     }
 
     enum BrowseLocation: Hashable {
@@ -330,9 +348,7 @@ extension AppViewModel {
 
     struct Shortcut: Identifiable, Hashable {
         enum Action: String, Hashable {
-            case captureSelection
             case openComposer
-            case captureRegion
         }
 
         var action: Action
@@ -362,7 +378,7 @@ extension AppViewModel {
         var onArchive: (UUID) -> Void = { _ in }
         var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
         var onMove: (UUID, UUID?) -> Void = { _, _ in }
-        var onCreateFolder: (String) -> Void = { _ in }
+        var onCreateFolder: (String) -> UUID? = { _ in nil }
         var onRenameFolder: (UUID, String) -> Void = { _, _ in }
         var onDeleteFolder: (UUID) -> Void = { _ in }
         var onCreateTag: (String) -> Void = { _ in }
@@ -373,17 +389,23 @@ extension AppViewModel {
         var onDeletePermanently: (UUID) -> Void = { _ in }
         var onEmptyTrash: () -> Void = {}
         var onDroppedProviders: ([NSItemProvider]) -> Void = { _ in }
-        var onBeginScreenshot: () -> Void = {}
-        var onRequestAccessibility: () -> Void = {}
-        var onRequestScreenRecording: () -> Void = {}
+        var onCompleteOnboarding: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
-        var onSetOwnership: (NotchOwnership) -> Void = { _ in }
         var onSetTimeFormat: (TimeFormat) -> Void = { _ in }
+        var onMusicPlayPause: () -> Void = {}
+        var onMusicNext: () -> Void = {}
+        var onMusicPrevious: () -> Void = {}
+        var onMusicSeek: (TimeInterval) -> Void = { _ in }
+        var onPomodoroToggle: () -> Void = {}
+        var onPomodoroReset: () -> Void = {}
+        var onPomodoroSetDuration: (TimeInterval) -> Void = { _ in }
+        var onPomodoroAcknowledge: () -> Void = {}
         var onOpenShortcutRecorder: (Shortcut.Action) -> Void = { _ in }
         var onCommitShortcutRecording: (Shortcut.Action, ShortcutRecording) -> String? = { _, _ in nil }
         var onCancelShortcutRecording: () -> Void = {}
         var onImport: () -> Void = {}
         var onExport: () -> Void = {}
+        var onCheckForUpdates: () -> Void = {}
         var onQuit: () -> Void = {}
     }
 }

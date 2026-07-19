@@ -149,11 +149,6 @@ final class ItemRepository {
         }
     }
 
-    @discardableResult
-    func createItem(from selection: SelectionCaptureResult, now: Date = .now) throws -> CaptureItem {
-        try createItem(from: selection.payload, origin: .selection, source: selection.source, now: now)
-    }
-
     func fetchTags() throws -> [CaptureTag] {
         try modelContext.fetch(FetchDescriptor<CaptureTag>()).sorted {
             $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending

@@ -11,9 +11,9 @@ struct SurfaceChromeMetrics: Equatable {
     /// SwiftUI chrome must never disagree about surface dimensions.
     static func resolve(for state: AppViewModel.SurfaceState) -> Self? {
         switch state {
-        case .dormant, .screenshot:
+        case .dormant:
             nil
-        case .collapsed:
+        case .collapsed, .collapsedActivity:
             Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: 16,
@@ -21,7 +21,7 @@ struct SurfaceChromeMetrics: Equatable {
                 shadowRadius: 0,
                 shadowY: 0
             )
-        case .confirmation, .expanded, .drop, .onboarding, .settings:
+        case .confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings:
             Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: NotchTheme.surfaceBottomRadius,
@@ -137,12 +137,16 @@ struct NotchSurfaceView: View {
     @ViewBuilder
     private func surfaceContent(for state: AppViewModel.SurfaceState) -> some View {
         switch state {
-        case .dormant, .screenshot:
+        case .dormant:
             EmptyView()
         case .collapsed:
             CollapsedPillView(viewModel: viewModel)
+        case .collapsedActivity:
+            CollapsedActivityPillView(viewModel: viewModel)
         case .confirmation:
             ConfirmationView(viewModel: viewModel)
+        case .pomodoroComplete:
+            PomodoroCompleteView(viewModel: viewModel)
         case .expanded, .drop:
             ExpandedInboxView(viewModel: viewModel)
         case .onboarding:
@@ -218,7 +222,9 @@ struct NotchSurfaceView: View {
             // it is the only surface that idles unattended long enough for the
             // blank text to be seen, and recreating a keyboard surface here
             // would risk resetting its focus.
-            if initialCommitRepaint == 0, viewModel.surfaceState == .collapsed {
+            if initialCommitRepaint == 0,
+               [.collapsed, .collapsedActivity, .confirmation, .pomodoroComplete]
+                   .contains(viewModel.surfaceState) {
                 withoutAnimation { initialCommitRepaint = 1 }
             }
         }
@@ -395,8 +401,9 @@ struct NotchSurfaceView: View {
         case .expanded, .drop: "expanded"
         case .dormant: "dormant"
         case .collapsed: "collapsed"
+        case .collapsedActivity: "collapsedActivity"
         case .confirmation: "confirmation"
-        case .screenshot: "screenshot"
+        case .pomodoroComplete: "pomodoroComplete"
         case .onboarding: "onboarding"
         case .settings: "settings"
         }
@@ -407,6 +414,11 @@ struct NotchSurfaceView: View {
         to newState: AppViewModel.SurfaceState
     ) -> AnyTransition {
         guard !reduceMotion else { return .opacity }
+
+        let pillStates: Set<AppViewModel.SurfaceState> = [.collapsed, .collapsedActivity]
+        if pillStates.contains(oldState), pillStates.contains(newState) {
+            return .opacity
+        }
 
         if oldState == .expanded && newState == .settings {
             return .asymmetric(
@@ -420,7 +432,7 @@ struct NotchSurfaceView: View {
                 removal: .opacity.combined(with: .offset(x: 12))
             )
         }
-        if newState == .confirmation {
+        if newState == .confirmation || newState == .pomodoroComplete {
             return .asymmetric(
                 insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
                 removal: .opacity
@@ -468,34 +480,6 @@ struct CollapsedPillView: View {
         .help("Open Notch Capture")
         .accessibilityLabel("Open Notch Capture")
         .accessibilityHint("Opens the capture composer and inbox")
-    }
-}
-
-struct ScreenshotStateView: View {
-    @ObservedObject var viewModel: AppViewModel
-
-    var body: some View {
-        HStack(spacing: 12) {
-            Image(systemName: "viewfinder")
-                .font(.system(size: 18, weight: .medium))
-                .foregroundStyle(NotchTheme.mint)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Select a region")
-                    .font(.system(size: 13, weight: .semibold))
-                Text("Drag anywhere on screen · Esc to cancel")
-                    .font(.system(size: 11))
-                    .foregroundStyle(NotchTheme.secondaryText)
-            }
-            Spacer()
-            Button("Cancel") { viewModel.dismiss() }
-                .buttonStyle(CompactTextButtonStyle())
-                .notchHitTarget(Rectangle())
-                .foregroundStyle(NotchTheme.secondaryText)
-                .keyboardShortcut(.cancelAction)
-        }
-        .padding(.horizontal, 18)
-        .frame(width: 360, height: 64)
-        .accessibilityElement(children: .contain)
     }
 }
 

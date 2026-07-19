@@ -55,8 +55,9 @@ struct ExpandedInboxView: View {
     @State private var composerAppearance = 1.0
     @State private var appearanceGeneration: Int?
     @State private var appearanceTask: Task<Void, Never>?
-    @State private var filterMenuAnchor: CGRect = .zero
+    @State private var ledgerScrollTask: Task<Void, Never>?
     @State private var folderHeaderMenuAnchor: CGRect = .zero
+    @State private var pomodoroMenuAnchor: CGRect = .zero
 
     private let floatingComposerMargin: CGFloat = 18
     private let composerTextRowHeight: CGFloat = 48
@@ -96,10 +97,23 @@ struct ExpandedInboxView: View {
         case unifiedInput
     }
 
+    private enum LedgerScrollTarget: Hashable {
+        case folder(UUID)
+        case item(UUID)
+    }
+
+    private var selectedLedgerScrollTarget: LedgerScrollTarget? {
+        guard viewModel.keyboardFocus == .selectedRow else { return nil }
+        if let folderID = viewModel.selectedFolderID { return .folder(folderID) }
+        if let itemID = viewModel.selectedItemID { return .item(itemID) }
+        return nil
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
+                UtilityShelfView(viewModel: viewModel)
                 ledgerBody
                     .id(viewModel.browseLocation)
                     .transition(navigationTransition)
@@ -140,7 +154,7 @@ struct ExpandedInboxView: View {
                 resetReorderState()
                 return
             }
-            if viewModel.composerHasQuery {
+            if viewModel.composerHasDraft {
                 viewModel.handleDismissalRequest(.escape)
                 return
             }
@@ -155,6 +169,7 @@ struct ExpandedInboxView: View {
         }
         .onDisappear {
             appearanceTask?.cancel()
+            ledgerScrollTask?.cancel()
             resetReorderState()
         }
         .onChange(of: morphCoordinator.request) { _, request in
@@ -213,7 +228,10 @@ struct ExpandedInboxView: View {
             floatingGlassFade
 
             VStack(spacing: 6) {
-                if !viewModel.tagSuggestions.isEmpty {
+                if !viewModel.composerCommandSuggestions.isEmpty {
+                    commandAutocomplete
+                        .transition(tagAutocompleteTransition)
+                } else if !viewModel.tagSuggestions.isEmpty {
                     tagAutocomplete
                         .transition(tagAutocompleteTransition)
                 }
@@ -294,7 +312,7 @@ struct ExpandedInboxView: View {
 
                 Spacer()
 
-                inboxFilterMenu
+                pomodoroControl
 
                 if viewModel.isAtRoot {
                     Button {
@@ -325,18 +343,6 @@ struct ExpandedInboxView: View {
 
                 Button {
                     guard viewModel.saveEditing() else { return }
-                    viewModel.beginScreenshot()
-                } label: {
-                    Image(systemName: "viewfinder")
-                        .font(.system(size: 13, weight: .regular))
-                }
-                .buttonStyle(PressableIconButtonStyle())
-                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .help("Capture screen region · \(viewModel.shortcutDisplayValue(for: .captureRegion))")
-                .accessibilityLabel("Capture a screen region")
-
-                Button {
-                    guard viewModel.saveEditing() else { return }
                     viewModel.surfaceState = .settings
                 } label: {
                     Image(systemName: "gearshape")
@@ -354,43 +360,58 @@ struct ExpandedInboxView: View {
         .background(NotchTheme.ink)
     }
 
-    private var inboxFilterMenu: some View {
+    private var pomodoroControl: some View {
         Button {
-            var items = AppViewModel.InboxFilter.allCases.map { filter in
-                NotchMenuItem(title: filter.rawValue, icon: filter.systemImage, isChecked: viewModel.filter == filter) {
-                    viewModel.filter = filter
+            presentPomodoroMenu()
+        } label: {
+            Group {
+                if viewModel.pomodoro.isActive {
+                    PomodoroCountdownLabel(state: viewModel.pomodoro)
+                        .frame(minWidth: 38)
+                } else {
+                    Image(systemName: "timer")
+                        .font(.system(size: 13, weight: .regular))
                 }
             }
-            if viewModel.filter == .trash {
-                items.append(NotchMenuItem(title: "Empty Trash…", icon: "trash.slash", role: .destructive, isEnabled: !viewModel.visibleItems.isEmpty) {
-                    presentEmptyTrash()
-                })
-            }
-            presentation.present(NotchMenu(title: "Inbox filter", anchor: filterMenuAnchor, items: items))
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .regular))
+            .frame(height: 28)
         }
-        .buttonStyle(
-            PressableIconButtonStyle(
-                idleForeground: viewModel.filter == .all
-                    ? NotchTheme.secondaryText
-                    : NotchTheme.primaryText
-            )
-        )
-        .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.filter)
+        .buttonStyle(PressableIconButtonStyle(
+            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.mint : NotchTheme.secondaryText,
+            width: viewModel.pomodoro.isActive ? 42 : 28
+        ))
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .menuAnchor($filterMenuAnchor)
-        .help("Inbox filter: \(viewModel.filter.rawValue)")
-        .accessibilityLabel("Inbox filter: \(viewModel.filter.rawValue)")
+        .menuAnchor($pomodoroMenuAnchor)
+        .help(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
+        .accessibilityLabel(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
     }
 
-    private func presentEmptyTrash() {
-        let count = viewModel.visibleItems.count
-        presentation.present(NotchModal(kind: .destructive, title: "Empty Trash?", message: "\(count) \(count == 1 ? "item" : "items") and \(count == 1 ? "its" : "their") attachments will be deleted permanently. This cannot be undone.", textFieldLabel: nil, draft: "", primaryTitle: "Empty Trash", cancelTitle: "Cancel", onSubmit: { _ in
-            viewModel.emptyTrash()
-            return nil
-        }, onCancel: {}))
+    private func presentPomodoroMenu() {
+        var items: [NotchMenuItem] = []
+        switch viewModel.pomodoro.phase {
+        case .idle:
+            for minutes in [15, 25, 45, 60] {
+                items.append(NotchMenuItem(
+                    title: "\(minutes) minutes",
+                    icon: minutes == Int(viewModel.pomodoro.duration / 60) ? "checkmark" : nil
+                ) {
+                    viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
+                    viewModel.togglePomodoro()
+                })
+            }
+        case .running:
+            items.append(NotchMenuItem(title: "Pause", icon: "pause.fill") { viewModel.togglePomodoro() })
+            items.append(NotchMenuItem(title: "End session", icon: "stop.fill") { viewModel.resetPomodoro() })
+        case .paused:
+            items.append(NotchMenuItem(title: "Resume", icon: "play.fill") { viewModel.togglePomodoro() })
+            items.append(NotchMenuItem(title: "End session", icon: "stop.fill") { viewModel.resetPomodoro() })
+        case .finished:
+            items.append(NotchMenuItem(title: "Restart", icon: "arrow.clockwise") {
+                viewModel.acknowledgePomodoro()
+                viewModel.togglePomodoro()
+            })
+            items.append(NotchMenuItem(title: "Dismiss", icon: "xmark") { viewModel.acknowledgePomodoro() })
+        }
+        presentation.present(NotchMenu(title: "Focus timer", anchor: pomodoroMenuAnchor, items: items))
     }
 
     private func navigate(forward: Bool, _ update: () -> Void) {
@@ -521,12 +542,15 @@ struct ExpandedInboxView: View {
 
     private var captureTextRow: some View {
         HStack(spacing: 13) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .light))
-                .foregroundStyle(NotchTheme.secondaryText)
-                .frame(width: 24, height: 24)
+            if focusedField != .unifiedInput {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .light))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .transition(.opacity)
+            }
 
-            TextField("Search or add to \(viewModel.captureDestinationName)", text: $viewModel.composerText, axis: .vertical)
+            TextField("Search, add an item, or / to see actions", text: $viewModel.composerText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(NotchTheme.primaryText)
@@ -544,14 +568,23 @@ struct ExpandedInboxView: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
-                    viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
+                    if viewModel.acceptSelectedComposerCommand() { return .handled }
+                    return viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
                 }
                 .onKeyPress(.upArrow) {
+                    if !viewModel.composerCommandSuggestions.isEmpty {
+                        viewModel.moveComposerCommandSelection(by: -1)
+                        return .handled
+                    }
                     guard !viewModel.tagSuggestions.isEmpty else { return .ignored }
                     viewModel.moveTagSuggestionSelection(by: -1)
                     return .handled
                 }
                 .onKeyPress(.downArrow) {
+                    if !viewModel.composerCommandSuggestions.isEmpty {
+                        viewModel.moveComposerCommandSelection(by: 1)
+                        return .handled
+                    }
                     if !viewModel.tagSuggestions.isEmpty {
                         viewModel.moveTagSuggestionSelection(by: 1)
                         return .handled
@@ -559,7 +592,7 @@ struct ExpandedInboxView: View {
                     // Enter the ledger with the keyboard from the composer.
                     return viewModel.moveLedgerSelection(by: 1) ? .handled : .ignored
                 }
-                .accessibilityLabel("Search or add to \(viewModel.captureDestinationName)")
+                .accessibilityLabel("Search, add an item, or / to see actions")
                 .accessibilityHint(unifiedInputHint)
 
             if viewModel.canSubmitComposer {
@@ -567,7 +600,7 @@ struct ExpandedInboxView: View {
                     viewModel.submitComposer()
                 } label: {
                     HStack(spacing: 5) {
-                        Text(viewModel.canCreateStandaloneTag ? "Create tag" : "Add")
+                        Text(viewModel.composerActionLabel)
                             .font(.system(size: 11, weight: .medium))
                         Image(systemName: "return")
                             .font(.system(size: 11, weight: .regular))
@@ -582,14 +615,18 @@ struct ExpandedInboxView: View {
                 .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .help(
-                    viewModel.canCreateStandaloneTag
-                        ? "Create this tag group"
-                        : "Add this thought to \(viewModel.captureDestinationName)"
+                    viewModel.isFolderCommandActive
+                        ? "Create a folder"
+                        : viewModel.canCreateStandaloneTag
+                            ? "Create this tag group"
+                            : "Add this thought to \(viewModel.captureDestinationName)"
                 )
                 .accessibilityLabel(
-                    viewModel.canCreateStandaloneTag
-                        ? "Create tag group"
-                        : "Add thought to \(viewModel.captureDestinationName)"
+                    viewModel.isFolderCommandActive
+                        ? "Create folder"
+                        : viewModel.canCreateStandaloneTag
+                            ? "Create tag group"
+                            : "Add thought to \(viewModel.captureDestinationName)"
                 )
             } else if viewModel.composerHasMatches {
                 Text("\(viewModel.searchMatchCount) \(viewModel.searchMatchCount == 1 ? "match" : "matches")")
@@ -601,6 +638,7 @@ struct ExpandedInboxView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: composerTextRowHeight)
+        .animation(composerFocusAnimation, value: focusedField)
     }
 
     private var composerImageStrip: some View {
@@ -712,6 +750,54 @@ struct ExpandedInboxView: View {
         .shadow(color: .black.opacity(0.32), radius: 10, y: 5)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tag suggestions")
+    }
+
+    private var commandAutocomplete: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(viewModel.composerCommandSuggestions.enumerated()), id: \.element.id) { index, command in
+                Button {
+                    viewModel.acceptComposerCommand(command)
+                    focusComposer()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: command.icon)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(NotchTheme.mint)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(command.title)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(NotchTheme.primaryText)
+                            Text(command.detail)
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundStyle(NotchTheme.secondaryText)
+                        }
+                        Spacer()
+                        Text("/\(command.rawValue)")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(NotchTheme.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 42)
+                    .background(
+                        index == viewModel.selectedComposerCommandIndex
+                            ? NotchTheme.selectedLedger
+                            : Color.clear
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(NotchTheme.raisedGraphite.opacity(0.98))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: .black.opacity(0.32), radius: 10, y: 5)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Composer commands")
     }
 
     private var tagAutocompleteTransition: AnyTransition {
@@ -967,7 +1053,6 @@ struct ExpandedInboxView: View {
                     filter: viewModel.filter,
                     query: viewModel.composerText,
                     folderName: viewModel.currentFolder?.name,
-                    captureShortcut: viewModel.shortcutDisplayValue(for: .captureSelection),
                     onCompose: { focusedField = .unifiedInput }
                 )
                 .padding(.bottom, ledgerBottomClearance)
@@ -980,39 +1065,72 @@ struct ExpandedInboxView: View {
     }
 
     private var itemFeed: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
-                feedContent
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0, pinnedViews: []) {
+                    feedContent
 
-                Color.clear
-                    .frame(height: ledgerBottomClearance)
-                    .accessibilityHidden(true)
+                    Color.clear
+                        .frame(height: ledgerBottomClearance)
+                        .accessibilityHidden(true)
+                }
+                .background(HiddenScrollIndicatorConfigurator())
+                .ledgerDragRegion(.feed)
+                .overlay(alignment: .top) {
+                    if draggedItemID != nil, reorderTarget != nil, previewPinnedItems.isEmpty {
+                        emptyGroupDropTarget(title: "Drop to pin", isPinned: true)
+                    }
+                }
             }
-            .background(HiddenScrollIndicatorConfigurator())
-            .ledgerDragRegion(.feed)
-            .overlay(alignment: .top) {
-                if draggedItemID != nil, reorderTarget != nil, previewPinnedItems.isEmpty {
-                    emptyGroupDropTarget(title: "Drop to pin", isPinned: true)
+            .coordinateSpace(name: "ledger-feed")
+            .onPreferenceChange(LedgerDragRegionPreferenceKey.self) { [dragRegionStore] in
+                dragRegionStore.regions = $0
+            }
+            .overlay(alignment: .topLeading) {
+                if let presentation = dragPresentation {
+                    LedgerDragPreview(item: presentation.item, phase: presentation.phase)
+                        .scaleEffect(reduceMotion ? 1 : presentation.scale)
+                        .opacity(presentation.opacity)
+                        .position(presentation.position)
+                        .transition(.opacity.animation(NotchMotion.removal))
+                        .allowsHitTesting(false)
+                        .accessibilityHidden(true)
+                }
+            }
+            .simultaneousGesture(reorderGesture)
+            .scrollIndicators(.hidden)
+            .onChange(of: selectedLedgerScrollTarget) { _, target in
+                scrollToSelectedLedgerRow(target, using: proxy)
+            }
+        }
+    }
+
+    private func scrollToSelectedLedgerRow(
+        _ target: LedgerScrollTarget?,
+        using proxy: ScrollViewProxy
+    ) {
+        ledgerScrollTask?.cancel()
+        guard let target, reorderSession == nil else { return }
+
+        ledgerScrollTask = Task { @MainActor in
+            // Lazy rows and a post-deletion replacement selection may not exist
+            // until the next render turn. Ignore a request if navigation has
+            // already advanced to a newer target by then.
+            await Task.yield()
+            guard !Task.isCancelled,
+                  selectedLedgerScrollTarget == target,
+                  reorderSession == nil else { return }
+
+            if reduceMotion {
+                proxy.scrollTo(target)
+            } else {
+                withAnimation(NotchMotion.keyboardScroll) {
+                    // Omitting an anchor asks SwiftUI for the smallest movement
+                    // that makes the selected row visible.
+                    proxy.scrollTo(target)
                 }
             }
         }
-        .coordinateSpace(name: "ledger-feed")
-        .onPreferenceChange(LedgerDragRegionPreferenceKey.self) { [dragRegionStore] in
-            dragRegionStore.regions = $0
-        }
-        .overlay(alignment: .topLeading) {
-            if let presentation = dragPresentation {
-                LedgerDragPreview(item: presentation.item, phase: presentation.phase)
-                    .scaleEffect(reduceMotion ? 1 : presentation.scale)
-                    .opacity(presentation.opacity)
-                    .position(presentation.position)
-                    .transition(.opacity.animation(NotchMotion.removal))
-                    .allowsHitTesting(false)
-                    .accessibilityHidden(true)
-            }
-        }
-        .simultaneousGesture(reorderGesture)
-        .scrollIndicators(.hidden)
     }
 
     @ViewBuilder
@@ -1118,6 +1236,7 @@ struct ExpandedInboxView: View {
             onDelete: { presentDeleteFolder(folder) }
         )
         .ledgerDragRegion(.folder(folder.id))
+        .id(LedgerScrollTarget.folder(folder.id))
     }
 
     private func reorderableRow(_ item: AppViewModel.LedgerItem) -> some View {
@@ -1136,6 +1255,7 @@ struct ExpandedInboxView: View {
                 LedgerInsertionIndicator(placement: target?.placement)
             }
             .ledgerDragRegion(.row(item.id))
+            .id(LedgerScrollTarget.item(item.id))
             .animation(
                 reduceMotion ? nil : NotchMotion.dragLanding.animation,
                 value: isDragSource

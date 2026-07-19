@@ -8,22 +8,22 @@ import Foundation
 public enum PanelState: String, CaseIterable, Hashable, Sendable {
     case dormant
     case collapsed
+    case collapsedActivity
     case confirmation
     case expanded
     case dropTarget
-    case screenshot
     case onboarding
     case settings
 
     public var isVisible: Bool {
-        self != .dormant && self != .screenshot
+        self != .dormant
     }
 
     public var isExplicitSession: Bool {
         switch self {
         case .confirmation, .expanded, .dropTarget, .onboarding, .settings:
             return true
-        case .dormant, .collapsed, .screenshot:
+        case .dormant, .collapsed, .collapsedActivity:
             return false
         }
     }
@@ -32,7 +32,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .expanded, .dropTarget, .onboarding, .settings:
             return true
-        case .dormant, .collapsed, .confirmation, .screenshot:
+        case .dormant, .collapsed, .collapsedActivity, .confirmation:
             return false
         }
     }
@@ -43,13 +43,15 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .collapsed:
             CGSize(width: 198, height: 34)
+        case .collapsedActivity:
+            CGSize(width: 300, height: 34)
         case .confirmation:
             CGSize(width: 300, height: 56)
         case .expanded, .dropTarget, .settings:
             CGSize(width: 440, height: 560)
         case .onboarding:
             CGSize(width: 440, height: 500)
-        case .dormant, .screenshot:
+        case .dormant:
             .zero
         }
     }

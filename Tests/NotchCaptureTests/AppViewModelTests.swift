@@ -4,6 +4,123 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testFolderCommandParsingIsCaseInsensitiveAndRequiresACompleteCommand() {
+        let viewModel = AppViewModel()
+
+        viewModel.composerText = "/FoLdEr  Project  Notes "
+
+        XCTAssertTrue(viewModel.isFolderCommandActive)
+        XCTAssertFalse(viewModel.composerHasQuery)
+        XCTAssertTrue(viewModel.canSubmitComposer)
+        XCTAssertEqual(viewModel.composerActionLabel, "Create folder")
+
+        viewModel.composerText = "/folderish Project"
+
+        XCTAssertFalse(viewModel.isFolderCommandActive)
+        XCTAssertTrue(viewModel.composerHasQuery)
+        XCTAssertEqual(viewModel.composerActionLabel, "Add")
+    }
+
+    func testSlashCommandPickerShowsAndAcceptsFolderCommand() {
+        let viewModel = AppViewModel()
+
+        viewModel.composerText = "/"
+
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.folder])
+        XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
+        XCTAssertEqual(viewModel.composerText, "/folder ")
+        XCTAssertTrue(viewModel.isFolderCommandActive)
+
+        viewModel.composerText = "/unknown"
+        XCTAssertTrue(viewModel.composerCommandSuggestions.isEmpty)
+    }
+
+    func testFolderCommandCreatesAndOpensFolderWithoutResettingTheImageDraft() throws {
+        let currentFolder = AppViewModel.FolderSummary(name: "Current")
+        let createdFolderID = UUID()
+        let initialImage = composerImage(name: "Attached.png", contents: "attached")
+        let pastedImage = composerImage(name: "Pasted.png", contents: "pasted")
+        let imageProvider = NSItemProvider()
+        imageProvider.registerDataRepresentation(
+            forTypeIdentifier: UTType.png.identifier,
+            visibility: .all
+        ) { completion in
+            completion(Data("pixels".utf8), nil)
+            return nil
+        }
+        var createdNames: [String] = []
+        var capturedText: [String] = []
+        var createdTags: [String] = []
+        var pasteDraftID: UUID?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCreateFolder = { name in
+            createdNames.append(name)
+            return createdFolderID
+        }
+        hooks.onCaptureText = { text, _ in capturedText.append(text) }
+        hooks.onCreateTag = { createdTags.append($0) }
+        hooks.onPastedImageProviders = { _, draftID in pasteDraftID = draftID }
+        let viewModel = AppViewModel(folders: [currentFolder], hooks: hooks)
+        viewModel.openFolder(currentFolder)
+        viewModel.appendComposerImages([initialImage])
+        XCTAssertTrue(viewModel.acceptPastedImages([imageProvider]))
+        viewModel.composerText = "/folder  Project  Notes "
+
+        viewModel.submitComposer(capturingAnyway: true)
+
+        XCTAssertEqual(createdNames, ["Project  Notes"])
+        XCTAssertTrue(capturedText.isEmpty)
+        XCTAssertTrue(createdTags.isEmpty)
+        XCTAssertEqual(viewModel.browseLocation, .folder(createdFolderID))
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertEqual(viewModel.composerImages, [initialImage])
+        XCTAssertTrue(viewModel.folders.contains(where: { $0.id == createdFolderID }))
+
+        viewModel.appendComposerImages([pastedImage], toComposerDraft: try XCTUnwrap(pasteDraftID))
+        XCTAssertEqual(viewModel.composerImages, [initialImage, pastedImage])
+    }
+
+    func testFolderCommandValidationAndPersistenceFailurePreserveTheDraftAndLocation() {
+        let currentFolder = AppViewModel.FolderSummary(name: "Current")
+        let existingFolder = AppViewModel.FolderSummary(name: "Projects")
+        let image = composerImage(name: "Attached.png", contents: "attached")
+        var hooks = AppViewModel.Hooks()
+        hooks.onCreateFolder = { _ in nil }
+        let viewModel = AppViewModel(folders: [currentFolder, existingFolder], hooks: hooks)
+        viewModel.openFolder(currentFolder)
+        viewModel.appendComposerImages([image])
+
+        viewModel.composerText = "/folder   "
+        viewModel.handleComposerReturn()
+        XCTAssertEqual(viewModel.errorMessage, "Give the folder a name.")
+        XCTAssertEqual(viewModel.browseLocation, .folder(currentFolder.id))
+        XCTAssertEqual(viewModel.composerText, "/folder   ")
+        XCTAssertEqual(viewModel.composerImages, [image])
+
+        viewModel.composerText = "/folder projects"
+        viewModel.submitComposer()
+        XCTAssertEqual(viewModel.errorMessage, "That folder already exists.")
+        XCTAssertEqual(viewModel.composerText, "/folder projects")
+
+        viewModel.composerText = "/folder New folder"
+        viewModel.submitComposer()
+        XCTAssertEqual(viewModel.errorMessage, "Could not create the folder.")
+        XCTAssertEqual(viewModel.browseLocation, .folder(currentFolder.id))
+        XCTAssertEqual(viewModel.composerText, "/folder New folder")
+        XCTAssertEqual(viewModel.composerImages, [image])
+    }
+
+    func testNewFolderDialogCreationStillDoesNotNavigate() {
+        let createdFolderID = UUID()
+        var hooks = AppViewModel.Hooks()
+        hooks.onCreateFolder = { _ in createdFolderID }
+        let viewModel = AppViewModel(hooks: hooks)
+
+        XCTAssertTrue(viewModel.createFolder(named: "Projects"))
+        XCTAssertEqual(viewModel.browseLocation, .root)
+        XCTAssertTrue(viewModel.folders.contains(where: { $0.id == createdFolderID }))
+    }
+
     func testImagePasteRoutesOnlyImageProvidersToTheComposerHook() {
         let imageProvider = NSItemProvider()
         imageProvider.registerDataRepresentation(
@@ -438,6 +555,53 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persistedFormat, .twentyFourHour)
     }
 
+    func testOnboardingNavigationStaysWithinTypedSteps() {
+        let viewModel = AppViewModel(surfaceState: .onboarding)
+
+        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+        viewModel.retreatOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+
+        viewModel.advanceOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .shortcuts)
+        viewModel.advanceOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .shortcuts)
+
+        viewModel.retreatOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+    }
+
+    func testFinishingOnboardingPersistsOnceAndOpensInbox() {
+        var completionCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onCompleteOnboarding = { completionCount += 1 }
+        let viewModel = AppViewModel(surfaceState: .onboarding, hooks: hooks)
+        viewModel.onboardingStep = .shortcuts
+
+        viewModel.finishOnboarding()
+        viewModel.finishOnboarding()
+
+        XCTAssertEqual(completionCount, 1)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
+    func testIdleVisibilityControlsDismissalAndPomodoroAcknowledgement() {
+        let viewModel = AppViewModel(surfaceState: .expanded)
+        viewModel.setIdlePillHidden(true)
+
+        viewModel.dismiss()
+        XCTAssertEqual(viewModel.surfaceState, .dormant)
+
+        viewModel.setIdlePillHidden(false)
+        XCTAssertEqual(viewModel.surfaceState, .collapsed)
+
+        viewModel.surfaceState = .pomodoroComplete
+        viewModel.setIdlePillHidden(true)
+        viewModel.handleDismissalRequest(.escape)
+        XCTAssertEqual(viewModel.surfaceState, .dormant)
+    }
+
     func testUnifiedInputFiltersMatchingItemsInsteadOfCapturing() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()
@@ -854,7 +1018,25 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.items[0].isTrashed)
         XCTAssertEqual(trashedIDs, [item.id])
         XCTAssertNil(viewModel.selectedItemID)
-        XCTAssertEqual(viewModel.keyboardFocus, .none)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
+    func testKeyboardDeleteSelectsTheRowThatReplacesTheRemovedRow() {
+        let first = AppViewModel.LedgerItem(title: "First", sortOrder: 0)
+        let middle = AppViewModel.LedgerItem(title: "Middle", sortOrder: 1)
+        let last = AppViewModel.LedgerItem(title: "Last", sortOrder: 2)
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [first, middle, last])
+
+        viewModel.select(middle)
+
+        XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.moveToTrash))
+        XCTAssertEqual(viewModel.selectedItemID, last.id)
+        XCTAssertEqual(viewModel.keyboardFocus, .selectedRow)
+
+        // Deleting the final visible row falls back to its predecessor.
+        XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.moveToTrash))
+        XCTAssertEqual(viewModel.selectedItemID, first.id)
+        XCTAssertEqual(viewModel.keyboardFocus, .selectedRow)
     }
 
     func testSelectedRowKeyboardCommandsRespectComposerFocusAndTrashSafety() {

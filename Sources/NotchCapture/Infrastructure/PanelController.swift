@@ -49,7 +49,7 @@ struct PanelTransitionPolicy: Equatable {
         guard oldState != newState || !wasVisible else { return .immediate }
 
         if !newState.isVisible {
-            guard newState != .screenshot, wasVisible else { return .immediate }
+            guard wasVisible else { return .immediate }
             if reduceMotion {
                 return Self(
                     kind: .reducedFade,
@@ -174,7 +174,7 @@ struct PanelWindowInteractionPolicy {
         targetState: PanelState,
         wasVisible: Bool
     ) -> Bool {
-        guard wasVisible, targetState == .collapsed else { return false }
+        guard wasVisible, [.collapsed, .collapsedActivity].contains(targetState) else { return false }
         return transition.kind == .contract || transition.kind == .reducedFade
     }
 
@@ -197,7 +197,7 @@ struct PanelShadowApron: Equatable {
     static let standard = Self(horizontal: 64, bottom: 80)
 
     static func resolve(for state: PanelState) -> Self {
-        state == .collapsed ? .none : .standard
+        [.collapsed, .collapsedActivity].contains(state) ? .none : .standard
     }
 
     func applying(to size: CGSize) -> CGSize {
@@ -339,9 +339,10 @@ public final class PanelController: NSObject, ObservableObject {
 
         state = newState
         panel.permitsKeyWindow = newState.acceptsKeyboardInput
-        panel.level = newState.isExplicitSession
-            ? NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 4)
-            : .statusBar
+        // Keep the panel at the status-bar level even while it is expanded.
+        // Raising it above that level can cover macOS notification and system
+        // modal surfaces, preventing the user from interacting with them.
+        panel.level = .statusBar
         installDismissalMonitorsIfNeeded()
 
         transitionGeneration += 1
@@ -617,7 +618,7 @@ public final class PanelController: NSObject, ObservableObject {
 
     private func panelFrame(for state: PanelState, geometry: NotchGeometry) -> CGRect? {
         var size = surfaceSize(for: state, geometry: geometry)
-        if state == .collapsed {
+        if [.collapsed, .collapsedActivity].contains(state) {
             let notchWidth = geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width
             size.width = max(size.width, notchWidth + 24)
             size.height = max(size.height, geometry.safeAreaInsets.top + 6)
@@ -629,6 +630,18 @@ public final class PanelController: NSObject, ObservableObject {
 
     private func surfaceSize(for state: PanelState, geometry: NotchGeometry) -> CGSize {
         var size = state.nominalSize
+        if state == .collapsedActivity {
+            let simulatedNotch = CommandLine.arguments.contains("--design-preview")
+                && CommandLine.arguments.contains("--preview-hardware-notch")
+            if simulatedNotch {
+                size.width = 156 + (NotchTheme.collapsedActivityWingWidth * 2) + (NotchTheme.topFlare * 2)
+                size.height = 36
+            } else if let notchRect = geometry.notchRect,
+                      geometry.safeAreaInsets.top > 0 {
+                size.width = notchRect.width + (NotchTheme.collapsedActivityWingWidth * 2) + (NotchTheme.topFlare * 2)
+                size.height = max(34, max(notchRect.height, geometry.safeAreaInsets.top) + 4)
+            }
+        }
         if [.expanded, .dropTarget, .onboarding, .settings].contains(state) {
             size.height = min(size.height, geometry.screenFrame.height - 28)
         }
