@@ -40,7 +40,7 @@ private struct MusicPlayerBand: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    HStack(spacing: 2) {
+                    HStack(spacing: 14) {
                         transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)
                         transportButton("forward.fill", label: "Next track", action: viewModel.musicNext, compact: true)
                     }
@@ -57,7 +57,9 @@ private struct MusicPlayerBand: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 14)
+        // Match the header, folder rows, and ledger rows so the player does
+        // not hang outside the shared expanded-surface content column.
+        .padding(.horizontal, 20)
         .frame(height: 62)
         .background(NotchTheme.ink)
         .overlay(alignment: .bottom) {
@@ -78,7 +80,7 @@ private struct MusicPlayerBand: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .frame(width: compact ? 16 : 25, height: 25)
         }
-        .buttonStyle(PressableIconButtonStyle())
+        .buttonStyle(PressableIconButtonStyle(width: compact ? 16 : 28))
         .notchHitTarget(Circle())
         .help(label)
         .accessibilityLabel(label)

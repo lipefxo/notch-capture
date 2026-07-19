@@ -377,7 +377,7 @@ private struct ExtendedInlineTransportControls: View {
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        HStack(spacing: 2) {
+        HStack(spacing: 14) {
             control("backward.fill", label: "Previous track", action: viewModel.musicPrevious)
             control("forward.fill", label: "Next track", action: viewModel.musicNext)
         }
@@ -389,7 +389,7 @@ private struct ExtendedInlineTransportControls: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .frame(width: 16, height: 25)
         }
-        .buttonStyle(PressableIconButtonStyle())
+        .buttonStyle(PressableIconButtonStyle(width: 16))
         .notchHitTarget(Circle())
         .help(label)
         .accessibilityLabel(label)

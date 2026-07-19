@@ -60,7 +60,10 @@ struct ExpandedInboxView: View {
     @State private var folderHeaderMenuAnchor: CGRect = .zero
     @State private var pomodoroMenuAnchor: CGRect = .zero
 
-    private let floatingComposerMargin: CGFloat = 18
+    // The composer shares the same 20-point content column as the header,
+    // playback shelf, and ledger. Keeping the bottom inset in step also
+    // gives the surface a consistent finish at the lower edge.
+    private let floatingComposerMargin: CGFloat = 20
     private let composerTextRowHeight: CGFloat = 48
     private let composerImageStripHeight: CGFloat = 64
 
