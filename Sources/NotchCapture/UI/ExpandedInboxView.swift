@@ -302,25 +302,40 @@ struct ExpandedInboxView: View {
     private var header: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                if !viewModel.isAtRoot {
-                    Button {
-                        navigate(forward: false) { viewModel.openRoot() }
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 11, weight: .semibold))
+                HStack(spacing: 2) {
+                    if !viewModel.isAtRoot {
+                        Button {
+                            navigate(forward: false) { viewModel.openRoot() }
+                        } label: {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(PressableIconButtonStyle(width: 20))
+                        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .help("Back to Inbox")
+                        .accessibilityLabel("Back to Inbox")
                     }
-                    .buttonStyle(PressableIconButtonStyle())
-                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .help("Back to Inbox")
-                    .accessibilityLabel("Back to Inbox")
+
+                    Text(viewModel.navigationTitle)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(NotchTheme.primaryText)
+                        .lineLimit(1)
+
+                    if let folder = viewModel.currentFolder {
+                        Button {
+                            presentFolderActions(folder)
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.system(size: 13, weight: .semibold))
+                        }
+                        .buttonStyle(PressableIconButtonStyle())
+                        .menuAnchor($folderHeaderMenuAnchor)
+                        .help("Folder actions")
+                        .accessibilityLabel("Actions for \(folder.name)")
+                    }
                 }
 
-                Text(viewModel.navigationTitle)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(NotchTheme.primaryText)
-                    .lineLimit(1)
-
-                Spacer()
+                Spacer(minLength: 8)
 
                 if viewModel.isAtRoot {
                     Button {
@@ -334,19 +349,6 @@ struct ExpandedInboxView: View {
                     .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .help("New folder")
                     .accessibilityLabel("Create a new folder")
-                } else if let folder = viewModel.currentFolder {
-                    Button {
-                        presentFolderActions(folder)
-                    } label: {
-                        Image(systemName: "ellipsis")
-                            .font(.system(size: 13, weight: .semibold))
-                            .frame(width: 28, height: 28)
-                    }
-                    .buttonStyle(PressableIconButtonStyle())
-                    .frame(width: 28, height: 28)
-                    .menuAnchor($folderHeaderMenuAnchor)
-                    .help("Folder actions")
-                    .accessibilityLabel("Actions for \(folder.name)")
                 }
 
                 pomodoroControl
