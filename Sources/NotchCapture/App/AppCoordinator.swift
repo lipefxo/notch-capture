@@ -21,6 +21,7 @@ final class AppCoordinator {
     let repository: ItemRepository
     let attachmentStore: AttachmentStore
     let packageService: CapturePackageService
+    let faviconFetcher: any FaviconFetching
     private let loginItemService: LoginItemService
     private let updaterService: UpdaterService
     let displayLocator: DisplayLocator
@@ -75,6 +76,7 @@ final class AppCoordinator {
             modelContext: modelContainer.mainContext,
             attachmentStore: attachmentStore
         )
+        self.faviconFetcher = FaviconFetcher()
         self.loginItemService = LoginItemService()
         self.updaterService = UpdaterService(previewMode: previewMode)
         self.displayLocator = DisplayLocator()

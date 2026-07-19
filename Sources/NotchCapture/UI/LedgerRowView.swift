@@ -1,6 +1,35 @@
 import AppKit
-import QuickLookThumbnailing
 import SwiftUI
+
+struct LedgerCompletionLayerLifecycle: Equatable, Sendable {
+    var progress: CGFloat
+    var showsLayers: Bool
+
+    init(isCompleted: Bool) {
+        progress = isCompleted ? 1 : 0
+        showsLayers = isCompleted
+    }
+
+    @discardableResult
+    mutating func beginTransition(to isCompleted: Bool) -> Bool {
+        if isCompleted {
+            showsLayers = true
+        }
+        progress = isCompleted ? 1 : 0
+        return !isCompleted && showsLayers
+    }
+
+    mutating func finishRetraction(ifItemIsCompleted isCompleted: Bool) {
+        guard !isCompleted, progress == 0 else { return }
+        showsLayers = false
+    }
+
+    static func cleanupDelay(reduceMotion: Bool) -> TimeInterval {
+        reduceMotion
+            ? NotchMotion.reducedMotionDuration
+            : NotchMotion.completionRetractDuration
+    }
+}
 
 struct LedgerCompletionRevealGeometry {
     static let originX: CGFloat = 30
@@ -266,7 +295,8 @@ struct LedgerRowView: View, Equatable {
     @State private var isHovered = false
     @State private var isMoreActionsHovered = false
     @State private var actionsAnchor: CGRect = .zero
-    @State private var completionRevealProgress: CGFloat
+    @State private var completionLayerLifecycle: LedgerCompletionLayerLifecycle
+    @State private var completionLayerCleanupTask: Task<Void, Never>?
 
     private var showsActions: Bool { isHovered || isSelected }
 
@@ -299,14 +329,19 @@ struct LedgerRowView: View, Equatable {
         self.timeFormat = timeFormat
         self.showsSearchLocation = showsSearchLocation
         self.viewModel = viewModel
-        _completionRevealProgress = State(initialValue: item.isCompleted ? 1 : 0)
+        _completionLayerLifecycle = State(
+            initialValue: LedgerCompletionLayerLifecycle(isCompleted: item.isCompleted)
+        )
+        _completionLayerCleanupTask = State(initialValue: nil)
     }
 
     var body: some View {
         ZStack {
-            completionBackgroundLayer
-                .allowsHitTesting(false)
-                .accessibilityHidden(true)
+            if completionLayerLifecycle.showsLayers {
+                completionBackgroundLayer
+                    .allowsHitTesting(false)
+                    .accessibilityHidden(true)
+            }
 
             interactionBackgroundLayer
 
@@ -315,13 +350,18 @@ struct LedgerRowView: View, Equatable {
                 isInteractive: true
             )
 
-            if !isEditing {
+            if !isEditing, completionLayerLifecycle.showsLayers {
                 completedContentLayer
             }
         }
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
         .onChange(of: item.isCompleted) { _, isCompleted in
+            completionLayerCleanupTask?.cancel()
+            completionLayerCleanupTask = nil
+            if isCompleted {
+                completionLayerLifecycle.showsLayers = true
+            }
             // The wash launches a beat after the check pops; retracting is
             // immediate so undo feels instant.
             let animation = reduceMotion
@@ -329,8 +369,20 @@ struct LedgerRowView: View, Equatable {
                 : (isCompleted
                     ? NotchMotion.completionReveal.delay(NotchMotion.completionWashDelay)
                     : NotchMotion.completionRetract)
-            withAnimation(animation) {
-                completionRevealProgress = isCompleted ? 1 : 0
+            _ = withAnimation(animation) {
+                completionLayerLifecycle.beginTransition(to: isCompleted)
+            }
+            guard !isCompleted else { return }
+            let cleanupDelay = LedgerCompletionLayerLifecycle.cleanupDelay(
+                reduceMotion: reduceMotion
+            )
+            completionLayerCleanupTask = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(cleanupDelay))
+                guard !Task.isCancelled else { return }
+                completionLayerLifecycle.finishRetraction(
+                    ifItemIsCompleted: item.isCompleted
+                )
+                completionLayerCleanupTask = nil
             }
         }
         .task(id: isEditing) {
@@ -345,6 +397,10 @@ struct LedgerRowView: View, Equatable {
                     isEditorFocused = true
                 }
             }
+        }
+        .onDisappear {
+            completionLayerCleanupTask?.cancel()
+            completionLayerCleanupTask = nil
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
@@ -422,11 +478,11 @@ struct LedgerRowView: View, Equatable {
     private var completionBackgroundLayer: some View {
         if reduceMotion {
             NotchTheme.completedLedger
-                .opacity(Double(completionRevealProgress))
+                .opacity(Double(completionLayerLifecycle.progress))
         } else {
             Color.clear
                 .modifier(
-                    LedgerCompletionLiquidWashModifier(progress: completionRevealProgress)
+                    LedgerCompletionLiquidWashModifier(progress: completionLayerLifecycle.progress)
                 )
         }
     }
@@ -444,13 +500,13 @@ struct LedgerRowView: View, Equatable {
     private var completedContentLayer: some View {
         if reduceMotion {
             rowContent(completedPresentation: true, isInteractive: false)
-                .opacity(Double(completionRevealProgress))
+                .opacity(Double(completionLayerLifecycle.progress))
                 .allowsHitTesting(false)
                 .accessibilityHidden(true)
         } else {
             rowContent(completedPresentation: true, isInteractive: false)
                 .mask {
-                    LedgerCompletionRevealMask(progress: completionRevealProgress)
+                    LedgerCompletionRevealMask(progress: completionLayerLifecycle.progress)
                         .fill(.white)
                 }
                 .allowsHitTesting(false)
@@ -497,6 +553,20 @@ struct LedgerRowView: View, Equatable {
                     completedPresentation: completedPresentation,
                     isInteractive: true
                 )
+            } else if isLinkOnlyItem, let url = item.attachments.first?.previewURL {
+                Button {
+                    NSWorkspace.shared.open(url)
+                } label: {
+                    selectionContentLayout(
+                        completedPresentation: completedPresentation,
+                        isInteractive: true
+                    )
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .notchHitTarget(Rectangle())
+                .help("Open link")
+                .accessibilityLabel("Open link: \(item.title)")
             } else {
                 selectionContentLayout(
                     completedPresentation: completedPresentation,
@@ -717,12 +787,24 @@ struct LedgerRowView: View, Equatable {
     }
 
     private func linkLeadingIcon(completedPresentation: Bool) -> some View {
-        Image(systemName: "link")
-            .font(.system(size: 12, weight: .regular))
-            .foregroundStyle(
-                completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
-            )
-            .frame(width: 20, height: 28)
+        Group {
+            if let faviconURL = item.attachments.first?.faviconURL,
+               let favicon = NSImage(contentsOf: faviconURL) {
+                Image(nsImage: favicon)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: "link")
+                    .font(.system(size: 12, weight: .regular))
+                    .foregroundStyle(
+                        completedPresentation ? NotchTheme.tertiaryText : NotchTheme.secondaryText
+                    )
+                    .accessibilityHidden(true)
+            }
+        }
+        .frame(width: 20, height: 28)
     }
 
     private func completionControlVisual(completedPresentation: Bool) -> some View {
@@ -958,14 +1040,14 @@ private struct QuickLookThumbnail: View {
         .background(NotchTheme.control)
         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
         .task(id: url) {
-            let request = QLThumbnailGenerator.Request(
-                fileAt: url,
+            let request = ThumbnailRequest(
+                fileURL: url,
                 size: CGSize(width: size.width * 2, height: size.height * 2),
-                scale: NSScreen.main?.backingScaleFactor ?? 2,
-                representationTypes: .thumbnail
+                scale: NSScreen.main?.backingScaleFactor ?? 2
             )
-            if let representation = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request) {
-                thumbnail = representation.cgImage
+            if let generated = await ThumbnailLoader.shared.thumbnail(for: request),
+               !Task.isCancelled {
+                thumbnail = generated
             }
         }
     }

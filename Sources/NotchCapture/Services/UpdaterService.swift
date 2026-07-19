@@ -25,6 +25,12 @@ final class UpdaterService {
     var isEnabled: Bool { updaterController != nil }
 
     func checkForUpdates() {
-        updaterController?.checkForUpdates(nil)
+        guard let updaterController else { return }
+        // Sparkle rejects a check made before its updater has completed its
+        // startup cycle. A Settings click can race that cycle during launch;
+        // calling through anyway raises an Objective-C exception and takes the
+        // accessory app down instead of presenting the update UI.
+        guard updaterController.updater.canCheckForUpdates else { return }
+        updaterController.checkForUpdates(nil)
     }
 }

@@ -639,6 +639,52 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(second.skippedDuplicateCount, 1)
     }
 
+    func testPackageRoundTripPreservesCachedURLFavicon() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let sourceContainer = try makeContainer()
+        let sourceStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("source", isDirectory: true))
+        let favicon = try sourceStore.storeData(
+            Data("favicon bytes".utf8),
+            filename: "Favicon.png",
+            type: .png,
+            kind: .image
+        )
+        let attachment = Attachment(
+            kind: .url,
+            typeIdentifier: UTType.url.identifier,
+            originalFilename: "example.com",
+            url: try XCTUnwrap(URL(string: "https://example.com")),
+            faviconRelativePath: favicon.relativePath,
+            faviconTypeIdentifier: favicon.typeIdentifier
+        )
+        _ = try ItemRepository(modelContext: sourceContainer.mainContext).createItem(
+            origin: .manual,
+            attachments: [attachment]
+        )
+
+        let package = temporary.appendingPathComponent("Favicon.notchcapture", isDirectory: true)
+        try CapturePackageService(modelContext: sourceContainer.mainContext, attachmentStore: sourceStore)
+            .export(to: package)
+        let manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: package.appendingPathComponent("manifest.json"))) as? [String: Any]
+        )
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 3)
+
+        let targetContainer = try makeContainer()
+        let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
+        _ = try CapturePackageService(modelContext: targetContainer.mainContext, attachmentStore: targetStore)
+            .importPackage(at: package)
+        let importedAttachment = try XCTUnwrap(
+            targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first?.attachments.first
+        )
+        let importedFaviconPath = try XCTUnwrap(importedAttachment.faviconRelativePath)
+        XCTAssertEqual(importedAttachment.faviconTypeIdentifier, UTType.png.identifier)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try targetStore.resolve(relativePath: importedFaviconPath).path))
+    }
+
     func testPackageRoundTripIncludesSharedAndStandaloneTags() throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temporary) }

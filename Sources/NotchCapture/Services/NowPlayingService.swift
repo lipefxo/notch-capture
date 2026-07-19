@@ -19,7 +19,7 @@ private final class NowPlayingObservationLifetime: @unchecked Sendable {
 
 @MainActor
 final class NowPlayingService {
-    enum ActivityLevel: Sendable {
+    enum ActivityLevel: Sendable, Equatable {
         case hidden
         case compact
         case full
@@ -27,8 +27,8 @@ final class NowPlayingService {
         var pollInterval: TimeInterval? {
             switch self {
             case .hidden: nil
-            case .compact: 5
-            case .full: 1
+            case .compact: 15
+            case .full: 5
             }
         }
     }
@@ -38,26 +38,34 @@ final class NowPlayingService {
     var onAutomationDenied: (@MainActor (NowPlayingSource) -> Void)?
 
     private(set) var snapshot: NowPlayingSnapshot?
-    private let runner: AppleScriptRunner
+    private let runner: any AppleScriptRunning
     private let artworkLoader: ArtworkLoader
     private let workspace: NSWorkspace
+    private let sourceIsRunning: @MainActor (NowPlayingSource) -> Bool
     private let lifetime = NowPlayingObservationLifetime()
     private var activityLevel: ActivityLevel = .hidden
     private var deniedSources: Set<NowPlayingSource> = []
     private var lastActivity: [NowPlayingSource: Date] = [:]
     private var refreshTask: Task<Void, Never>?
+    private var refreshPending = false
+    private var refreshGeneration = 0
+    private var isStopped = false
     /// Track key for which artwork was last successfully delivered.
     /// Kept separately from `snapshot` so a cancelled refresh that already
     /// published metadata still retries artwork on the next pass.
     private var artworkLoadedForTrackKey: String?
 
     init(
-        runner: AppleScriptRunner = AppleScriptRunner(),
-        workspace: NSWorkspace = .shared
+        runner: any AppleScriptRunning = AppleScriptRunner(),
+        workspace: NSWorkspace = .shared,
+        sourceIsRunning: @escaping @MainActor (NowPlayingSource) -> Bool = { source in
+            !NSRunningApplication.runningApplications(withBundleIdentifier: source.rawValue).isEmpty
+        }
     ) {
         self.runner = runner
         self.artworkLoader = ArtworkLoader(runner: runner)
         self.workspace = workspace
+        self.sourceIsRunning = sourceIsRunning
         installObservers()
     }
 
@@ -68,29 +76,56 @@ final class NowPlayingService {
     }
 
     func stop() {
+        isStopped = true
+        refreshGeneration += 1
+        refreshPending = false
         refreshTask?.cancel()
         lifetime.stop()
     }
 
     func setActivityLevel(_ level: ActivityLevel) {
+        guard !isStopped, level != activityLevel else { return }
         activityLevel = level
         lifetime.pollTimer?.invalidate()
         lifetime.pollTimer = nil
         if let interval = level.pollInterval {
-            lifetime.pollTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            let timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
                 Task { @MainActor in self?.refresh() }
             }
+            timer.tolerance = min(1, interval * 0.1)
+            lifetime.pollTimer = timer
             refresh()
+        } else {
+            refreshGeneration += 1
+            refreshPending = false
+            refreshTask?.cancel()
         }
     }
 
     func refresh(triggeredBy source: NowPlayingSource? = nil) {
         if let source { lastActivity[source] = .now }
-        guard activityLevel != .hidden else { return }
-        refreshTask?.cancel()
-        refreshTask = Task { @MainActor [weak self] in
-            await self?.performRefresh()
+        guard !isStopped, activityLevel != .hidden else { return }
+        guard refreshTask == nil else {
+            refreshPending = true
+            return
         }
+        startRefresh()
+    }
+
+    private func startRefresh() {
+        let generation = refreshGeneration
+        refreshTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await performRefresh(generation: generation)
+            finishRefresh()
+        }
+    }
+
+    private func finishRefresh() {
+        refreshTask = nil
+        guard !isStopped, activityLevel != .hidden, refreshPending else { return }
+        refreshPending = false
+        startRefresh()
     }
 
     func playPause() { runCommand("playpause", optimisticallyTogglingPlayback: true) }
@@ -174,21 +209,45 @@ final class NowPlayingService {
         trackKey != artworkLoadedForTrackKey
     }
 
-    private func performRefresh() async {
+    nonisolated static func shouldPublish(
+        previous: NowPlayingSnapshot?,
+        candidate: NowPlayingSnapshot?,
+        driftThreshold: TimeInterval = 1.5
+    ) -> Bool {
+        guard let previous, let candidate else {
+            return previous != nil || candidate != nil
+        }
+        guard previous.source == candidate.source,
+              previous.trackKey == candidate.trackKey,
+              previous.title == candidate.title,
+              previous.artist == candidate.artist,
+              previous.album == candidate.album,
+              previous.duration == candidate.duration,
+              previous.isPlaying == candidate.isPlaying,
+              previous.artworkURL == candidate.artworkURL else {
+            return true
+        }
+        let expectedPosition = previous.position(at: candidate.positionAnchor)
+        return abs(candidate.position - expectedPosition) > driftThreshold
+    }
+
+    private func performRefresh(generation: Int) async {
         var candidates: [NowPlayingSnapshot] = []
         for source in NowPlayingSource.allCases where isRunning(source) && !deniedSources.contains(source) {
             do {
                 let result = try await runner.run(Self.statusScript(for: source))
+                guard refreshIsCurrent(generation) else { return }
                 guard case let .string(value) = result,
                       let parsed = Self.parseStatus(value, source: source) else { continue }
                 candidates.append(parsed)
             } catch AppleScriptRunnerError.automationDenied {
+                guard refreshIsCurrent(generation) else { return }
                 deniedSources.insert(source)
                 onAutomationDenied?(source)
             } catch {
+                guard refreshIsCurrent(generation) else { return }
                 continue
             }
-            guard !Task.isCancelled else { return }
         }
 
         let selected = Self.chooseActive(
@@ -196,10 +255,13 @@ final class NowPlayingService {
             currentSource: snapshot?.source,
             lastActivity: lastActivity
         )
-        guard !Task.isCancelled else { return }
-        let oldTrackKey = snapshot?.trackKey
+        guard refreshIsCurrent(generation) else { return }
+        let previous = snapshot
+        let oldTrackKey = previous?.trackKey
         snapshot = selected
-        onSnapshotChange?(selected)
+        if Self.shouldPublish(previous: previous, candidate: selected) {
+            onSnapshotChange?(selected)
+        }
 
         guard let selected else {
             if oldTrackKey != nil {
@@ -209,19 +271,26 @@ final class NowPlayingService {
             return
         }
 
-        // Metadata refreshes cancel in-flight work. If the previous task already
-        // published this track but was cancelled during artwork fetch, the next
-        // pass must still load artwork — not bail just because the key matches.
+        // A refresh can publish metadata and then be invalidated while artwork
+        // is loading. The next pass must retry instead of treating the matching
+        // track key as proof that artwork was already delivered.
         guard Self.needsArtworkLoad(
             trackKey: selected.trackKey,
             artworkLoadedForTrackKey: artworkLoadedForTrackKey
         ) else { return }
 
         let artwork = await artworkLoader.artwork(for: selected)
-        guard !Task.isCancelled else { return }
+        guard refreshIsCurrent(generation) else { return }
         guard snapshot?.trackKey == selected.trackKey else { return }
         artworkLoadedForTrackKey = selected.trackKey
         onArtworkChange?(selected.trackKey, artwork)
+    }
+
+    private func refreshIsCurrent(_ generation: Int) -> Bool {
+        !Task.isCancelled
+            && !isStopped
+            && activityLevel != .hidden
+            && refreshGeneration == generation
     }
 
     private func runCommand(_ command: String, optimisticallyTogglingPlayback: Bool = false) {
@@ -247,7 +316,7 @@ final class NowPlayingService {
     }
 
     private func isRunning(_ source: NowPlayingSource) -> Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: source.rawValue).isEmpty
+        sourceIsRunning(source)
     }
 
     private func installObservers() {

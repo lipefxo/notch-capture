@@ -1,6 +1,6 @@
 # Notch Capture
 
-Notch Capture is a private, local-first macOS capture inbox that lives in the notch. It is a Swift 6 agent app with no Dock icon, menu-bar item, ordinary app window, or analytics. The app makes no network requests except two narrow ones: fetching Spotify album artwork for the now-playing display, and checking the project's own [appcast](https://lipefxo.github.io/notch-capture/appcast.xml) for updates via the bundled Sparkle framework.
+Notch Capture is a private, local-first macOS capture inbox that lives in the notch. It is a Swift 6 agent app with no Dock icon, menu-bar item, ordinary app window, or analytics. The app makes no network requests except three narrow ones: fetching Spotify album artwork for the now-playing display, directly retrieving a favicon when a new web link is captured, and checking the project's own [appcast](https://lipefxo.github.io/notch-capture/appcast.xml) for updates via the bundled Sparkle framework.
 
 ## Default shortcut
 

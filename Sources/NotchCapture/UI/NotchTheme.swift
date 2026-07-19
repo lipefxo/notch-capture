@@ -297,7 +297,6 @@ struct NotchSurfaceBackground: View {
         // near-opaque ink it was invisible anyway.
         NotchHugShape(bottomRadius: bottomRadius)
             .fill(NotchTheme.ink.opacity(0.985))
-            .shadow(color: .black.opacity(shadowOpacity), radius: shadowRadius, y: shadowY)
     }
 }
 

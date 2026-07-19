@@ -267,6 +267,9 @@ final class Attachment {
     var originalFilename: String
     var relativePath: String?
     var url: URL?
+    /// Cached site icon for URL attachments. Optional for additive SwiftData migration.
+    var faviconRelativePath: String?
+    var faviconTypeIdentifier: String?
     var order: Int
     var createdAt: Date
     var item: CaptureItem?
@@ -278,6 +281,8 @@ final class Attachment {
         originalFilename: String,
         relativePath: String? = nil,
         url: URL? = nil,
+        faviconRelativePath: String? = nil,
+        faviconTypeIdentifier: String? = nil,
         order: Int = 0,
         createdAt: Date = .now,
         item: CaptureItem? = nil
@@ -288,6 +293,8 @@ final class Attachment {
         self.originalFilename = originalFilename
         self.relativePath = relativePath
         self.url = url
+        self.faviconRelativePath = faviconRelativePath
+        self.faviconTypeIdentifier = faviconTypeIdentifier
         self.order = order
         self.createdAt = createdAt
         self.item = item

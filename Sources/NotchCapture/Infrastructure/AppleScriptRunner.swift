@@ -24,7 +24,11 @@ enum AppleScriptResult: Sendable, Equatable {
     case data(Data)
 }
 
-final class AppleScriptRunner: @unchecked Sendable {
+protocol AppleScriptRunning: Sendable {
+    func run(_ source: String) async throws -> AppleScriptResult
+}
+
+final class AppleScriptRunner: AppleScriptRunning, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.lipe.notchcapture.applescript")
     private var scripts: [String: NSAppleScript] = [:]
 

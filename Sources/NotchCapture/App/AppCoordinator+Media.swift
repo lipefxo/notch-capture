@@ -57,7 +57,9 @@ extension AppCoordinator {
 
     private func refreshIdleActivitySurface() {
         guard [.collapsed, .collapsedActivity].contains(viewModel.surfaceState) else { return }
-        viewModel.surfaceState = viewModel.idleSurfaceState
+        let targetState = viewModel.idleSurfaceState
+        guard viewModel.surfaceState != targetState else { return }
+        viewModel.surfaceState = targetState
     }
 
     private func handlePomodoroCompletion() {

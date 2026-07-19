@@ -461,7 +461,9 @@ final class ItemRepository {
     }
 
     func deletePermanently(_ item: CaptureItem) throws {
-        let storedPaths = item.attachments.compactMap(\.relativePath)
+        let storedPaths = item.attachments.flatMap { attachment in
+            [attachment.relativePath, attachment.faviconRelativePath].compactMap { $0 }
+        }
         modelContext.delete(item)
         try modelContext.save()
         // Best-effort: the delete already committed, so a failed unlink must not
@@ -473,7 +475,9 @@ final class ItemRepository {
     @discardableResult
     func emptyTrash() throws -> Int {
         let items = try fetch(scope: .trash)
-        let storedPaths = items.flatMap(\.attachments).compactMap(\.relativePath)
+        let storedPaths = items.flatMap(\.attachments).flatMap { attachment in
+            [attachment.relativePath, attachment.faviconRelativePath].compactMap { $0 }
+        }
         items.forEach(modelContext.delete)
         try modelContext.save()
         storedPaths.forEach { try? attachmentStore?.remove(relativePath: $0) }
@@ -487,7 +491,9 @@ final class ItemRepository {
     func removeOrphanedAttachmentFiles() throws -> Int {
         guard let attachmentStore else { return 0 }
         let attachments = try modelContext.fetch(FetchDescriptor<Attachment>())
-        let referenced = Set(attachments.compactMap(\.relativePath))
+        let referenced = Set(attachments.flatMap { attachment in
+            [attachment.relativePath, attachment.faviconRelativePath].compactMap { $0 }
+        })
         return attachmentStore.removeFiles(notIn: referenced)
     }
 

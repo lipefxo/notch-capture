@@ -31,15 +31,6 @@ struct PanelMorphGeometry: Equatable, Sendable {
         return topAnchoredFrame(for: size)
     }
 
-    func panelCanvasFrame(horizontalApron: CGFloat, bottomApron: CGFloat) -> CGRect {
-        topAnchoredFrame(
-            for: CGSize(
-                width: canvasSize.width + (horizontalApron * 2),
-                height: canvasSize.height + bottomApron
-            )
-        )
-    }
-
     private func topAnchoredFrame(for size: CGSize) -> CGRect {
         CGRect(
             x: topCenter.x - (size.width / 2),
