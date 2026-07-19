@@ -32,6 +32,8 @@ enum NotchTheme {
     static let headerHeight: CGFloat = 62
     /// Width of the concave fillets that merge the surface into the top screen edge.
     static let topFlare: CGFloat = 10
+    /// Equal content width on either side of a hardware notch while a live activity is visible.
+    static let collapsedActivityWingWidth: CGFloat = 116
     static let mint = Color(red: 0.23, green: 0.78, blue: 0.50)
     static let ink = Color(red: 0.022, green: 0.024, blue: 0.027)
     static let graphite = Color(red: 0.070, green: 0.074, blue: 0.080)

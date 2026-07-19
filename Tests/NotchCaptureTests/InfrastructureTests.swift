@@ -7,9 +7,8 @@ import XCTest
 final class PanelStateTests: XCTestCase {
     func testVisibilityMatchesWindowOwnership() {
         XCTAssertFalse(PanelState.dormant.isVisible)
-        XCTAssertFalse(PanelState.screenshot.isVisible)
 
-        for state in PanelState.allCases.filter({ $0 != .dormant && $0 != .screenshot }) {
+        for state in PanelState.allCases.filter({ $0 != .dormant }) {
             XCTAssertTrue(state.isVisible, "Expected \(state) to own a visible panel")
         }
     }
@@ -27,7 +26,7 @@ final class PanelStateTests: XCTestCase {
     }
 
     func testExplicitSessionsExcludePassiveStates() {
-        let passiveStates: Set<PanelState> = [.dormant, .collapsed, .screenshot]
+        let passiveStates: Set<PanelState> = [.dormant, .collapsed, .collapsedActivity]
 
         for state in PanelState.allCases {
             XCTAssertEqual(
@@ -185,19 +184,6 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertFalse(policy.animatesMorph)
         XCTAssertEqual(policy.opacity, .hide)
         XCTAssertEqual(policy.fadeDuration, NotchMotion.reducedMotionDuration)
-    }
-
-    func testScreenshotSelectionIsImmediate() {
-        let policy = PanelTransitionPolicy.resolve(
-            from: .expanded,
-            to: .screenshot,
-            wasVisible: true,
-            reduceMotion: false
-        )
-
-        XCTAssertEqual(policy.kind, .immediate)
-        XCTAssertFalse(policy.animatesMorph)
-        XCTAssertFalse(policy.ordersOutOnCompletion)
     }
 
     func testExplicitlyNonAnimatedDismissalIsImmediate() {
@@ -443,7 +429,6 @@ final class SurfaceChromeMetricsTests: XCTestCase {
 
     func testHiddenStatesDoNotReplaceTheLastVisibleChrome() {
         XCTAssertNil(SurfaceChromeMetrics.resolve(for: .dormant))
-        XCTAssertNil(SurfaceChromeMetrics.resolve(for: .screenshot))
     }
 
     func testCollapsedChromeDropsTheOuterShadowAtTheTightWindowBoundary() throws {

@@ -12,6 +12,7 @@ final class AppCoordinator {
         static let ownership = "notchOwnership"
         static let autoHideExternalPill = "autoHideExternalPill"
         static let timeFormat = "timeFormat"
+        static let pomodoroDuration = "pomodoroDuration"
 
         static func shortcut(_ action: GlobalHotKeyAction, field: String) -> String {
             "shortcut.\(action.rawValue).\(field)"
@@ -23,11 +24,11 @@ final class AppCoordinator {
     let attachmentStore: AttachmentStore
     let packageService: CapturePackageService
     let selectionService: SelectionCaptureService
-    let screenCaptureService: ScreenCaptureService
-    let screenshotSelection = ScreenshotSelectionCoordinator()
     private let loginItemService: LoginItemService
-    private let displayLocator: DisplayLocator
+    let displayLocator: DisplayLocator
     let occupancyService: SurfaceOccupancyService
+    let nowPlayingService: NowPlayingService
+    let pomodoroService: PomodoroService
     let defaults: UserDefaults
     let previewMode: Bool
 
@@ -84,10 +85,15 @@ final class AppCoordinator {
             attachmentStore: attachmentStore
         )
         self.selectionService = SelectionCaptureService()
-        self.screenCaptureService = ScreenCaptureService()
         self.loginItemService = LoginItemService()
         self.displayLocator = DisplayLocator()
         self.occupancyService = SurfaceOccupancyService()
+        let storedPomodoroDuration = defaults.double(forKey: DefaultsKey.pomodoroDuration)
+        self.pomodoroService = PomodoroService(
+            duration: storedPomodoroDuration > 0 ? storedPomodoroDuration : PomodoroState.defaultDuration,
+            persistDuration: { duration in defaults.set(duration, forKey: DefaultsKey.pomodoroDuration) }
+        )
+        self.nowPlayingService = NowPlayingService()
 
         let ownership = AppViewModel.NotchOwnership(
             rawValue: defaults.string(forKey: DefaultsKey.ownership) ?? ""
@@ -122,8 +128,7 @@ final class AppCoordinator {
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
                 launchAtLogin: loginItemService.isEnabled,
                 timeFormat: timeFormat,
-                accessibilityGranted: selectionService.isAccessibilityTrusted,
-                screenRecordingGranted: screenCaptureService.hasPermission
+                accessibilityGranted: selectionService.isAccessibilityTrusted
             )
         }
         self.previousSurfaceState = initialState
@@ -147,6 +152,7 @@ final class AppCoordinator {
         }
 
         configureHooks()
+        configureMedia()
         configureStateSynchronization()
         if !previewMode {
             configureOccupancy()
@@ -358,6 +364,8 @@ final class AppCoordinator {
         }
         switch argument.dropFirst("--preview-state=".count) {
         case "collapsed": return .collapsed
+        case "activity": return .collapsedActivity
+        case "pomodoro-complete": return .pomodoroComplete
         case "confirmation": return .confirmation
         case "settings": return .settings
         case "onboarding": return .onboarding
@@ -367,6 +375,7 @@ final class AppCoordinator {
 
     func start() {
         if !previewMode {
+            nowPlayingService.setActivityLevel(.compact)
             do {
                 let manager = try GlobalHotKeyManager { [weak self] action in
                     self?.handleHotKey(action)
@@ -433,7 +442,7 @@ final class AppCoordinator {
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
         occupancyService.stop()
-        screenshotSelection.cancel()
+        nowPlayingService.stop()
         composerPasteTask?.cancel()
         clearPermissionSuspension()
         displayEnvironmentObservers.forEach(NotificationCenter.default.removeObserver)
@@ -522,14 +531,8 @@ final class AppCoordinator {
         hooks.onDroppedProviders = { [weak self] providers in
             self?.handleDrop(providers)
         }
-        hooks.onBeginScreenshot = { [weak self] in
-            self?.beginScreenshotSelection()
-        }
         hooks.onRequestAccessibility = { [weak self] in
             self?.requestAccessibility()
-        }
-        hooks.onRequestScreenRecording = { [weak self] in
-            self?.requestScreenRecording()
         }
         hooks.onSetLaunchAtLogin = { [weak self] enabled in
             self?.setLaunchAtLogin(enabled)
@@ -540,6 +543,14 @@ final class AppCoordinator {
         hooks.onSetTimeFormat = { [weak self] timeFormat in
             self?.defaults.set(timeFormat.rawValue, forKey: DefaultsKey.timeFormat)
         }
+        hooks.onMusicPlayPause = { [weak self] in self?.nowPlayingService.playPause() }
+        hooks.onMusicNext = { [weak self] in self?.nowPlayingService.nextTrack() }
+        hooks.onMusicPrevious = { [weak self] in self?.nowPlayingService.previousTrack() }
+        hooks.onMusicSeek = { [weak self] position in self?.nowPlayingService.seek(to: position) }
+        hooks.onPomodoroToggle = { [weak self] in self?.pomodoroService.toggle() }
+        hooks.onPomodoroReset = { [weak self] in self?.pomodoroService.reset() }
+        hooks.onPomodoroSetDuration = { [weak self] duration in self?.pomodoroService.setDuration(duration) }
+        hooks.onPomodoroAcknowledge = { [weak self] in self?.pomodoroService.reset() }
         hooks.onOpenShortcutRecorder = { [weak self] action in
             self?.beginShortcutRecording(for: action)
         }
@@ -591,6 +602,7 @@ final class AppCoordinator {
                         self.defaults.set(true, forKey: DefaultsKey.onboardingComplete)
                     }
                     self.previousSurfaceState = state
+                    self.updateMediaActivityLevel(for: state)
                     PanelDiagnostics.log("surface state → \(state)")
                     // Leaving Settings while a shortcut is being recorded must
                     // restore the temporarily unregistered global hotkeys.
@@ -628,6 +640,7 @@ final class AppCoordinator {
     }
 
     func synchronizePanel(with state: AppViewModel.SurfaceState) {
+        updateCollapsedActivityLayout()
         let panelState = state.panelState
         panelController.present(panelState, activate: panelState.acceptsKeyboardInput)
     }
@@ -642,14 +655,14 @@ final class AppCoordinator {
         }
         viewModel.isNotchFlowRunning = occupied
 
-        guard viewModel.surfaceState == .collapsed || viewModel.surfaceState == .dormant else { return }
+        guard [.collapsed, .collapsedActivity, .dormant].contains(viewModel.surfaceState) else { return }
         let pointerGeometry = displayLocator.pointerScreen.flatMap(displayLocator.geometry(for:))
         let shouldAutoHideExternalPill = viewModel.autoHideExternalPill
             && pointerGeometry?.hasHardwareNotch == false
         let shouldYield = shouldAutoHideExternalPill
             || viewModel.ownership == .companion
             || (viewModel.ownership == .automatic && occupied)
-        viewModel.surfaceState = shouldYield ? .dormant : .collapsed
+        viewModel.surfaceState = shouldYield ? .dormant : viewModel.idleSurfaceState
     }
 
     private func handleHotKey(_ action: GlobalHotKeyAction) {
@@ -659,8 +672,6 @@ final class AppCoordinator {
             captureCurrentSelection()
         case .openComposer:
             viewModel.openExpanded()
-        case .captureRegion:
-            beginScreenshotSelection()
         }
     }
 

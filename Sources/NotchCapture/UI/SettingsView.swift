@@ -128,13 +128,6 @@ struct SettingsView: View {
                 isGranted: viewModel.accessibilityGranted,
                 request: viewModel.hooks.onRequestAccessibility
             )
-            PermissionRow(
-                title: "Screen Recording",
-                detail: "Capture a selected screen region",
-                systemImage: "rectangle.dashed.badge.record",
-                isGranted: viewModel.screenRecordingGranted,
-                request: viewModel.hooks.onRequestScreenRecording
-            )
         }
     }
 
@@ -169,6 +162,26 @@ struct SettingsView: View {
         SettingsSection(title: "Behavior", caption: nil) {
             NotchSegmentedControl(options: AppViewModel.TimeFormat.allCases, selection: $viewModel.timeFormat)
             .accessibilityLabel("Time format")
+
+            VStack(alignment: .leading, spacing: 7) {
+                Text("Default focus timer")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                HStack(spacing: 5) {
+                    ForEach([15, 25, 45, 60], id: \.self) { minutes in
+                        Button("\(minutes)m") {
+                            viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
+                        }
+                        .font(.system(size: 10, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Int(viewModel.pomodoro.duration / 60) == minutes ? NotchTheme.ink : NotchTheme.secondaryText)
+                        .padding(.horizontal, 8)
+                        .frame(height: 26)
+                        .background(Int(viewModel.pomodoro.duration / 60) == minutes ? NotchTheme.mint : Color.white.opacity(0.05))
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
 
             NotchToggle(title: "Launch at login", isOn: $viewModel.launchAtLogin)
             NotchToggle(title: "Auto-hide pill on external displays", isOn: $viewModel.autoHideExternalPill)

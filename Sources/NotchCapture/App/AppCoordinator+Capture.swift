@@ -346,32 +346,4 @@ extension AppCoordinator {
         }
     }
 
-    func beginScreenshotSelection() {
-        guard screenCaptureService.hasPermission else {
-            requestScreenRecording()
-            viewModel.errorMessage = "Allow Screen Recording, then use the shortcut again."
-            viewModel.openExpanded()
-            return
-        }
-        viewModel.surfaceState = .screenshot
-        screenshotSelection.begin { [weak self] selection in
-            guard let self else { return }
-            guard let selection else {
-                self.viewModel.openExpanded()
-                return
-            }
-            Task { @MainActor in
-                do {
-                    let data = try await self.screenCaptureService.captureRegion(selection.rect, on: selection.screen)
-                    let item = try self.repository.createItem(
-                        from: .image(data, typeIdentifier: UTType.png.identifier),
-                        origin: .screenshot
-                    )
-                    self.presentConfirmation(for: item)
-                } catch {
-                    self.show(error)
-                }
-            }
-        }
-    }
 }

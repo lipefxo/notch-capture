@@ -26,8 +26,8 @@
     <true/>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>NSScreenCaptureUsageDescription</key>
-    <string>Notch Capture uses screen recording only when you explicitly capture a screen region.</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Notch Capture controls Apple Music and Spotify to show and control what's playing.</string>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
 </dict>

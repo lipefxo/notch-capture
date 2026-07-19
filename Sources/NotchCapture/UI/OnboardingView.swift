@@ -66,7 +66,7 @@ struct OnboardingView: View {
             }
             Text("A pocket for what matters")
                 .font(.system(size: 20, weight: .semibold))
-            Text("Keep selected text, quick notes, files, and screenshots without leaving what you’re doing.")
+            Text("Keep selected text, quick notes, and files without leaving what you’re doing.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(NotchTheme.secondaryText)
                 .multilineTextAlignment(.center)
@@ -139,9 +139,9 @@ struct OnboardingView: View {
         VStack(alignment: .leading, spacing: 18) {
             Spacer()
             VStack(alignment: .leading, spacing: 6) {
-                Text("Two permissions, on your terms")
+                Text("One permission, on your terms")
                     .font(.system(size: 20, weight: .semibold))
-                Text("Your captures stay on this Mac. Permissions are used only when you invoke their feature.")
+                Text("Your captures stay on this Mac. Accessibility is used only when you capture selected text.")
                     .font(.system(size: 11))
                     .foregroundStyle(NotchTheme.secondaryText)
                     .lineSpacing(3)
@@ -157,18 +157,6 @@ struct OnboardingView: View {
                 symbol: "cursorarrow.rays",
                 isGranted: viewModel.accessibilityGranted,
                 action: viewModel.hooks.onRequestAccessibility
-            )
-            .onboardingSupportingMotion(
-                isVisible: supportingContentIsVisible,
-                reduceMotion: reduceMotion
-            )
-
-            OnboardingPermissionRow(
-                title: "Screen Recording",
-                detail: "Optional · only needed for region capture",
-                symbol: "viewfinder",
-                isGranted: viewModel.screenRecordingGranted,
-                action: viewModel.hooks.onRequestScreenRecording
             )
             .onboardingSupportingMotion(
                 isVisible: supportingContentIsVisible,

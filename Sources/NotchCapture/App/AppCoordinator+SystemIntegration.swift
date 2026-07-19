@@ -65,14 +65,6 @@ extension AppCoordinator {
         }
     }
 
-    func requestScreenRecording() {
-        suspendForSystemPermissionPrompt()
-        viewModel.screenRecordingGranted = screenCaptureService.requestPermission()
-        if viewModel.screenRecordingGranted {
-            schedulePermissionSurfaceRestore()
-        }
-    }
-
     /// The notch panel intentionally sits above other notch utilities during an
     /// explicit session. System-owned permission prompts use a lower window level,
     /// so the panel must be removed for the duration of that modal interaction.
@@ -220,7 +212,6 @@ extension AppCoordinator {
         switch action {
         case .captureSelection: .captureSelection
         case .openComposer: .openComposer
-        case .captureRegion: .captureRegion
         }
     }
 

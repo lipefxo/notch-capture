@@ -1,4 +1,36 @@
-# Design QA — Floating Glass Composer
+# Design QA — Reduced Music Controls + Seekable Progress
+
+## Selected references and native captures
+
+- Current app structure: `.context/attachments/qmpRhp/CleanShot 2026-07-19 at 10.37.21@2x.jpg`
+- Reported reduced player: `.context/attachments/7ozLwb/CleanShot 2026-07-19 at 11.37.30@2x.jpg`
+- Reported expanded player: `.context/attachments/3NsZmQ/CleanShot 2026-07-19 at 11.39.20@2x.jpg`
+- Native external music-only capture: `.context/qa/reduced-music-controls.png`
+- Native hardware-notch music-only capture: `.context/qa/reduced-music-controls-notch.png`
+- Native external music + Pomodoro capture: `.context/qa/reduced-music-timer-controls.png`
+- Native hardware-notch music + Pomodoro capture: `.context/qa/reduced-music-timer-controls-notch.png`
+- Native expanded capture: `.context/qa/expanded-seekable-progress.png`
+- Focused expanded-player comparison capture: `.context/qa/expanded-seekable-progress-band.png`
+
+## Findings
+
+- The external reduced surface remains 300 × 34 points. Music-only uses the recovered empty width for track metadata while retaining artwork, audio bars, and all three controls.
+- Music + Pomodoro keeps previous, play/pause, next, and the ring-free numeric timer visible without clipping.
+- Hardware-notch layouts use equal 116-point content wings around the centered 156-point simulated notch gap. Music metadata stays on the left; transport and timer controls stay on the right.
+- Artwork, metadata, and audio bars remain one expand target. Each transport icon is an independent 28-point press target and does not expand the panel.
+- The expanded player preserves the selected 3-point visual line inside a 14-point scrub target. The rendered fill visibly reflects the preview position; hover/drag reveals a mint thumb.
+- SF Symbols, native system typography, ink/graphite/mint tokens, press styles, reduced-motion handling, and accessibility labels reuse the existing design system.
+- Side-by-side visual comparison of the two reported states and five native captures found no P0/P1/P2 clipping, spacing, hierarchy, or legibility issues.
+
+## Verification
+
+- Native external and simulated hardware-notch states were rendered through the AppKit-hosted SwiftUI snapshot path for music-only and music + Pomodoro.
+- The expanded player was rendered with a timestamp-derived non-zero progress fill.
+- The Swift package suite passes 202 tests, including locale-independent parsing, playing/paused timestamp math, seek clamping, and reduced transport hook routing without expansion.
+
+---
+
+# Previous Design QA — Floating Glass Composer
 
 ## Comparison
 

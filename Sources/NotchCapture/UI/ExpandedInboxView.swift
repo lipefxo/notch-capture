@@ -55,8 +55,8 @@ struct ExpandedInboxView: View {
     @State private var composerAppearance = 1.0
     @State private var appearanceGeneration: Int?
     @State private var appearanceTask: Task<Void, Never>?
-    @State private var filterMenuAnchor: CGRect = .zero
     @State private var folderHeaderMenuAnchor: CGRect = .zero
+    @State private var pomodoroMenuAnchor: CGRect = .zero
 
     private let floatingComposerMargin: CGFloat = 18
     private let composerTextRowHeight: CGFloat = 48
@@ -100,6 +100,7 @@ struct ExpandedInboxView: View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
+                UtilityShelfView(viewModel: viewModel)
                 ledgerBody
                     .id(viewModel.browseLocation)
                     .transition(navigationTransition)
@@ -294,7 +295,7 @@ struct ExpandedInboxView: View {
 
                 Spacer()
 
-                inboxFilterMenu
+                pomodoroControl
 
                 if viewModel.isAtRoot {
                     Button {
@@ -325,18 +326,6 @@ struct ExpandedInboxView: View {
 
                 Button {
                     guard viewModel.saveEditing() else { return }
-                    viewModel.beginScreenshot()
-                } label: {
-                    Image(systemName: "viewfinder")
-                        .font(.system(size: 13, weight: .regular))
-                }
-                .buttonStyle(PressableIconButtonStyle())
-                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .help("Capture screen region · \(viewModel.shortcutDisplayValue(for: .captureRegion))")
-                .accessibilityLabel("Capture a screen region")
-
-                Button {
-                    guard viewModel.saveEditing() else { return }
                     viewModel.surfaceState = .settings
                 } label: {
                     Image(systemName: "gearshape")
@@ -354,43 +343,57 @@ struct ExpandedInboxView: View {
         .background(NotchTheme.ink)
     }
 
-    private var inboxFilterMenu: some View {
+    private var pomodoroControl: some View {
         Button {
-            var items = AppViewModel.InboxFilter.allCases.map { filter in
-                NotchMenuItem(title: filter.rawValue, icon: filter.systemImage, isChecked: viewModel.filter == filter) {
-                    viewModel.filter = filter
+            presentPomodoroMenu()
+        } label: {
+            Group {
+                if viewModel.pomodoro.isActive {
+                    PomodoroCountdownLabel(state: viewModel.pomodoro)
+                        .frame(minWidth: 38)
+                } else {
+                    Image(systemName: "timer")
+                        .font(.system(size: 13, weight: .regular))
                 }
             }
-            if viewModel.filter == .trash {
-                items.append(NotchMenuItem(title: "Empty Trash…", icon: "trash.slash", role: .destructive, isEnabled: !viewModel.visibleItems.isEmpty) {
-                    presentEmptyTrash()
-                })
-            }
-            presentation.present(NotchMenu(title: "Inbox filter", anchor: filterMenuAnchor, items: items))
-        } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 13, weight: .regular))
+            .frame(height: 28)
         }
-        .buttonStyle(
-            PressableIconButtonStyle(
-                idleForeground: viewModel.filter == .all
-                    ? NotchTheme.secondaryText
-                    : NotchTheme.primaryText
-            )
-        )
-        .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.filter)
+        .buttonStyle(PressableIconButtonStyle(
+            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.mint : NotchTheme.secondaryText
+        ))
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .menuAnchor($filterMenuAnchor)
-        .help("Inbox filter: \(viewModel.filter.rawValue)")
-        .accessibilityLabel("Inbox filter: \(viewModel.filter.rawValue)")
+        .menuAnchor($pomodoroMenuAnchor)
+        .help(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
+        .accessibilityLabel(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
     }
 
-    private func presentEmptyTrash() {
-        let count = viewModel.visibleItems.count
-        presentation.present(NotchModal(kind: .destructive, title: "Empty Trash?", message: "\(count) \(count == 1 ? "item" : "items") and \(count == 1 ? "its" : "their") attachments will be deleted permanently. This cannot be undone.", textFieldLabel: nil, draft: "", primaryTitle: "Empty Trash", cancelTitle: "Cancel", onSubmit: { _ in
-            viewModel.emptyTrash()
-            return nil
-        }, onCancel: {}))
+    private func presentPomodoroMenu() {
+        var items: [NotchMenuItem] = []
+        switch viewModel.pomodoro.phase {
+        case .idle:
+            for minutes in [15, 25, 45, 60] {
+                items.append(NotchMenuItem(
+                    title: "\(minutes) minutes",
+                    icon: minutes == Int(viewModel.pomodoro.duration / 60) ? "checkmark" : nil
+                ) {
+                    viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
+                    viewModel.togglePomodoro()
+                })
+            }
+        case .running:
+            items.append(NotchMenuItem(title: "Pause", icon: "pause.fill") { viewModel.togglePomodoro() })
+            items.append(NotchMenuItem(title: "Reset", icon: "arrow.counterclockwise") { viewModel.resetPomodoro() })
+        case .paused:
+            items.append(NotchMenuItem(title: "Resume", icon: "play.fill") { viewModel.togglePomodoro() })
+            items.append(NotchMenuItem(title: "Reset", icon: "arrow.counterclockwise") { viewModel.resetPomodoro() })
+        case .finished:
+            items.append(NotchMenuItem(title: "Restart", icon: "arrow.clockwise") {
+                viewModel.acknowledgePomodoro()
+                viewModel.togglePomodoro()
+            })
+            items.append(NotchMenuItem(title: "Dismiss", icon: "xmark") { viewModel.acknowledgePomodoro() })
+        }
+        presentation.present(NotchMenu(title: "Focus timer", anchor: pomodoroMenuAnchor, items: items))
     }
 
     private func navigate(forward: Bool, _ update: () -> Void) {

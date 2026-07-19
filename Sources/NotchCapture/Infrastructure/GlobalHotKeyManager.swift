@@ -38,7 +38,6 @@ private func notchCaptureHotKeyEventHandler(
 public enum GlobalHotKeyAction: UInt32, CaseIterable, Hashable, Sendable {
     case captureSelection = 1
     case openComposer = 2
-    case captureRegion = 3
 }
 
 public struct GlobalHotKeyDefinition: Hashable, Sendable {
@@ -100,10 +99,6 @@ public final class GlobalHotKeyManager {
         ),
         .openComposer: GlobalHotKeyDefinition(
             keyCode: UInt32(kVK_ANSI_N),
-            modifiers: UInt32(controlKey | shiftKey)
-        ),
-        .captureRegion: GlobalHotKeyDefinition(
-            keyCode: UInt32(kVK_ANSI_S),
             modifiers: UInt32(controlKey | shiftKey)
         ),
     ]

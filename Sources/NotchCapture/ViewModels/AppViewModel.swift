@@ -55,7 +55,12 @@ final class AppViewModel: ObservableObject {
         didSet { hooks.onSetTimeFormat(timeFormat) }
     }
     @Published var accessibilityGranted: Bool
-    @Published var screenRecordingGranted: Bool
+    @Published var nowPlaying: NowPlayingSnapshot?
+    @Published var nowPlayingArtwork: NSImage?
+    @Published var pomodoro: PomodoroState
+    @Published var collapsedActivityLayout = CollapsedActivityLayout()
+    @Published var isPomodoroCardVisible = false
+    @Published var expandedUtilityFocus: UtilityFocus?
     @Published var onboardingPage = 0
     @Published var isNotchFlowRunning = false
     @Published var shortcuts: [Shortcut]
@@ -97,11 +102,12 @@ final class AppViewModel: ObservableObject {
         launchAtLogin: Bool = false,
         timeFormat: TimeFormat = .twelveHour,
         accessibilityGranted: Bool = false,
-        screenRecordingGranted: Bool = false,
+        nowPlaying: NowPlayingSnapshot? = nil,
+        nowPlayingArtwork: NSImage? = nil,
+        pomodoro: PomodoroState = PomodoroState(),
         shortcuts: [Shortcut] = [
             Shortcut(action: .captureSelection, title: "Capture selection", displayValue: "⌃⇧Space"),
-            Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N"),
-            Shortcut(action: .captureRegion, title: "Capture region", displayValue: "⌃⇧S")
+            Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N")
         ],
         hooks: Hooks = Hooks(),
         now: @escaping () -> Date = { .now }
@@ -116,7 +122,10 @@ final class AppViewModel: ObservableObject {
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
         self.accessibilityGranted = accessibilityGranted
-        self.screenRecordingGranted = screenRecordingGranted
+        self.nowPlaying = nowPlaying
+        self.nowPlayingArtwork = nowPlayingArtwork
+        self.pomodoro = pomodoro
+        self.expandedUtilityFocus = nil
         self.shortcuts = shortcuts
         self.hooks = hooks
         self.now = now
@@ -262,7 +271,7 @@ final class AppViewModel: ObservableObject {
         clearSelection()
         resetComposerDraft()
         errorMessage = nil
-        surfaceState = shouldYieldIdleSurface ? .dormant : .collapsed
+        surfaceState = shouldYieldIdleSurface ? .dormant : idleSurfaceState
         hooks.onDismiss()
     }
 
@@ -446,7 +455,6 @@ final class AppViewModel: ObservableObject {
         switch action {
         case .captureSelection: return "⌃⇧Space"
         case .openComposer: return "⌃⇧N"
-        case .captureRegion: return "⌃⇧S"
         }
     }
 
@@ -514,6 +522,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleDismissalRequest(_ reason: PanelDismissalReason) {
+        if surfaceState == .pomodoroComplete {
+            acknowledgePomodoro()
+            surfaceState = shouldYieldIdleSurface ? .dormant : idleSurfaceState
+            return
+        }
         switch reason {
         case .escape:
             if itemEditSession != nil {
@@ -1047,9 +1060,38 @@ final class AppViewModel: ObservableObject {
         return true
     }
 
-    func beginScreenshot() {
-        surfaceState = .screenshot
-        hooks.onBeginScreenshot()
+    var hasLiveActivity: Bool {
+        nowPlaying != nil || pomodoro.isActive
+    }
+
+    var idleSurfaceState: SurfaceState {
+        hasLiveActivity ? .collapsedActivity : .collapsed
+    }
+
+    var collapsedActivityContent: CollapsedActivityContent? {
+        switch (nowPlaying, pomodoro.isActive) {
+        case let (snapshot?, true): .both(snapshot, pomodoro)
+        case let (snapshot?, false): .musicOnly(snapshot)
+        case (nil, true): .pomodoroOnly(pomodoro)
+        case (nil, false): nil
+        }
+    }
+
+    func musicPlayPause() { hooks.onMusicPlayPause() }
+    func musicNext() { hooks.onMusicNext() }
+    func musicPrevious() { hooks.onMusicPrevious() }
+    func musicSeek(to position: TimeInterval) { hooks.onMusicSeek(position) }
+
+    func togglePomodoro() {
+        isPomodoroCardVisible = true
+        hooks.onPomodoroToggle()
+    }
+
+    func resetPomodoro() { hooks.onPomodoroReset() }
+    func setPomodoroDuration(_ duration: TimeInterval) { hooks.onPomodoroSetDuration(duration) }
+
+    func acknowledgePomodoro() {
+        hooks.onPomodoroAcknowledge()
     }
 
     private var shouldYieldIdleSurface: Bool {
@@ -1275,9 +1317,32 @@ extension AppViewModel {
             ],
             folders: [projectsFolder],
             tags: [lipeTag, launchTag, ideasTag],
-            accessibilityGranted: true
+            accessibilityGranted: true,
+            nowPlaying: NowPlayingSnapshot(
+                source: .spotify,
+                trackKey: "preview-night-drive",
+                title: "Night Drive",
+                artist: "Cannons",
+                album: "Fever Dream",
+                duration: 214,
+                isPlaying: true,
+                position: 82,
+                positionAnchor: .now,
+                artworkURL: nil
+            ),
+            nowPlayingArtwork: NSImage(contentsOf: thumbnailURL),
+            pomodoro: PomodoroState(
+                duration: 25 * 60,
+                phase: .running(endsAt: .now.addingTimeInterval(24 * 60 + 23))
+            )
         )
         model.selectedItemID = selectedTask.id
+        if CommandLine.arguments.contains("--preview-music-only") {
+            model.pomodoro = PomodoroState(duration: 25 * 60)
+        } else if CommandLine.arguments.contains("--preview-pomodoro-only") {
+            model.nowPlaying = nil
+            model.nowPlayingArtwork = nil
+        }
         if CommandLine.arguments.contains("--preview-folder-search") {
             model.composerText = "Projects"
         } else if CommandLine.arguments.contains("--preview-folder") {

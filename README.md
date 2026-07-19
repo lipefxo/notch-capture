@@ -6,9 +6,8 @@ Notch Capture is a private, local-first macOS capture inbox designed to coexist 
 
 - `Control–Shift–Space` captures the current selection.
 - `Control–Shift–N` opens the composer and inbox.
-- `Control–Shift–S` starts a region screenshot.
 
-All three shortcuts can be changed from the notch-hosted Settings surface.
+Both shortcuts can be changed from the notch-hosted Settings surface.
 
 ## Build and run
 
@@ -25,7 +24,7 @@ Open `Package.swift` in Xcode for development. Run tests with:
 swift test
 ```
 
-The first launch walks through Accessibility and optional launch-at-login setup. Screen Recording is requested only when region capture is used.
+The first launch walks through Accessibility and optional launch-at-login setup.
 
 ## Coexistence behavior
 
