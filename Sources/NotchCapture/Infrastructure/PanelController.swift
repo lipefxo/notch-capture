@@ -184,6 +184,15 @@ struct PanelWindowInteractionPolicy {
     ) -> Bool {
         actualFrame == targetFrame
     }
+
+    /// A transition canvas may need to contain both ends of a morph. It must
+    /// never become a larger invisible click target while it does so.
+    static func suspendsHitTesting(
+        transitionCanvasFrame: CGRect,
+        targetFrame: CGRect
+    ) -> Bool {
+        transitionCanvasFrame != targetFrame
+    }
 }
 
 /// Transparent margin reserved around a rendered surface inside the panel
@@ -233,6 +242,27 @@ private final class PanelEventMonitorLifetime: @unchecked Sendable {
     }
 }
 
+/// A purely decorative companion to the interactive notch panel. Keeping this
+/// separate means the drop shadow can extend beyond the surface without
+/// reserving a transparent AppKit hit target around it.
+private final class PanelShadowWindow: NSPanel {
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
+}
+
+@MainActor
+final class PanelShadowPresentation: ObservableObject {
+    @Published var state: PanelState = .dormant
+    @Published var size: CGSize = .zero
+    @Published var isTransitioning = false
+
+    func update(state: PanelState, size: CGSize, isTransitioning: Bool = false) {
+        self.isTransitioning = isTransitioning
+        self.state = state
+        self.size = size
+    }
+}
+
 @MainActor
 public final class PanelController: NSObject, ObservableObject {
     public typealias ContentFactory = @MainActor (PanelState) -> AnyView
@@ -241,6 +271,9 @@ public final class PanelController: NSObject, ObservableObject {
     public var onRequestDismiss: (@MainActor (PanelDismissalReason) -> Void)?
 
     public let panel: NotchPanel
+    /// Decorative, noninteractive shadow canvas. Kept internal so chrome
+    /// tests can assert its AppKit contract without exposing it to callers.
+    let shadowPanel: NSPanel
     /// Owner of transient in-panel presentation (menus, modals). Held here so
     /// the app layer can tear presentations down alongside panel transitions.
     let presentationCoordinator: NotchPresentationCoordinator
@@ -249,6 +282,7 @@ public final class PanelController: NSObject, ObservableObject {
     private let automaticDismissalEnabled: Bool
     private let hostingView: NSHostingView<AnyView>
     private let morphCoordinator: PanelMorphCoordinator
+    private let shadowPresentation: PanelShadowPresentation
     private var targetDisplayID: CGDirectDisplayID?
     private weak var previouslyActiveApplication: NSRunningApplication?
     private let eventMonitors = PanelEventMonitorLifetime()
@@ -263,10 +297,12 @@ public final class PanelController: NSObject, ObservableObject {
     ) {
         let morphCoordinator = PanelMorphCoordinator()
         let presentationCoordinator = NotchPresentationCoordinator()
+        let shadowPresentation = PanelShadowPresentation()
         self.displayLocator = displayLocator
         self.automaticDismissalEnabled = automaticDismissalEnabled
         self.morphCoordinator = morphCoordinator
         self.presentationCoordinator = presentationCoordinator
+        self.shadowPresentation = shadowPresentation
         self.hostingView = NSHostingView(
             rootView: AnyView(
                 content(.dormant)
@@ -280,14 +316,28 @@ public final class PanelController: NSObject, ObservableObject {
             backing: .buffered,
             defer: true
         )
+        self.shadowPanel = PanelShadowWindow(
+            contentRect: .zero,
+            styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
+            backing: .buffered,
+            defer: true
+        )
         super.init()
         // PanelController owns the window geometry. The NSHostingView default
         // sizing options otherwise feed SwiftUI's current minimum size back
         // into NSWindow and can clamp a closing panel to its expanded frame.
         hostingView.sizingOptions = []
         configurePanel()
+        configureShadowPanel()
         panel.contentView = hostingView
         panel.contentMinSize = .zero
+        shadowPanel.contentView = NSHostingView(
+            rootView: AnyView(
+                PanelShadowView(presentation: shadowPresentation)
+                    .environmentObject(morphCoordinator)
+            )
+        )
+        shadowPanel.contentMinSize = .zero
     }
 
     deinit {
@@ -347,13 +397,6 @@ public final class PanelController: NSObject, ObservableObject {
 
         transitionGeneration += 1
         let generation = transitionGeneration
-        let contractsToPill = PanelWindowInteractionPolicy.suspendsHitTesting(
-            during: transition,
-            targetState: newState,
-            wasVisible: wasVisible
-        )
-        panel.ignoresMouseEvents = contractsToPill
-
         let morphGeometry = PanelMorphGeometry(
             topCenter: CGPoint(x: targetFrame.midX, y: geometry.screenFrame.maxY),
             sourceSize: morphSourceSize(
@@ -374,21 +417,39 @@ public final class PanelController: NSObject, ObservableObject {
         )
         let usesMorphCoordinator = transition.animatesMorph || transition.kind == .reducedFade
 
+        let foregroundFrame: CGRect
+
         if usesMorphCoordinator && (!reduceMotion || wasVisible) {
-            panel.setFrame(
-                transitionCanvasFrame(
+            foregroundFrame = transitionCanvasFrame(
                     for: morphGeometry,
                     targetFrame: targetFrame,
-                    targetState: newState,
                     includeCurrentFrame: wasVisible
-                ),
-                display: false
             )
         } else {
-            panel.setFrame(targetFrame, display: false)
+            foregroundFrame = targetFrame
         }
+        let suspendsHitTesting = PanelWindowInteractionPolicy.suspendsHitTesting(
+            transitionCanvasFrame: foregroundFrame,
+            targetFrame: targetFrame
+        )
+        panel.ignoresMouseEvents = suspendsHitTesting
+        panel.setFrame(foregroundFrame, display: false)
+        configureShadowPresentation(
+            for: newState,
+            geometry: geometry,
+            isTransitioning: usesMorphCoordinator
+        )
+        updateShadowPanel(
+            for: morphGeometry,
+            targetFrame: targetFrame,
+            oldState: oldState,
+            targetState: newState,
+            wasVisible: wasVisible,
+            usesTransitionCanvas: usesMorphCoordinator && (!reduceMotion || wasVisible)
+        )
         if !wasVisible {
             panel.alphaValue = transition.opacity == .reveal ? 0 : 1
+            shadowPanel.alphaValue = panel.alphaValue
         }
 
         if usesMorphCoordinator {
@@ -414,20 +475,22 @@ public final class PanelController: NSObject, ObservableObject {
         } else {
             panel.orderFrontRegardless()
         }
+        orderShadowBelowPanel()
 
         if usesMorphCoordinator {
             runPanelTransition(
                 request: request,
                 transition: transition,
                 targetFrame: targetFrame,
-                restoreHitTesting: contractsToPill,
+                restoreHitTesting: suspendsHitTesting,
                 deferActivation: !wasVisible && !reduceMotion
             )
         } else {
             transitionTask?.cancel()
             morphCoordinator.cancel()
             panel.alphaValue = 1
-            if contractsToPill { panel.ignoresMouseEvents = false }
+            shadowPanel.alphaValue = 1
+            if suspendsHitTesting { panel.ignoresMouseEvents = false }
         }
 
         if newState == .confirmation {
@@ -454,6 +517,17 @@ public final class PanelController: NSObject, ObservableObject {
         panel.setFrame(frame, display: true)
         panel.alphaValue = 1
         panel.ignoresMouseEvents = false
+        if let geometry = targetGeometry {
+            configureShadowPresentation(for: state, geometry: geometry)
+            if PanelShadowApron.resolve(for: state) != .none {
+                shadowPanel.setFrame(shadowFrame(for: frame), display: true)
+                shadowPanel.alphaValue = 1
+                shadowPanel.orderFrontRegardless()
+                orderShadowBelowPanel()
+            } else {
+                shadowPanel.orderOut(nil)
+            }
+        }
     }
 
 #if DEBUG
@@ -537,6 +611,29 @@ public final class PanelController: NSObject, ObservableObject {
         ]
     }
 
+    private func configureShadowPanel() {
+        shadowPanel.isFloatingPanel = true
+        shadowPanel.hidesOnDeactivate = false
+        shadowPanel.isOpaque = false
+        shadowPanel.backgroundColor = .clear
+        shadowPanel.sharingType = .readOnly
+        shadowPanel.hasShadow = false
+        shadowPanel.titleVisibility = .hidden
+        shadowPanel.titlebarAppearsTransparent = true
+        shadowPanel.animationBehavior = .none
+        shadowPanel.isMovable = false
+        shadowPanel.isMovableByWindowBackground = false
+        shadowPanel.ignoresMouseEvents = true
+        shadowPanel.setAccessibilityElement(false)
+        shadowPanel.level = .statusBar
+        shadowPanel.collectionBehavior = [
+            .canJoinAllSpaces,
+            .fullScreenAuxiliary,
+            .stationary,
+            .ignoresCycle,
+        ]
+    }
+
     private func transitionToHiddenState(_ hiddenState: PanelState, animated: Bool = true) {
         guard state != hiddenState else { return }
         PanelDiagnostics.log("hide \(state.rawValue)→\(hiddenState.rawValue) visible=\(panel.isVisible)")
@@ -558,6 +655,7 @@ public final class PanelController: NSObject, ObservableObject {
         state = hiddenState
         panel.permitsKeyWindow = false
         panel.ignoresMouseEvents = true
+        shadowPanel.ignoresMouseEvents = true
         panel.makeFirstResponder(nil)
         removeDismissalMonitors()
 
@@ -565,7 +663,9 @@ public final class PanelController: NSObject, ObservableObject {
             transitionTask?.cancel()
             morphCoordinator.cancel()
             panel.orderOut(nil)
+            shadowPanel.orderOut(nil)
             panel.alphaValue = 1
+            shadowPanel.alphaValue = 1
             panel.ignoresMouseEvents = false
             return
         }
@@ -624,7 +724,6 @@ public final class PanelController: NSObject, ObservableObject {
             size.height = max(size.height, geometry.safeAreaInsets.top + 6)
         }
         guard size.width > 0, size.height > 0 else { return nil }
-        size = PanelShadowApron.resolve(for: state).applying(to: size)
         return geometry.panelFrame(for: size)
     }
 
@@ -670,14 +769,9 @@ public final class PanelController: NSObject, ObservableObject {
     private func transitionCanvasFrame(
         for geometry: PanelMorphGeometry,
         targetFrame: CGRect,
-        targetState: PanelState,
         includeCurrentFrame: Bool
     ) -> CGRect {
-        let apron = PanelShadowApron.resolve(for: targetState)
-        let requested = geometry.panelCanvasFrame(
-            horizontalApron: apron.horizontal,
-            bottomApron: apron.bottom
-        )
+        let requested = geometry.canvasFrame
         let width = max(
             requested.width,
             targetFrame.width,
@@ -694,6 +788,55 @@ public final class PanelController: NSObject, ObservableObject {
             width: width,
             height: height
         ).integral
+    }
+
+    private func shadowFrame(for foregroundFrame: CGRect) -> CGRect {
+        let apron = PanelShadowApron.standard
+        return CGRect(
+            x: foregroundFrame.minX - apron.horizontal,
+            y: foregroundFrame.minY - apron.bottom,
+            width: foregroundFrame.width + (apron.horizontal * 2),
+            height: foregroundFrame.height + apron.bottom
+        ).integral
+    }
+
+    private func configureShadowPresentation(
+        for state: PanelState,
+        geometry: NotchGeometry,
+        isTransitioning: Bool = false
+    ) {
+        shadowPresentation.update(
+            state: state,
+            size: surfaceSize(for: state, geometry: geometry),
+            isTransitioning: isTransitioning
+        )
+    }
+
+    private func updateShadowPanel(
+        for geometry: PanelMorphGeometry,
+        targetFrame: CGRect,
+        oldState: PanelState,
+        targetState: PanelState,
+        wasVisible: Bool,
+        usesTransitionCanvas: Bool
+    ) {
+        let needsShadow = PanelShadowApron.resolve(for: oldState) != .none
+            || PanelShadowApron.resolve(for: targetState) != .none
+        guard needsShadow else {
+            shadowPanel.orderOut(nil)
+            return
+        }
+        let foregroundCanvas = usesTransitionCanvas
+            ? transitionCanvasFrame(for: geometry, targetFrame: targetFrame, includeCurrentFrame: wasVisible)
+            : targetFrame
+        shadowPanel.setFrame(shadowFrame(for: foregroundCanvas), display: false)
+        shadowPanel.ignoresMouseEvents = true
+        shadowPanel.orderFrontRegardless()
+    }
+
+    private func orderShadowBelowPanel() {
+        guard shadowPanel.isVisible, panel.isVisible else { return }
+        shadowPanel.order(.below, relativeTo: panel.windowNumber)
     }
 
     private func morphRequest(
@@ -736,7 +879,7 @@ public final class PanelController: NSObject, ObservableObject {
             }
 
             if transition.opacity == .reveal {
-                self.animatePanelAlpha(to: 1, duration: transition.fadeDuration)
+                self.animatePanelsAlpha(to: 1, duration: transition.fadeDuration)
             }
 
             if transition.opacity == .hide {
@@ -745,7 +888,7 @@ public final class PanelController: NSObject, ObservableObject {
                     try? await Task.sleep(for: .seconds(fadeDelay))
                 }
                 guard !Task.isCancelled, self.transitionGeneration == request.generation else { return }
-                self.animatePanelAlpha(to: 0, duration: transition.fadeDuration)
+                self.animatePanelsAlpha(to: 0, duration: transition.fadeDuration)
                 if transition.fadeDuration > 0 {
                     try? await Task.sleep(for: .seconds(transition.fadeDuration))
                 }
@@ -755,13 +898,24 @@ public final class PanelController: NSObject, ObservableObject {
 
             guard !Task.isCancelled, self.transitionGeneration == request.generation else { return }
             self.morphCoordinator.settle(generation: request.generation)
+            self.shadowPresentation.isTransitioning = false
             if transition.ordersOutOnCompletion {
                 self.panel.orderOut(nil)
+                self.shadowPanel.orderOut(nil)
                 self.panel.alphaValue = 1
+                self.shadowPanel.alphaValue = 1
                 self.panel.ignoresMouseEvents = false
             } else {
                 self.panel.setFrame(targetFrame, display: true)
                 self.panel.alphaValue = 1
+                self.shadowPanel.alphaValue = 1
+                if PanelShadowApron.resolve(for: self.state) != .none {
+                    self.shadowPanel.setFrame(self.shadowFrame(for: targetFrame), display: true)
+                    self.shadowPanel.orderFrontRegardless()
+                    self.orderShadowBelowPanel()
+                } else {
+                    self.shadowPanel.orderOut(nil)
+                }
                 if restoreHitTesting {
                     self.panel.ignoresMouseEvents = !PanelWindowInteractionPolicy.canRestoreHitTesting(
                         actualFrame: self.panel.frame,
@@ -773,15 +927,17 @@ public final class PanelController: NSObject, ObservableObject {
         }
     }
 
-    private func animatePanelAlpha(to alpha: CGFloat, duration: TimeInterval) {
+    private func animatePanelsAlpha(to alpha: CGFloat, duration: TimeInterval) {
         guard duration > 0 else {
             panel.alphaValue = alpha
+            shadowPanel.alphaValue = alpha
             return
         }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
             panel.animator().alphaValue = alpha
+            shadowPanel.animator().alphaValue = alpha
         }
     }
 

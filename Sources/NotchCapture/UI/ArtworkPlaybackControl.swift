@@ -130,199 +130,74 @@ private struct ArtworkPlaybackCanvas: View {
     let overlay: ArtworkCanvasOverlay
 
     var body: some View {
-        Image(
-            nsImage: ArtworkPlaybackRenderer.image(
-                artwork: artwork,
-                accentColor: accentColor,
-                size: availableSize,
-                overlay: overlay
-            )
-        )
-        .resizable()
-        .interpolation(.high)
+        ZStack {
+            artworkLayer
+            overlayLayer
+                .blendMode(artwork == nil ? .normal : .difference)
+        }
+        .frame(width: availableSize, height: availableSize)
         .accessibilityHidden(true)
     }
-}
 
-private enum ArtworkPlaybackRenderer {
-    static func image(
-        artwork: NSImage?,
-        accentColor: NSColor,
-        size: CGFloat,
-        overlay: ArtworkCanvasOverlay
-    ) -> NSImage {
-        let scale = max(2, NSScreen.main?.backingScaleFactor ?? 2)
-        let pixels = max(1, Int(ceil(size * scale)))
-        guard let representation = NSBitmapImageRep(
-            bitmapDataPlanes: nil,
-            pixelsWide: pixels,
-            pixelsHigh: pixels,
-            bitsPerSample: 8,
-            samplesPerPixel: 4,
-            hasAlpha: true,
-            isPlanar: false,
-            colorSpaceName: .deviceRGB,
-            bitmapFormat: [],
-            bytesPerRow: 0,
-            bitsPerPixel: 0
-        ), let graphics = NSGraphicsContext(bitmapImageRep: representation) else {
-            return artwork ?? NSImage(size: NSSize(width: size, height: size))
+    @ViewBuilder
+    private var artworkLayer: some View {
+        if let artwork {
+            Image(nsImage: artwork)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFill()
+        } else {
+            ZStack {
+                Color.white.opacity(0.07)
+                Image(systemName: "music.note")
+                    .font(.system(size: availableSize * 0.42, weight: .bold))
+                    .foregroundStyle(Color(nsColor: accentColor))
+            }
         }
-
-        representation.size = NSSize(width: size, height: size)
-        NSGraphicsContext.saveGraphicsState()
-        NSGraphicsContext.current = graphics
-        let context = graphics.cgContext
-        context.scaleBy(x: scale, y: scale)
-        drawArtwork(artwork, in: context, size: size, accentColor: accentColor)
-
-        context.saveGState()
-        context.setBlendMode(artwork == nil ? .normal : .difference)
-        switch overlay {
-        case .clean:
-            break
-        case let .waveform(time):
-            drawBars(in: context, size: size, time: time, accentColor: accentColor)
-        case let .transport(isPlaying):
-            drawTransportGlyph(
-                in: context,
-                size: size,
-                isPlaying: isPlaying,
-                accentColor: accentColor
-            )
-        }
-        context.restoreGState()
-        graphics.flushGraphics()
-        NSGraphicsContext.restoreGraphicsState()
-
-        let rendered = NSImage(size: NSSize(width: size, height: size))
-        rendered.addRepresentation(representation)
-        return rendered
     }
 
-    private static func barHeight(index: Int, size: CGFloat, time: TimeInterval) -> CGFloat {
+    @ViewBuilder
+    private var overlayLayer: some View {
+        switch overlay {
+        case .clean:
+            EmptyView()
+        case let .waveform(time):
+            Canvas { context, size in
+                let barWidth = max(1.5, size.width * 0.07)
+                let barSpacing = max(0.9, size.width * 0.045)
+                let totalWidth = (barWidth * 4) + (barSpacing * 3)
+                let startX = (size.width - totalWidth) / 2
+                context.fill(
+                    Path { path in
+                        for index in 0..<4 {
+                            let height = barHeight(index: index, size: size.width, time: time)
+                            path.addRoundedRect(
+                                in: CGRect(
+                                    x: startX + (CGFloat(index) * (barWidth + barSpacing)),
+                                    y: (size.height - height) / 2,
+                                    width: barWidth,
+                                    height: height
+                                ),
+                                cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2)
+                            )
+                        }
+                    },
+                    with: .color(Color(nsColor: accentColor))
+                )
+            }
+        case let .transport(isPlaying):
+            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                .font(.system(size: max(8, availableSize * 0.36), weight: .bold))
+                .foregroundStyle(Color(nsColor: accentColor))
+                .offset(x: isPlaying ? 0 : availableSize * 0.025)
+        }
+    }
+
+    private func barHeight(index: Int, size: CGFloat, time: TimeInterval) -> CGFloat {
         let maximum = size * 0.44
         let minimum = max(2.5, size * 0.14)
         let wave = CGFloat((sin((time * 5.2) + Double(index) * 1.7) + 1) / 2)
         return minimum + ((maximum - minimum) * wave)
-    }
-
-    private static func drawArtwork(
-        _ artwork: NSImage?,
-        in context: CGContext,
-        size: CGFloat,
-        accentColor: NSColor
-    ) {
-        let bounds = CGRect(x: 0, y: 0, width: size, height: size)
-        if let artwork {
-            artwork.draw(
-                in: aspectFillRect(imageSize: artwork.size, bounds: bounds),
-                from: .zero,
-                operation: .sourceOver,
-                fraction: 1,
-                respectFlipped: true,
-                hints: [.interpolation: NSImageInterpolation.high]
-            )
-        } else {
-            context.setFillColor(NSColor.white.withAlphaComponent(0.07).cgColor)
-            context.fill(bounds)
-            drawSymbol(
-                named: "music.note",
-                in: context,
-                size: size * 0.42,
-                canvasSize: size,
-                accentColor: accentColor,
-                opticalOffset: 0
-            )
-        }
-    }
-
-    private static func drawBars(
-        in context: CGContext,
-        size: CGFloat,
-        time: TimeInterval,
-        accentColor: NSColor
-    ) {
-        let barWidth = max(1.5, size * 0.07)
-        let barSpacing = max(0.9, size * 0.045)
-        let totalWidth = (barWidth * 4) + (barSpacing * 3)
-        let startX = (size - totalWidth) / 2
-        context.setFillColor(deviceColor(accentColor).cgColor)
-
-        for index in 0..<4 {
-            let barHeight = barHeight(index: index, size: size, time: time)
-            let rect = CGRect(
-                x: startX + (CGFloat(index) * (barWidth + barSpacing)),
-                y: (size - barHeight) / 2,
-                width: barWidth,
-                height: barHeight
-            )
-            context.addPath(CGPath(roundedRect: rect, cornerWidth: barWidth / 2, cornerHeight: barWidth / 2, transform: nil))
-            context.fillPath()
-        }
-    }
-
-    private static func drawTransportGlyph(
-        in context: CGContext,
-        size: CGFloat,
-        isPlaying: Bool,
-        accentColor: NSColor
-    ) {
-        drawSymbol(
-            named: isPlaying ? "pause.fill" : "play.fill",
-            in: context,
-            size: max(8, size * 0.36),
-            canvasSize: size,
-            accentColor: accentColor,
-            opticalOffset: isPlaying ? 0 : size * 0.025
-        )
-    }
-
-    private static func drawSymbol(
-        named name: String,
-        in context: CGContext,
-        size: CGFloat,
-        canvasSize: CGFloat,
-        accentColor: NSColor,
-        opticalOffset: CGFloat
-    ) {
-        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil) else { return }
-        let pointConfiguration = NSImage.SymbolConfiguration(pointSize: size, weight: .bold)
-        let paletteConfiguration = NSImage.SymbolConfiguration(paletteColors: [deviceColor(accentColor)])
-        guard let configured = symbol.withSymbolConfiguration(pointConfiguration.applying(paletteConfiguration)) else {
-            return
-        }
-        let aspect = configured.size.width / max(1, configured.size.height)
-        let drawSize = CGSize(width: size * aspect, height: size)
-        configured.draw(
-            in: CGRect(
-                x: ((canvasSize - drawSize.width) / 2) + opticalOffset,
-                y: (canvasSize - drawSize.height) / 2,
-                width: drawSize.width,
-                height: drawSize.height
-            ),
-            from: .zero,
-            operation: .sourceOver,
-            fraction: 1,
-            respectFlipped: true,
-            hints: nil
-        )
-    }
-
-    private static func deviceColor(_ color: NSColor) -> NSColor {
-        color.usingColorSpace(.deviceRGB) ?? color
-    }
-
-    private static func aspectFillRect(imageSize: CGSize, bounds: CGRect) -> CGRect {
-        guard imageSize.width > 0, imageSize.height > 0 else { return bounds }
-        let scale = max(bounds.width / imageSize.width, bounds.height / imageSize.height)
-        let scaled = CGSize(width: imageSize.width * scale, height: imageSize.height * scale)
-        return CGRect(
-            x: bounds.midX - (scaled.width / 2),
-            y: bounds.midY - (scaled.height / 2),
-            width: scaled.width,
-            height: scaled.height
-        )
     }
 }
 

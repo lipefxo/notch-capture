@@ -130,6 +130,40 @@ final class NowPlayingModelTests: XCTestCase {
         )
     }
 
+    func testPollingIntervalsFavorNotificationDrivenUpdates() {
+        XCTAssertNil(NowPlayingService.ActivityLevel.hidden.pollInterval)
+        XCTAssertEqual(NowPlayingService.ActivityLevel.compact.pollInterval, 15)
+        XCTAssertEqual(NowPlayingService.ActivityLevel.full.pollInterval, 5)
+    }
+
+    func testSnapshotPublicationIgnoresExpectedPositionAdvancement() {
+        let anchor = Date(timeIntervalSinceReferenceDate: 100)
+        let previous = makeSnapshot(source: .spotify, isPlaying: true, anchor: anchor)
+        var candidate = previous
+        candidate.position = 15
+        candidate.positionAnchor = anchor.addingTimeInterval(5)
+
+        XCTAssertFalse(NowPlayingService.shouldPublish(previous: previous, candidate: candidate))
+
+        candidate.position = 17
+        XCTAssertTrue(NowPlayingService.shouldPublish(previous: previous, candidate: candidate))
+    }
+
+    func testSnapshotPublicationIncludesSemanticPlaybackChanges() {
+        let anchor = Date(timeIntervalSinceReferenceDate: 100)
+        let previous = makeSnapshot(source: .spotify, isPlaying: true, anchor: anchor)
+        var candidate = previous
+        candidate.isPlaying = false
+        XCTAssertTrue(NowPlayingService.shouldPublish(previous: previous, candidate: candidate))
+
+        candidate = previous
+        candidate.trackKey = "next-track"
+        XCTAssertTrue(NowPlayingService.shouldPublish(previous: previous, candidate: candidate))
+        XCTAssertTrue(NowPlayingService.shouldPublish(previous: nil, candidate: candidate))
+        XCTAssertTrue(NowPlayingService.shouldPublish(previous: candidate, candidate: nil))
+        XCTAssertFalse(NowPlayingService.shouldPublish(previous: nil, candidate: nil))
+    }
+
     private func makeSnapshot(source: NowPlayingSource, isPlaying: Bool, anchor: Date) -> NowPlayingSnapshot {
         NowPlayingSnapshot(
             source: source,
@@ -143,6 +177,104 @@ final class NowPlayingModelTests: XCTestCase {
             positionAnchor: anchor,
             artworkURL: nil
         )
+    }
+}
+
+private actor BlockingAppleScriptRunner: AppleScriptRunning {
+    private let response: AppleScriptResult
+    private var continuations: [CheckedContinuation<Void, Never>] = []
+    private var runCount = 0
+
+    init(response: AppleScriptResult) {
+        self.response = response
+    }
+
+    func run(_: String) async throws -> AppleScriptResult {
+        runCount += 1
+        await withCheckedContinuation { continuation in
+            continuations.append(continuation)
+        }
+        return response
+    }
+
+    func count() -> Int { runCount }
+
+    func releaseNext() {
+        guard !continuations.isEmpty else { return }
+        continuations.removeFirst().resume()
+    }
+}
+
+@MainActor
+final class NowPlayingServiceRefreshTests: XCTestCase {
+    func testRefreshesAreSingleFlightAndPendingTriggersCoalesce() async throws {
+        let runner = BlockingAppleScriptRunner(response: .string(Self.spotifyStatus(position: 10)))
+        let service = NowPlayingService(
+            runner: runner,
+            sourceIsRunning: { $0 == .spotify }
+        )
+
+        service.setActivityLevel(.compact)
+        await waitUntil { await runner.count() == 1 }
+        service.refresh()
+        service.refresh(triggeredBy: .spotify)
+        service.refresh()
+        await Task.yield()
+        let countWhileBlocked = await runner.count()
+        XCTAssertEqual(countWhileBlocked, 1)
+
+        await runner.releaseNext()
+        await waitUntil { await runner.count() == 2 }
+        let countAfterFollowUp = await runner.count()
+        XCTAssertEqual(countAfterFollowUp, 2)
+
+        await runner.releaseNext()
+        service.stop()
+    }
+
+    func testHiddenActivityDiscardsAnInFlightRefresh() async throws {
+        let runner = BlockingAppleScriptRunner(response: .string(Self.spotifyStatus(position: 10)))
+        let service = NowPlayingService(
+            runner: runner,
+            sourceIsRunning: { $0 == .spotify }
+        )
+        var publishedSnapshots: [NowPlayingSnapshot?] = []
+        service.onSnapshotChange = { publishedSnapshots.append($0) }
+
+        service.setActivityLevel(.compact)
+        await waitUntil { await runner.count() == 1 }
+        service.setActivityLevel(.hidden)
+        await runner.releaseNext()
+        await Task.yield()
+        await Task.yield()
+
+        XCTAssertTrue(publishedSnapshots.isEmpty)
+        XCTAssertNil(service.snapshot)
+        service.stop()
+    }
+
+    private func waitUntil(
+        attempts: Int = 100,
+        _ predicate: () async -> Bool
+    ) async {
+        for _ in 0..<attempts {
+            if await predicate() { return }
+            await Task.yield()
+        }
+        XCTFail("Condition was not satisfied")
+    }
+
+    private static func spotifyStatus(position: Int) -> String {
+        [
+            "spotify:track:1",
+            "Night Drive",
+            "Cannons",
+            "Fever Dream",
+            "214000",
+            String(position),
+            "playing",
+            "",
+        ].joined(separator: "\u{1F}")
     }
 }
 

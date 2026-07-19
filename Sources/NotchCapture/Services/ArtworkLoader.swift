@@ -3,19 +3,21 @@ import Foundation
 
 @MainActor
 final class ArtworkLoader {
-    private let runner: AppleScriptRunner
-    private let capacity: Int
-    private var cache: [String: NSImage] = [:]
-    private var recency: [String] = []
+    private let runner: any AppleScriptRunning
+    private let cache = NSCache<NSString, NSImage>()
 
-    init(runner: AppleScriptRunner, capacity: Int = 20) {
+    init(
+        runner: any AppleScriptRunning,
+        capacity: Int = 20,
+        totalCostLimit: Int = 8 * 1_024 * 1_024
+    ) {
         self.runner = runner
-        self.capacity = max(1, capacity)
+        cache.countLimit = max(1, capacity)
+        cache.totalCostLimit = max(1, totalCostLimit)
     }
 
     func artwork(for snapshot: NowPlayingSnapshot) async -> NSImage? {
-        if let cached = cache[snapshot.trackKey] {
-            touch(snapshot.trackKey)
+        if let cached = cache.object(forKey: snapshot.trackKey as NSString) {
             return cached
         }
 
@@ -27,7 +29,7 @@ final class ArtworkLoader {
             image = await fetchMusicArtwork()
         }
         guard let image else { return nil }
-        let prepared = image.scaledToFit(maxDimension: 600)
+        let prepared = image.scaledToFit(maxDimension: 160)
         insert(prepared, for: snapshot.trackKey)
         return prepared
     }
@@ -65,17 +67,8 @@ final class ArtworkLoader {
     }
 
     private func insert(_ image: NSImage, for key: String) {
-        cache[key] = image
-        touch(key)
-        while recency.count > capacity, let oldest = recency.first {
-            recency.removeFirst()
-            cache.removeValue(forKey: oldest)
-        }
-    }
-
-    private func touch(_ key: String) {
-        recency.removeAll { $0 == key }
-        recency.append(key)
+        let pixelCost = max(1, Int(image.size.width * image.size.height * 4))
+        cache.setObject(image, forKey: key as NSString, cost: pixelCost)
     }
 }
 

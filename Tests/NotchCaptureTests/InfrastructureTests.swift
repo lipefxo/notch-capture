@@ -306,15 +306,15 @@ final class PanelMorphGeometryTests: XCTestCase {
         }
     }
 
-    func testCanvasReservesTheLargestSurfaceAndShadowApron() {
+    func testForegroundCanvasReservesOnlyTheLargestSurface() {
         let geometry = PanelMorphGeometry(
             topCenter: topCenter,
             sourceSize: expandedSize,
             targetSize: CGSize(width: 178, height: 34)
         )
-        let frame = geometry.panelCanvasFrame(horizontalApron: 64, bottomApron: 80)
+        let frame = geometry.canvasFrame
 
-        XCTAssertEqual(frame.size, CGSize(width: 548, height: 640))
+        XCTAssertEqual(frame.size, expandedSize)
         XCTAssertEqual(frame.midX, topCenter.x)
         XCTAssertEqual(frame.maxY, topCenter.y)
     }
@@ -500,7 +500,7 @@ final class PanelShadowApronTests: XCTestCase {
         )
     }
 
-    func testVisibleOpenSurfacesRetainTheStandardShadowCanvas() {
+    func testVisibleOpenSurfacesUseTheStandardShadowCanvasWithoutExpandingTheSurface() {
         let openStates: [PanelState] = [
             .confirmation,
             .expanded,
@@ -513,8 +513,12 @@ final class PanelShadowApronTests: XCTestCase {
             XCTAssertEqual(PanelShadowApron.resolve(for: state), .standard)
         }
         XCTAssertEqual(
-            PanelShadowApron.standard.applying(to: CGSize(width: 420, height: 560)),
-            CGSize(width: 548, height: 640)
+            PanelState.expanded.nominalSize,
+            CGSize(width: 440, height: 560)
+        )
+        XCTAssertEqual(
+            PanelShadowApron.standard.applying(to: PanelState.expanded.nominalSize),
+            CGSize(width: 568, height: 640)
         )
     }
 }
@@ -641,6 +645,49 @@ final class ExpandedSurfaceRevealPlanTests: XCTestCase {
             contentDelay: NotchMotion.surfaceContentDelay,
             reduceMotion: false,
             wasVisible: true
+        )
+    }
+}
+
+final class LedgerCompletionLayerLifecycleTests: XCTestCase {
+    func testInitialVisibilityMatchesCompletionState() {
+        let incomplete = LedgerCompletionLayerLifecycle(isCompleted: false)
+        XCTAssertEqual(incomplete.progress, 0)
+        XCTAssertFalse(incomplete.showsLayers)
+
+        let completed = LedgerCompletionLayerLifecycle(isCompleted: true)
+        XCTAssertEqual(completed.progress, 1)
+        XCTAssertTrue(completed.showsLayers)
+    }
+
+    func testRetractionKeepsLayersUntilCleanupFinishes() {
+        var lifecycle = LedgerCompletionLayerLifecycle(isCompleted: true)
+        XCTAssertTrue(lifecycle.beginTransition(to: false))
+        XCTAssertEqual(lifecycle.progress, 0)
+        XCTAssertTrue(lifecycle.showsLayers)
+
+        lifecycle.finishRetraction(ifItemIsCompleted: false)
+        XCTAssertFalse(lifecycle.showsLayers)
+    }
+
+    func testRapidRecompletionPreventsStaleCleanup() {
+        var lifecycle = LedgerCompletionLayerLifecycle(isCompleted: true)
+        lifecycle.beginTransition(to: false)
+        lifecycle.beginTransition(to: true)
+        lifecycle.finishRetraction(ifItemIsCompleted: true)
+
+        XCTAssertEqual(lifecycle.progress, 1)
+        XCTAssertTrue(lifecycle.showsLayers)
+    }
+
+    func testReducedMotionUsesItsOwnCleanupDuration() {
+        XCTAssertEqual(
+            LedgerCompletionLayerLifecycle.cleanupDelay(reduceMotion: false),
+            NotchMotion.completionRetractDuration
+        )
+        XCTAssertEqual(
+            LedgerCompletionLayerLifecycle.cleanupDelay(reduceMotion: true),
+            NotchMotion.reducedMotionDuration
         )
     }
 }
@@ -802,6 +849,18 @@ final class PanelChromeTests: XCTestCase {
         XCTAssertFalse(controller.panel.hasShadow)
     }
 
+    func testShadowPanelIsNoninteractiveAndCannotBecomeKeyOrMain() {
+        let controller = PanelController(automaticDismissalEnabled: false) { _ in
+            AnyView(EmptyView())
+        }
+
+        XCTAssertTrue(controller.shadowPanel.ignoresMouseEvents)
+        XCTAssertFalse(controller.shadowPanel.canBecomeKey)
+        XCTAssertFalse(controller.shadowPanel.canBecomeMain)
+        XCTAssertFalse(controller.shadowPanel.hasShadow)
+        XCTAssertFalse(controller.shadowPanel.isAccessibilityElement())
+    }
+
     func testSystemHelperWindowsDoNotSuppressOutsideClickDismissal() {
         let panel = NSPanel(
             contentRect: .zero,
@@ -915,6 +974,20 @@ final class PanelWindowInteractionPolicyTests: XCTestCase {
             during: transition,
             targetState: .expanded,
             wasVisible: true
+        ))
+    }
+
+    func testOversizedTransitionCanvasSuspendsHitTestingUntilTheTargetFrameSettles() {
+        let canvas = CGRect(x: 482, y: 422, width: 440, height: 560)
+        let target = CGRect(x: 612, y: 948, width: 180, height: 34)
+
+        XCTAssertTrue(PanelWindowInteractionPolicy.suspendsHitTesting(
+            transitionCanvasFrame: canvas,
+            targetFrame: target
+        ))
+        XCTAssertFalse(PanelWindowInteractionPolicy.suspendsHitTesting(
+            transitionCanvasFrame: target,
+            targetFrame: target
         ))
     }
 

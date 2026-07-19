@@ -170,19 +170,22 @@ extension AppViewModel {
         var name: String
         var subtitle: String?
         var previewURL: URL?
+        var faviconURL: URL?
 
         init(
             id: UUID = UUID(),
             kind: Kind,
             name: String,
             subtitle: String? = nil,
-            previewURL: URL? = nil
+            previewURL: URL? = nil,
+            faviconURL: URL? = nil
         ) {
             self.id = id
             self.kind = kind
             self.name = name
             self.subtitle = subtitle
             self.previewURL = previewURL
+            self.faviconURL = faviconURL
         }
 
         var isImage: Bool {

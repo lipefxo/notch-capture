@@ -312,8 +312,6 @@ struct ExpandedInboxView: View {
 
                 Spacer()
 
-                pomodoroControl
-
                 if viewModel.isAtRoot {
                     Button {
                         viewModel.newFolderName = ""
@@ -340,6 +338,8 @@ struct ExpandedInboxView: View {
                     .help("Folder actions")
                     .accessibilityLabel("Actions for \(folder.name)")
                 }
+
+                pomodoroControl
 
                 Button {
                     guard viewModel.saveEditing() else { return }
@@ -1250,6 +1250,7 @@ struct ExpandedInboxView: View {
             showsSearchLocation: viewModel.isShowingGlobalSearchResults,
             viewModel: viewModel
         )
+            .equatable()
             .opacity(isDragSource ? 0.18 : 1)
             .overlay {
                 LedgerInsertionIndicator(placement: target?.placement)

@@ -1,8 +1,9 @@
 import Foundation
 import SwiftData
+import UniformTypeIdentifiers
 
 struct CapturePackageManifest: Codable, Sendable {
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     let schemaVersion: Int
     let exportedAt: Date
@@ -53,6 +54,8 @@ struct CapturePackageManifest: Codable, Sendable {
         let originalFilename: String
         let packagePath: String?
         let url: URL?
+        let faviconPackagePath: String?
+        let faviconTypeIdentifier: String?
         let order: Int
         let createdAt: Date
     }
@@ -132,6 +135,21 @@ final class CapturePackageService {
                     try fileManager.copyItem(at: source, to: temporary.appendingPathComponent(relativeExportPath))
                     packagePath = relativeExportPath
                 }
+                var faviconPackagePath: String?
+                if let relativePath = attachment.faviconRelativePath {
+                    let source = try attachmentStore.resolve(relativePath: relativePath)
+                    guard fileManager.fileExists(atPath: source.path) else {
+                        throw CapturePackageError.missingAttachment(relativePath)
+                    }
+                    let extensionFromType = attachment.faviconTypeIdentifier
+                        .flatMap { UTType($0)?.preferredFilenameExtension }
+                    let extensionFromPath = source.pathExtension
+                    let filenameExtension = extensionFromType
+                        ?? (extensionFromPath.isEmpty ? "img" : extensionFromPath)
+                    let relativeExportPath = "attachments/\(attachment.id.uuidString)-favicon.\(filenameExtension)"
+                    try fileManager.copyItem(at: source, to: temporary.appendingPathComponent(relativeExportPath))
+                    faviconPackagePath = relativeExportPath
+                }
                 return CapturePackageManifest.AttachmentRecord(
                     id: attachment.id,
                     kind: attachment.kind,
@@ -139,6 +157,8 @@ final class CapturePackageService {
                     originalFilename: attachment.originalFilename,
                     packagePath: packagePath,
                     url: attachment.url,
+                    faviconPackagePath: faviconPackagePath,
+                    faviconTypeIdentifier: attachment.faviconTypeIdentifier,
                     order: attachment.order,
                     createdAt: attachment.createdAt
                 )
@@ -315,6 +335,22 @@ final class CapturePackageService {
                         storedPath = stored.relativePath
                         storedRelativePaths.append(stored.relativePath)
                     }
+                    var storedFaviconPath: String?
+                    var storedFaviconTypeIdentifier: String?
+                    if let faviconPackagePath = attachmentRecord.faviconPackagePath {
+                        let source = try validatedChild(path: faviconPackagePath, of: packageURL)
+                        guard fileManager.fileExists(atPath: source.path) else {
+                            throw CapturePackageError.missingAttachment(faviconPackagePath)
+                        }
+                        let stored = try attachmentStore.storeFile(
+                            at: source,
+                            id: UUID(),
+                            kind: .image
+                        )
+                        storedFaviconPath = stored.relativePath
+                        storedFaviconTypeIdentifier = stored.typeIdentifier
+                        storedRelativePaths.append(stored.relativePath)
+                    }
                     attachments.append(
                         Attachment(
                             id: chosenAttachmentID,
@@ -323,6 +359,9 @@ final class CapturePackageService {
                             originalFilename: attachmentRecord.originalFilename,
                             relativePath: storedPath,
                             url: attachmentRecord.url,
+                            faviconRelativePath: storedFaviconPath,
+                            faviconTypeIdentifier: attachmentRecord.faviconTypeIdentifier
+                                ?? storedFaviconTypeIdentifier,
                             order: attachmentRecord.order,
                             createdAt: attachmentRecord.createdAt
                         )
@@ -380,6 +419,8 @@ final class CapturePackageService {
                     imported.typeIdentifier == existing.typeIdentifier &&
                     imported.originalFilename == existing.originalFilename &&
                     imported.url == existing.url &&
+                    (imported.faviconPackagePath != nil) == (existing.faviconRelativePath != nil) &&
+                    (imported.faviconTypeIdentifier == nil || imported.faviconTypeIdentifier == existing.faviconTypeIdentifier) &&
                     imported.order == existing.order
             }
         return record.text == item.text &&
