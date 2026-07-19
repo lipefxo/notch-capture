@@ -459,6 +459,9 @@ final class AppCoordinator {
         hooks.onReorder = { [weak self] assignments in
             self?.applyOrderAssignments(assignments)
         }
+        hooks.onReorderFolders = { [weak self] assignments in
+            self?.applyFolderOrderAssignments(assignments)
+        }
         hooks.onArchive = { [weak self] id in
             self?.archive(id: id)
         }

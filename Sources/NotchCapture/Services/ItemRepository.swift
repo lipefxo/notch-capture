@@ -440,6 +440,27 @@ final class ItemRepository {
         }
     }
 
+    /// Persists a flat folder ordering. Item membership is intentionally never
+    /// changed here: folders cannot be nested.
+    func applyFolderOrderAssignments(_ assignments: [FolderOrderAssignment]) throws {
+        guard !assignments.isEmpty else { return }
+        let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        let byID = Dictionary(uniqueKeysWithValues: lists.map { ($0.id, $0) })
+        if let missing = assignments.first(where: { byID[$0.id] == nil }) {
+            throw ItemRepositoryError.listNotFound(missing.id)
+        }
+        do {
+            for assignment in assignments {
+                byID[assignment.id]?.sortOrder = assignment.sortOrder
+                byID[assignment.id]?.updatedAt = .now
+            }
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
+
     func archive(_ item: CaptureItem, at date: Date = .now) throws {
         item.archivedAt = date
         item.trashedAt = nil

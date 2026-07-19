@@ -48,6 +48,11 @@ struct ItemOrderAssignment: Equatable, Sendable {
     let sortOrder: Int
 }
 
+struct FolderOrderAssignment: Equatable, Sendable {
+    let id: UUID
+    let sortOrder: Int
+}
+
 enum CapturePayload: Sendable, Equatable {
     case text(String)
     case url(URL)

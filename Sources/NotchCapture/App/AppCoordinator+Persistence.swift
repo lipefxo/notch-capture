@@ -131,6 +131,16 @@ extension AppCoordinator {
         }
     }
 
+    func applyFolderOrderAssignments(_ assignments: [FolderOrderAssignment]) {
+        do {
+            try repository.applyFolderOrderAssignments(assignments)
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
+    }
+
     func archive(id: UUID) {
         guard let item = findItem(id) else { return }
         do {

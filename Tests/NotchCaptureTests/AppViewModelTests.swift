@@ -1572,6 +1572,41 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persisted.map(\.sortOrder), [0, 1, 2])
     }
 
+    func testFolderReorderPersistsOnlyFlatFolderRanks() {
+        let first = AppViewModel.FolderSummary(name: "First", sortOrder: 0)
+        let second = AppViewModel.FolderSummary(name: "Second", sortOrder: 1)
+        let third = AppViewModel.FolderSummary(name: "Third", sortOrder: 2)
+        var persisted: [FolderOrderAssignment] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onReorderFolders = { persisted = $0 }
+        let viewModel = AppViewModel(folders: [first, second, third], hooks: hooks)
+
+        XCTAssertTrue(viewModel.reorderFolder(
+            folderID: third.id,
+            relativeTo: first.id,
+            placement: .before
+        ))
+
+        XCTAssertEqual(viewModel.visibleFolders.map(\.id), [third.id, first.id, second.id])
+        XCTAssertEqual(persisted.map(\.id), [third.id, first.id, second.id])
+        XCTAssertEqual(persisted.map(\.sortOrder), [0, 1, 2])
+    }
+
+    func testFolderReorderIsUnavailableOutsideTheUnfilteredRoot() {
+        let first = AppViewModel.FolderSummary(name: "First", sortOrder: 0)
+        let second = AppViewModel.FolderSummary(name: "Second", sortOrder: 1)
+        let viewModel = AppViewModel(folders: [first, second])
+
+        viewModel.composerText = "First"
+        XCTAssertFalse(viewModel.canReorderFolders)
+        XCTAssertFalse(viewModel.reorderFolder(folderID: second.id, relativeTo: first.id, placement: .before))
+
+        viewModel.composerText = ""
+        viewModel.openFolder(first)
+        XCTAssertFalse(viewModel.canReorderFolders)
+        XCTAssertFalse(viewModel.reorderFolder(folderID: second.id, relativeTo: first.id, placement: .before))
+    }
+
     func testCrossGroupReorderPinsAtRequestedPosition() {
         let firstPinned = AppViewModel.LedgerItem(title: "First pinned", isPinned: true, sortOrder: 0)
         let secondPinned = AppViewModel.LedgerItem(title: "Second pinned", isPinned: true, sortOrder: 1)
