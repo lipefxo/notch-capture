@@ -483,6 +483,45 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         XCTAssertEqual(anchored.shadowY, 0)
         XCTAssertLessThanOrEqual(anchored.bottomRadius, 19)
     }
+
+    func testExtendedCompactChromeUsesTheSharedPresetGeometry() throws {
+        let capture = try XCTUnwrap(
+            SurfaceChromeMetrics.resolve(for: .collapsed, compactPresentationSize: .extended)
+        )
+        let activity = try XCTUnwrap(
+            SurfaceChromeMetrics.resolve(for: .collapsedActivity, compactPresentationSize: .extended)
+        )
+
+        XCTAssertEqual(capture.size, CGSize(width: 300, height: 50))
+        XCTAssertEqual(activity.size, CGSize(width: 440, height: 56))
+        XCTAssertEqual(capture.bottomRadius, 22)
+        XCTAssertEqual(activity.bottomRadius, 22)
+        XCTAssertEqual(capture.shadowOpacity, 0)
+        XCTAssertEqual(activity.shadowOpacity, 0)
+    }
+
+    func testHardwareNotchActivityPreservesNotchAndUsesPresetWings() {
+        let layout = AppViewModel.CollapsedActivityLayout(
+            hasHardwareNotch: true,
+            notchWidth: 188,
+            notchBandHeight: 32
+        )
+        let minimal = CompactSurfaceMetrics.resolve(
+            state: .collapsedActivity,
+            presentationSize: .minimal,
+            activityLayout: layout
+        )
+        let extended = CompactSurfaceMetrics.resolve(
+            state: .collapsedActivity,
+            presentationSize: .extended,
+            activityLayout: layout
+        )
+
+        XCTAssertEqual(minimal?.contentSize.width, 188 + (116 * 2))
+        XCTAssertEqual(extended?.contentSize.width, 188 + (176 * 2))
+        XCTAssertEqual(extended?.shellSize.width, 188 + (176 * 2) + 20)
+        XCTAssertEqual(extended?.shellSize.height, 56)
+    }
 }
 
 final class PanelShadowApronTests: XCTestCase {
@@ -596,6 +635,31 @@ final class NotchMotionTokenTests: XCTestCase {
             NotchMotion.completionHoldDuration
         )
     }
+
+    func testCompletionFloodCoolsAsTheWashLands() {
+        XCTAssertEqual(NotchMotion.completionCooldownDuration, 0.30)
+        XCTAssertEqual(
+            NotchMotion.completionCooldownDelay,
+            NotchMotion.completionWashDelay + NotchMotion.completionRevealDuration
+        )
+        // Cooling must begin before the hold releases so settle and cool-down
+        // overlap as one continuous motion.
+        XCTAssertLessThan(
+            NotchMotion.completionCooldownDelay,
+            NotchMotion.completionHoldDuration
+        )
+    }
+
+    func testCheckmarkDrawFitsInsideTheWashFlight() {
+        XCTAssertEqual(NotchMotion.completionCheckDrawDuration, 0.28)
+        XCTAssertEqual(NotchMotion.completionCheckDrawDelay, 0.06)
+        // The check finishes drawing before the flood starts cooling so the
+        // peak-luminance frame shows a fully drawn check.
+        XCTAssertLessThan(
+            NotchMotion.completionCheckDrawDelay + NotchMotion.completionCheckDrawDuration,
+            NotchMotion.completionCooldownDelay + NotchMotion.completionCooldownDuration
+        )
+    }
 }
 
 final class ExpandedSurfaceRevealPlanTests: XCTestCase {
@@ -662,6 +726,13 @@ final class LedgerCompletionLayerLifecycleTests: XCTestCase {
         XCTAssertTrue(completed.showsLayers)
     }
 
+    func testRowsMountAtRestWithoutFloodEnergy() {
+        // Rows that scroll in already completed must rest at the dim tint —
+        // only a live toggle ignites the flood.
+        XCTAssertEqual(LedgerCompletionLayerLifecycle(isCompleted: true).energy, 0)
+        XCTAssertEqual(LedgerCompletionLayerLifecycle(isCompleted: false).energy, 0)
+    }
+
     func testRetractionKeepsLayersUntilCleanupFinishes() {
         var lifecycle = LedgerCompletionLayerLifecycle(isCompleted: true)
         XCTAssertTrue(lifecycle.beginTransition(to: false))
@@ -670,6 +741,15 @@ final class LedgerCompletionLayerLifecycleTests: XCTestCase {
 
         lifecycle.finishRetraction(ifItemIsCompleted: false)
         XCTAssertFalse(lifecycle.showsLayers)
+    }
+
+    func testCompletionIgnitesFloodEnergyAndUndoExtinguishesIt() {
+        var lifecycle = LedgerCompletionLayerLifecycle(isCompleted: false)
+        lifecycle.beginTransition(to: true)
+        XCTAssertEqual(lifecycle.energy, 1)
+
+        lifecycle.beginTransition(to: false)
+        XCTAssertEqual(lifecycle.energy, 0)
     }
 
     func testRapidRecompletionPreventsStaleCleanup() {

@@ -40,7 +40,7 @@ private struct MusicPlayerBand: View {
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                    HStack(spacing: 2) {
+                    HStack(spacing: 14) {
                         transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)
                         transportButton("forward.fill", label: "Next track", action: viewModel.musicNext, compact: true)
                     }
@@ -57,7 +57,9 @@ private struct MusicPlayerBand: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.horizontal, 14)
+        // Match the header, folder rows, and ledger rows so the player does
+        // not hang outside the shared expanded-surface content column.
+        .padding(.horizontal, 20)
         .frame(height: 62)
         .background(NotchTheme.ink)
         .overlay(alignment: .bottom) {
@@ -78,7 +80,7 @@ private struct MusicPlayerBand: View {
                 .font(.system(size: 10.5, weight: .semibold))
                 .frame(width: compact ? 16 : 25, height: 25)
         }
-        .buttonStyle(PressableIconButtonStyle())
+        .buttonStyle(PressableIconButtonStyle(width: compact ? 16 : 28))
         .notchHitTarget(Circle())
         .help(label)
         .accessibilityLabel(label)
@@ -93,7 +95,7 @@ private struct MusicPlayerBand: View {
     }
 }
 
-private struct MusicDurationLabel: View {
+struct MusicDurationLabel: View {
     let duration: String
 
     var body: some View {
@@ -118,7 +120,25 @@ private struct MusicDurationLabel: View {
     }
 }
 
-private struct MusicProgressControl: View {
+enum MusicScrubGeometry {
+    static func fraction(at xPosition: CGFloat, width: CGFloat) -> Double {
+        guard width > 0 else { return 0 }
+        return min(1, max(0, xPosition / width))
+    }
+
+    static func committedFraction(
+        previewing previewFraction: Double?,
+        releaseX: CGFloat,
+        width: CGFloat
+    ) -> Double {
+        // SwiftUI can report the gesture's initial local location on mouse-up
+        // after the track redraws during a drag. The continuously updated
+        // preview is therefore the authoritative release position.
+        previewFraction ?? fraction(at: releaseX, width: width)
+    }
+}
+
+struct MusicProgressControl: View {
     let snapshot: NowPlayingSnapshot
     let onSeek: (TimeInterval) -> Void
 
@@ -189,11 +209,11 @@ private struct MusicProgressControl: View {
                 .frame(height: 3)
 
             Capsule()
-                .fill(NotchTheme.mint.opacity(0.9))
+                .fill(NotchTheme.primaryAccent.opacity(0.9))
                 .frame(width: fillWidth, height: 3)
 
             Circle()
-                .fill(NotchTheme.mint)
+                .fill(NotchTheme.primaryAccent)
                 .frame(width: 7, height: 7)
                 .position(x: thumbX, y: 7)
                 .opacity(isHovered || scrubFraction != nil ? 1 : 0)
@@ -210,16 +230,23 @@ private struct MusicProgressControl: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
                 guard snapshot.duration > 0, width > 0 else { return }
-                scrubFraction = min(1, max(0, value.location.x / width))
+                scrubFraction = MusicScrubGeometry.fraction(
+                    at: value.location.x,
+                    width: width
+                )
             }
             .onEnded { value in
                 guard snapshot.duration > 0, width > 0 else {
                     scrubFraction = nil
                     return
                 }
-                let fraction = min(1, max(0, value.location.x / width))
-                scrubFraction = nil
+                let fraction = MusicScrubGeometry.committedFraction(
+                    previewing: scrubFraction,
+                    releaseX: value.location.x,
+                    width: width
+                )
                 onSeek(snapshot.duration * fraction)
+                scrubFraction = nil
             }
     }
 

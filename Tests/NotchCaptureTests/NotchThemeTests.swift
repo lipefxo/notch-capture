@@ -54,33 +54,33 @@ final class NotchThemeTests: XCTestCase {
         XCTAssertEqual(NotchTheme.tagPaletteIndex(seed: -1), 0)
     }
 
-    func testPomodoroTimerColorUsesMintThroughTheFirstHalf() {
+    func testPomodoroTimerColorUsesPrimaryWhiteThroughTheFirstHalf() {
         assertPomodoroColor(
             NotchTheme.pomodoroTimerColor(remaining: 25 * 60, duration: 25 * 60),
-            red: 0.23,
-            green: 0.78,
-            blue: 0.50
+            red: 1,
+            green: 1,
+            blue: 1
         )
         assertPomodoroColor(
             NotchTheme.pomodoroTimerColor(remaining: 12.5 * 60, duration: 25 * 60),
-            red: 0.23,
-            green: 0.78,
-            blue: 0.50
+            red: 1,
+            green: 1,
+            blue: 1
         )
         assertPomodoroColor(
             NotchTheme.pomodoroTimerColor(remaining: 30 * 60, duration: 25 * 60),
-            red: 0.23,
-            green: 0.78,
-            blue: 0.50
+            red: 1,
+            green: 1,
+            blue: 1
         )
     }
 
-    func testPomodoroTimerColorInterpolatesMintToAmber() {
+    func testPomodoroTimerColorInterpolatesPrimaryWhiteToAmber() {
         assertPomodoroColor(
             NotchTheme.pomodoroTimerColor(remaining: 8.75 * 60, duration: 25 * 60),
-            red: 0.615,
-            green: 0.64,
-            blue: 0.25
+            red: 1,
+            green: 0.75,
+            blue: 0.5
         )
         assertPomodoroColor(
             NotchTheme.pomodoroTimerColor(remaining: 5 * 60, duration: 25 * 60),

@@ -562,6 +562,22 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(AppViewModel.TimeFormat.fromStoredValue("24-hour"), .twentyFourHour)
     }
 
+    func testCompactPresentationSizeDefaultsSafelyAndNotifiesPersistence() {
+        var persistedSize: CompactPresentationSize?
+        var hooks = AppViewModel.Hooks()
+        hooks.onSetCompactPresentationSize = { persistedSize = $0 }
+        let viewModel = AppViewModel(hooks: hooks)
+
+        XCTAssertEqual(CompactPresentationSize.fromStoredValue(nil), .minimal)
+        XCTAssertEqual(CompactPresentationSize.fromStoredValue("unexpected"), .minimal)
+        XCTAssertEqual(CompactPresentationSize.fromStoredValue("extended"), .extended)
+        XCTAssertEqual(viewModel.compactPresentationSize, .minimal)
+
+        viewModel.compactPresentationSize = .extended
+
+        XCTAssertEqual(persistedSize, .extended)
+    }
+
     func testOnboardingNavigationStaysWithinTypedSteps() {
         let viewModel = AppViewModel(surfaceState: .onboarding)
 

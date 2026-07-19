@@ -79,6 +79,15 @@ struct SettingsView: View {
                 isOn: $viewModel.autoHideExternalPill
             )
             SettingsDivider()
+            SettingsControlRow(title: "Compact size", detail: "Minimal or Extended") {
+                NotchSegmentedControl(
+                    options: CompactPresentationSize.allCases,
+                    selection: $viewModel.compactPresentationSize
+                )
+                .frame(width: 164)
+                .accessibilityLabel("Compact size")
+            }
+            SettingsDivider()
             SettingsControlRow(title: "Time format", detail: "Capture timestamps") {
                 NotchSegmentedControl(
                     options: AppViewModel.TimeFormat.allCases,
@@ -316,7 +325,7 @@ private struct SettingsButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 10, weight: .semibold))
-            .foregroundStyle(configuration.isPressed ? NotchTheme.mint : Color.white.opacity(0.7))
+            .foregroundStyle(configuration.isPressed ? NotchTheme.primaryAccent : Color.white.opacity(0.7))
             .padding(.horizontal, 9)
             .frame(height: 27)
             .background(Color.white.opacity(configuration.isPressed ? 0.09 : 0.05))

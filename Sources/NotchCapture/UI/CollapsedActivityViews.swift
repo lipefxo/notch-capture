@@ -4,6 +4,16 @@ import SwiftUI
 struct CollapsedActivityPillView: View {
     @ObservedObject var viewModel: AppViewModel
 
+    private var isExtended: Bool { viewModel.compactPresentationSize == .extended }
+
+    private var compactMetrics: CompactSurfaceMetrics {
+        CompactSurfaceMetrics.resolve(
+            state: .collapsedActivity,
+            presentationSize: viewModel.compactPresentationSize,
+            activityLayout: viewModel.collapsedActivityLayout
+        )!
+    }
+
     var body: some View {
         Group {
             if viewModel.collapsedActivityLayout.hasHardwareNotch {
@@ -18,17 +28,26 @@ struct CollapsedActivityPillView: View {
     private var notchedLayout: some View {
         HStack(spacing: 0) {
             leadingWing
-                .frame(width: NotchTheme.collapsedActivityWingWidth, alignment: .leading)
+                .frame(width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth, alignment: .leading)
             Color.clear
                 .frame(width: max(0, viewModel.collapsedActivityLayout.notchWidth))
             trailingWing
-                .frame(width: NotchTheme.collapsedActivityWingWidth, alignment: .trailing)
+                .frame(width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth, alignment: .trailing)
         }
-        .frame(height: max(34, viewModel.collapsedActivityLayout.notchBandHeight + 4), alignment: .top)
+        .frame(height: compactMetrics.contentSize.height, alignment: .top)
     }
 
     @ViewBuilder
     private var fallbackLayout: some View {
+        if isExtended {
+            extendedFallbackLayout
+        } else {
+            minimalFallbackLayout
+        }
+    }
+
+    @ViewBuilder
+    private var minimalFallbackLayout: some View {
         switch viewModel.collapsedActivityContent {
         case let .musicOnly(snapshot):
             HStack(spacing: 6) {
@@ -59,31 +78,76 @@ struct CollapsedActivityPillView: View {
     }
 
     @ViewBuilder
+    private var extendedFallbackLayout: some View {
+        switch viewModel.collapsedActivityContent {
+        case let .musicOnly(snapshot):
+            extendedMusicInfoView(snapshot)
+            .padding(.horizontal, 12)
+            .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
+        case let .pomodoroOnly(state):
+            ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
+                .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
+        case let .both(snapshot, state):
+            HStack(spacing: 8) {
+                extendedMusicInfoView(snapshot)
+                    .frame(maxWidth: .infinity)
+                    .layoutPriority(1)
+                ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
+                    .frame(width: 72, height: compactMetrics.contentSize.height)
+                    .layoutPriority(2)
+            }
+            .padding(.horizontal, 12)
+            .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
+        case nil:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
     private var leadingWing: some View {
         if let snapshot = viewModel.nowPlaying {
-            musicInfoView(snapshot, artworkSize: 22)
-                .padding(.leading, 2)
-                .frame(maxHeight: 34)
+            Group {
+                if isExtended {
+                    extendedMusicInfoView(snapshot)
+                } else {
+                    musicInfoView(snapshot, artworkSize: 22)
+                }
+            }
+            .padding(.leading, 2)
+            .frame(maxHeight: compactMetrics.contentSize.height)
         }
     }
 
     @ViewBuilder
     private var trailingWing: some View {
         if let snapshot = viewModel.nowPlaying {
-            HStack(spacing: viewModel.pomodoro.isActive ? 6 : 0) {
-                CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
-                    .frame(width: viewModel.pomodoro.isActive ? 42 : nil)
+            if isExtended {
                 if viewModel.pomodoro.isActive {
-                    compactPomodoroButton(viewModel.pomodoro)
-                        .frame(width: 54)
+                    ExtendedCompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
+                        .frame(width: 86)
+                }
+            } else {
+                HStack(spacing: viewModel.pomodoro.isActive ? 6 : 0) {
+                    CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
+                        .frame(width: viewModel.pomodoro.isActive ? 42 : nil)
+                    if viewModel.pomodoro.isActive {
+                        compactPomodoroButton(viewModel.pomodoro)
+                            .frame(width: 54)
+                    }
+                }
+                .padding(.horizontal, 2)
+                .frame(maxWidth: .infinity, maxHeight: compactMetrics.contentSize.height)
+            }
+        } else if viewModel.pomodoro.isActive {
+            Group {
+                if isExtended {
+                    ExtendedCompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
+                } else {
+                    CompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
                 }
             }
-            .padding(.horizontal, 2)
-            .frame(maxWidth: .infinity, maxHeight: 34)
-        } else if viewModel.pomodoro.isActive {
-            CompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
-                .padding(.trailing, 2)
-                .frame(maxWidth: .infinity, maxHeight: 34, alignment: .trailing)
+            .padding(.trailing, 2)
+            .frame(maxWidth: .infinity, maxHeight: compactMetrics.contentSize.height, alignment: .trailing)
         }
     }
 
@@ -129,6 +193,63 @@ struct CollapsedActivityPillView: View {
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .layoutPriority(1)
+    }
+
+    private func extendedMusicInfoView(_ snapshot: NowPlayingSnapshot) -> some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 8) {
+                ArtworkPlaybackControl(
+                    artwork: viewModel.nowPlayingArtwork,
+                    trackKey: snapshot.trackKey,
+                    title: snapshot.title,
+                    isPlaying: snapshot.isPlaying,
+                    size: 38,
+                    cornerRadius: 8,
+                    action: viewModel.musicPlayPause
+                )
+
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Button { viewModel.openExpanded() } label: {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(snapshot.title)
+                                    .font(.system(size: 11, weight: .semibold))
+                                    .foregroundStyle(NotchTheme.primaryText)
+                                Text(snapshot.artist)
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(NotchTheme.secondaryText)
+                            }
+                            .lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
+                        .help("Open \(snapshot.title) in Notch Capture")
+                        .accessibilityLabel(musicAccessibilityLabel(snapshot))
+                        .layoutPriority(1)
+
+                        ExtendedInlineTransportControls(viewModel: viewModel)
+                            .layoutPriority(2)
+                    }
+
+                    if let duration = MusicTimeFormatter.durationString(from: snapshot.duration) {
+                        HStack(spacing: 4) {
+                            MusicProgressControl(
+                                snapshot: snapshot,
+                                onSeek: viewModel.musicSeek
+                            )
+                            .frame(minWidth: 0, maxWidth: .infinity)
+
+                            MusicDurationLabel(duration: duration)
+                        }
+                        .frame(height: 14)
+                    }
+                }
+                .padding(.top, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .layoutPriority(1)
+            }
+        }
     }
 
     private func musicAccessibilityLabel(_ snapshot: NowPlayingSnapshot) -> String {
@@ -185,6 +306,46 @@ private struct CompactPomodoroButton: View {
     }
 }
 
+/// Extended Pomodoro deliberately remains a single, plain timer. The larger
+/// full-surface hit target preserves the compact timer's existing action.
+private struct ExtendedCompactPomodoroButton: View {
+    @ObservedObject var viewModel: AppViewModel
+    let state: PomodoroState
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = state.remaining(at: context.date)
+            Button(action: viewModel.togglePomodoro) {
+                Text(PomodoroCountdownLabel.format(remaining))
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(foregroundColor(remaining))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.9))
+            .notchHitTarget(Rectangle())
+            .help(actionLabel)
+            .accessibilityLabel(actionLabel)
+            .accessibilityValue(PomodoroCountdownLabel.accessibilityValue(remaining))
+        }
+    }
+
+    private var actionLabel: String {
+        switch state.phase {
+        case .idle: "Start focus timer"
+        case .running: "Pause focus timer"
+        case .paused: "Resume focus timer"
+        case .finished: "Restart focus timer"
+        }
+    }
+
+    private func foregroundColor(_ remaining: TimeInterval) -> Color {
+        if case .paused = state.phase { return NotchTheme.secondaryText }
+        return NotchTheme.pomodoroTimerColor(remaining: remaining, duration: state.duration).color
+    }
+}
+
 private struct CompactPomodoroButtonStyle: ButtonStyle {
     let isHighlighted: Bool
     let isPreviewPressed: Bool
@@ -207,6 +368,31 @@ private struct CompactPomodoroButtonStyle: ButtonStyle {
     private func backgroundColor(isPressed: Bool) -> Color {
         if isPressed { return Color.white.opacity(0.10) }
         return isHighlighted ? NotchTheme.control : .clear
+    }
+}
+
+/// Matches the opened player's control placement: transport lives beside the
+/// metadata, directly above the read-only progress strip.
+private struct ExtendedInlineTransportControls: View {
+    @ObservedObject var viewModel: AppViewModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            control("backward.fill", label: "Previous track", action: viewModel.musicPrevious)
+            control("forward.fill", label: "Next track", action: viewModel.musicNext)
+        }
+    }
+
+    private func control(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 10.5, weight: .semibold))
+                .frame(width: 16, height: 25)
+        }
+        .buttonStyle(PressableIconButtonStyle(width: 16))
+        .notchHitTarget(Circle())
+        .help(label)
+        .accessibilityLabel(label)
     }
 }
 

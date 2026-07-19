@@ -43,6 +43,7 @@ struct PanelTransitionPolicy: Equatable {
         to newState: PanelState,
         wasVisible: Bool,
         reduceMotion: Bool,
+        compactPresentationSize: CompactPresentationSize = .minimal,
         animated: Bool = true
     ) -> Self {
         guard animated else { return .immediate }
@@ -85,8 +86,10 @@ struct PanelTransitionPolicy: Equatable {
         }
 
         let recoveringFromHide = !oldState.isVisible && wasVisible
-        let oldArea = oldState.nominalSize.width * oldState.nominalSize.height
-        let newArea = newState.nominalSize.width * newState.nominalSize.height
+        let oldSize = oldState.nominalSize(compactPresentationSize: compactPresentationSize)
+        let newSize = newState.nominalSize(compactPresentationSize: compactPresentationSize)
+        let oldArea = oldSize.width * oldSize.height
+        let newArea = newSize.width * newSize.height
         if newArea > oldArea {
             return Self(
                 kind: .expand,
@@ -275,6 +278,9 @@ public final class PanelController: NSObject, ObservableObject {
 
     @Published public private(set) var state: PanelState = .dormant
     public var onRequestDismiss: (@MainActor (PanelDismissalReason) -> Void)?
+    /// Kept as a provider so existing owners retain Minimal geometry unless
+    /// they opt into the setting exposed by the application layer.
+    public var compactPresentationSizeProvider: @MainActor () -> CompactPresentationSize = { .minimal }
 
     public let panel: NotchPanel
     /// Decorative, noninteractive shadow canvas. Kept internal so chrome
@@ -361,7 +367,8 @@ public final class PanelController: NSObject, ObservableObject {
     public func present(
         _ newState: PanelState,
         on screen: NSScreen? = nil,
-        activate: Bool = false
+        activate: Bool = false,
+        forceGeometry: Bool = false
     ) {
         guard newState.isVisible else {
             transitionToHiddenState(newState)
@@ -370,7 +377,7 @@ public final class PanelController: NSObject, ObservableObject {
 
         let oldState = state
         let wasVisible = panel.isVisible
-        guard oldState != newState || !wasVisible else { return }
+        guard forceGeometry || oldState != newState || !wasVisible else { return }
         PanelDiagnostics.log("present \(oldState.rawValue)→\(newState.rawValue) wasVisible=\(wasVisible)")
         confirmationDismissalTask?.cancel()
 
@@ -390,7 +397,8 @@ public final class PanelController: NSObject, ObservableObject {
             from: oldState,
             to: newState,
             wasVisible: wasVisible,
-            reduceMotion: reduceMotion
+            reduceMotion: reduceMotion,
+            compactPresentationSize: compactPresentationSizeProvider()
         )
 
         state = newState
@@ -499,6 +507,13 @@ public final class PanelController: NSObject, ObservableObject {
         if newState == .confirmation {
             scheduleConfirmationDismissal()
         }
+    }
+
+    /// Re-resolve a visible compact frame after its presentation preference
+    /// changes without changing the app-level surface state.
+    public func refreshCompactPresentation() {
+        guard [.collapsed, .collapsedActivity].contains(state) else { return }
+        present(state, activate: false, forceGeometry: true)
     }
 
     /// Recalculates the panel position after a screen arrangement or resolution change.
@@ -731,17 +746,24 @@ public final class PanelController: NSObject, ObservableObject {
     }
 
     private func surfaceSize(for state: PanelState, geometry: NotchGeometry) -> CGSize {
-        var size = state.nominalSize
+        let presentationSize = compactPresentationSizeProvider()
+        var size = state.nominalSize(compactPresentationSize: presentationSize)
         if state == .collapsedActivity {
             let simulatedNotch = CommandLine.arguments.contains("--design-preview")
                 && CommandLine.arguments.contains("--preview-hardware-notch")
             if simulatedNotch {
-                size.width = 156 + (NotchTheme.collapsedActivityWingWidth * 2) + (NotchTheme.topFlare * 2)
-                size.height = 36
+                size = CompactSurfaceMetrics.hardwareActivity(
+                    for: presentationSize,
+                    notchWidth: 156,
+                    notchBandHeight: 32
+                ).shellSize
             } else if let notchRect = geometry.notchRect,
                       geometry.safeAreaInsets.top > 0 {
-                size.width = notchRect.width + (NotchTheme.collapsedActivityWingWidth * 2) + (NotchTheme.topFlare * 2)
-                size.height = max(34, max(notchRect.height, geometry.safeAreaInsets.top) + 4)
+                size = CompactSurfaceMetrics.hardwareActivity(
+                    for: presentationSize,
+                    notchWidth: notchRect.width,
+                    notchBandHeight: max(notchRect.height, geometry.safeAreaInsets.top)
+                ).shellSize
             }
         }
         if [.expanded, .dropTarget, .onboarding, .settings].contains(state) {

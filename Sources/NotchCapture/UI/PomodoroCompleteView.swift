@@ -6,7 +6,7 @@ struct PomodoroCompleteView: View {
     var body: some View {
         HStack(spacing: 9) {
             ZStack {
-                Circle().fill(NotchTheme.mint)
+                Circle().fill(NotchTheme.primaryAccent)
                 Image(systemName: "checkmark")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundStyle(NotchTheme.ink)
@@ -36,7 +36,7 @@ struct PomodoroCompleteView: View {
                     viewModel.openExpanded()
                 }
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(NotchTheme.mint)
+                .foregroundStyle(NotchTheme.primaryAccent)
                 .buttonStyle(CompactTextButtonStyle())
             }
             .fixedSize()

@@ -115,9 +115,9 @@ struct LedgerInsertionIndicator: View {
         GeometryReader { proxy in
             if let placement {
                 Rectangle()
-                    .fill(NotchTheme.mint)
+                    .fill(NotchTheme.primaryAccent)
                     .frame(height: 2)
-                    .shadow(color: NotchTheme.mint.opacity(0.45), radius: 3)
+                    .shadow(color: NotchTheme.primaryAccent.opacity(0.45), radius: 3)
                     .offset(y: placement == .after ? max(0, proxy.size.height - 2) : 0)
                     .transition(.opacity)
             }

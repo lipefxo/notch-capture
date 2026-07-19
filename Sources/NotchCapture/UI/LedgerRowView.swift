@@ -4,16 +4,26 @@ import SwiftUI
 struct LedgerCompletionLayerLifecycle: Equatable, Sendable {
     var progress: CGFloat
     var showsLayers: Bool
+    /// 1 while a live completion floods the row with luminous fill; cooled
+    /// back to 0 after the wash lands. Rows that mount already completed rest
+    /// at 0 so scroll-in never re-ignites the glow.
+    var energy: CGFloat
 
     init(isCompleted: Bool) {
         progress = isCompleted ? 1 : 0
         showsLayers = isCompleted
+        energy = 0
     }
 
     @discardableResult
     mutating func beginTransition(to isCompleted: Bool) -> Bool {
         if isCompleted {
             showsLayers = true
+            // Ignites inside the reveal transaction so the flood crescendos
+            // with the sweep and peaks exactly when the liquid lands.
+            energy = 1
+        } else {
+            energy = 0
         }
         progress = isCompleted ? 1 : 0
         return !isCompleted && showsLayers
@@ -158,18 +168,35 @@ private struct LedgerCompletionRevealMask: Shape {
 /// the crest, and a specular highlight riding the meniscus front. Animatable so
 /// the gradient stops track the interpolated front each frame — a plain view
 /// would snap its gradients to the target value when the transaction begins.
+/// A second animatable channel, energy, carries the luminous flood: full while
+/// the completion is live, cooled to 0 once the liquid settles, and always 0
+/// on undo so the retract never re-lights the row.
 private struct LedgerCompletionLiquidWashModifier: ViewModifier, @preconcurrency Animatable {
     var progress: CGFloat
+    var energy: CGFloat
+    /// Non-animated gate for the ignition bloom: true only while the item is
+    /// completed, so undo's retract (progress returning through the glow's
+    /// span) can never flash it.
+    var showsIgnition: Bool
 
-    var animatableData: CGFloat {
-        get { progress }
-        set { progress = newValue }
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(progress, energy) }
+        set {
+            progress = newValue.first
+            energy = newValue.second
+        }
     }
 
     private static let crestTrailingReach: CGFloat = 18
     private static let crestLeadingReach: CGFloat = 10
     private static let crestPeakInset: CGFloat = 6
     private static let crestBlur: CGFloat = 3
+    private static let crestCoreTrailingReach: CGFloat = 7
+    private static let crestCoreLeadingReach: CGFloat = 4
+    private static let crestCorePeakInset: CGFloat = 5
+    /// Fraction of the sweep over which the ignition glow swells and dissolves.
+    private static let glowSpan: CGFloat = 0.35
+    private static let glowRadius: CGFloat = 26
 
     func body(content: Content) -> some View {
         content.overlay {
@@ -181,34 +208,73 @@ private struct LedgerCompletionLiquidWashModifier: ViewModifier, @preconcurrency
                 )
 
                 ZStack {
-                    NotchTheme.completedLedger
+                    ZStack {
+                        NotchTheme.completedLedger
 
-                    LinearGradient(
-                        stops: trailStops(apexX: apexX, width: rect.width),
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .opacity(Double(1 - progress))
+                        NotchTheme.completionFloodBoost
+                            .opacity(Double(energy))
 
-                    LinearGradient(
-                        stops: crestStops(apexX: apexX, width: rect.width),
-                        startPoint: .leading,
-                        endPoint: .trailing
-                    )
-                    .blur(radius: Self.crestBlur)
-                    .opacity(crestVisibility)
-                }
-                .mask {
-                    LedgerCompletionRevealGeometry.meniscusPath(
-                        in: rect,
-                        progress: progress
-                    )
-                    .fill(.white)
+                        LinearGradient(
+                            stops: trailStops(apexX: apexX, width: rect.width),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .opacity(Double(1 - progress) * (0.6 + 0.4 * Double(energy)))
+
+                        LinearGradient(
+                            stops: crestCoreStops(apexX: apexX, width: rect.width),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .opacity(crestVisibility * 0.9)
+
+                        LinearGradient(
+                            stops: crestStops(apexX: apexX, width: rect.width),
+                            startPoint: .leading,
+                            endPoint: .trailing
+                        )
+                        .blur(radius: Self.crestBlur)
+                        .opacity(crestVisibility)
+                    }
+                    .mask {
+                        LedgerCompletionRevealGeometry.meniscusPath(
+                            in: rect,
+                            progress: progress
+                        )
+                        .fill(.white)
+                    }
+
+                    ignitionGlow(in: rect)
                 }
             }
             .clipped()
             .allowsHitTesting(false)
             .accessibilityHidden(true)
+        }
+    }
+
+    /// The radial bloom behind the checkbox at the instant of completion. It
+    /// lives outside the meniscus mask (which starts as a pinprick and would
+    /// clip it) and dissolves as the wave departs.
+    @ViewBuilder
+    private func ignitionGlow(in rect: CGRect) -> some View {
+        let departure = min(1, max(0, progress / Self.glowSpan))
+        let envelope = 1 - (departure * departure * (3 - 2 * departure))
+        let strength = showsIgnition ? Double(envelope) : 0
+        if strength > 0.001 {
+            Circle()
+                .fill(
+                    RadialGradient(
+                        colors: [NotchTheme.completionIgnitionGlow, .clear],
+                        center: .center,
+                        startRadius: 2,
+                        endRadius: Self.glowRadius
+                    )
+                )
+                .frame(width: Self.glowRadius * 2, height: Self.glowRadius * 2)
+                .scaleEffect(0.7 + 0.45 * departure)
+                .opacity(strength)
+                .position(x: LedgerCompletionRevealGeometry.originX, y: rect.midY)
         }
     }
 
@@ -242,9 +308,37 @@ private struct LedgerCompletionLiquidWashModifier: ViewModifier, @preconcurrency
         ]
     }
 
+    private func crestCoreStops(apexX: CGFloat, width: CGFloat) -> [Gradient.Stop] {
+        let clear = NotchTheme.completionCrestCore.opacity(0)
+        let peak = apexX - Self.crestCorePeakInset
+        return [
+            .init(color: clear, location: 0),
+            .init(color: clear, location: unitX(peak - Self.crestCoreTrailingReach, width)),
+            .init(color: NotchTheme.completionCrestCore, location: unitX(peak, width)),
+            .init(color: clear, location: unitX(peak + Self.crestCoreLeadingReach, width)),
+            .init(color: clear, location: 1)
+        ]
+    }
+
     private func unitX(_ x: CGFloat, _ width: CGFloat) -> CGFloat {
         guard width > 0 else { return 0 }
         return min(max(x / width, 0), 1)
+    }
+}
+
+/// The completion check as a strokeable path so it can draw itself on with
+/// `.trim` — short downstroke into the long upstroke, in unit space.
+private struct CompletionCheckmarkShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        var path = Path()
+        path.move(to: point(0.05, 0.55, in: rect))
+        path.addLine(to: point(0.38, 0.88, in: rect))
+        path.addLine(to: point(0.95, 0.14, in: rect))
+        return path
+    }
+
+    private func point(_ x: CGFloat, _ y: CGFloat, in rect: CGRect) -> CGPoint {
+        CGPoint(x: rect.minX + (x * rect.width), y: rect.minY + (y * rect.height))
     }
 }
 
@@ -297,6 +391,7 @@ struct LedgerRowView: View, Equatable {
     @State private var actionsAnchor: CGRect = .zero
     @State private var completionLayerLifecycle: LedgerCompletionLayerLifecycle
     @State private var completionLayerCleanupTask: Task<Void, Never>?
+    @State private var completionEnergyTask: Task<Void, Never>?
 
     private var showsActions: Bool { isHovered || isSelected }
 
@@ -333,6 +428,7 @@ struct LedgerRowView: View, Equatable {
             initialValue: LedgerCompletionLayerLifecycle(isCompleted: item.isCompleted)
         )
         _completionLayerCleanupTask = State(initialValue: nil)
+        _completionEnergyTask = State(initialValue: nil)
     }
 
     var body: some View {
@@ -359,11 +455,15 @@ struct LedgerRowView: View, Equatable {
         .onChange(of: item.isCompleted) { _, isCompleted in
             completionLayerCleanupTask?.cancel()
             completionLayerCleanupTask = nil
+            completionEnergyTask?.cancel()
+            completionEnergyTask = nil
             if isCompleted {
                 completionLayerLifecycle.showsLayers = true
             }
             // The wash launches a beat after the check pops; retracting is
-            // immediate so undo feels instant.
+            // immediate so undo feels instant. Energy rides the same
+            // transition: it ignites with the reveal and is extinguished by
+            // the retract (see beginTransition).
             let animation = reduceMotion
                 ? NotchMotion.reducedMotion
                 : (isCompleted
@@ -371,6 +471,17 @@ struct LedgerRowView: View, Equatable {
                     : NotchMotion.completionRetract)
             _ = withAnimation(animation) {
                 completionLayerLifecycle.beginTransition(to: isCompleted)
+            }
+            if isCompleted {
+                // Once the liquid lands the flood cools into the resting tint.
+                completionEnergyTask = Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(NotchMotion.completionCooldownDelay))
+                    guard !Task.isCancelled, item.isCompleted else { return }
+                    withAnimation(NotchMotion.completionCooldown) {
+                        completionLayerLifecycle.energy = 0
+                    }
+                    completionEnergyTask = nil
+                }
             }
             guard !isCompleted else { return }
             let cleanupDelay = LedgerCompletionLayerLifecycle.cleanupDelay(
@@ -401,6 +512,9 @@ struct LedgerRowView: View, Equatable {
         .onDisappear {
             completionLayerCleanupTask?.cancel()
             completionLayerCleanupTask = nil
+            completionEnergyTask?.cancel()
+            completionEnergyTask = nil
+            completionLayerLifecycle.energy = 0
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
@@ -482,7 +596,11 @@ struct LedgerRowView: View, Equatable {
         } else {
             Color.clear
                 .modifier(
-                    LedgerCompletionLiquidWashModifier(progress: completionLayerLifecycle.progress)
+                    LedgerCompletionLiquidWashModifier(
+                        progress: completionLayerLifecycle.progress,
+                        energy: completionLayerLifecycle.energy,
+                        showsIgnition: item.isCompleted
+                    )
                 )
         }
     }
@@ -809,20 +927,42 @@ struct LedgerRowView: View, Equatable {
 
     private func completionControlVisual(completedPresentation: Bool) -> some View {
         ZStack {
-            Image(systemName: "circle")
+            Circle()
+                .strokeBorder(NotchTheme.secondaryText, lineWidth: 1.25)
+                .frame(width: 13, height: 13)
                 .opacity(completedPresentation ? 0 : 1)
                 .scaleEffect(symbolScale(isVisible: !item.isCompleted))
 
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(NotchTheme.mint)
-                .opacity(completedPresentation ? 1 : 0)
-                .scaleEffect(symbolScale(isVisible: item.isCompleted))
+            ZStack {
+                Circle()
+                    .fill(NotchTheme.completionAccent)
+
+                CompletionCheckmarkShape()
+                    .trim(from: 0, to: item.isCompleted ? 1 : 0)
+                    .stroke(
+                        NotchTheme.ink,
+                        style: StrokeStyle(lineWidth: 1.6, lineCap: .round, lineJoin: .round)
+                    )
+                    .frame(width: 8, height: 8)
+                    .animation(checkmarkDrawAnimation, value: item.isCompleted)
+            }
+            .frame(width: 14, height: 14)
+            .opacity(completedPresentation ? 1 : 0)
+            .scaleEffect(symbolScale(isVisible: item.isCompleted))
         }
-        .font(.system(size: 12, weight: .light))
-        .foregroundStyle(NotchTheme.secondaryText)
         .frame(width: 20, height: 28)
         .notchHitTarget(Rectangle())
         .animation(completionStateAnimation, value: item.isCompleted)
+    }
+
+    /// The check strokes itself on just after the disc pops — a drawn light
+    /// trace rather than a symbol swap. Un-drawing on reopen matches the
+    /// instant-undo pace of the wash retract.
+    private var checkmarkDrawAnimation: Animation {
+        guard !reduceMotion else { return NotchMotion.reducedMotion }
+        return item.isCompleted
+            ? NotchMotion.completionCheckDraw.delay(NotchMotion.completionCheckDrawDelay)
+            : NotchMotion.completionReopen
     }
 
     private func symbolScale(isVisible: Bool) -> CGFloat {
@@ -890,7 +1030,7 @@ struct LedgerRowView: View, Equatable {
             items.append(NotchMenuItem(title: item.isArchived ? "Restore to Inbox" : "Archive", icon: item.isArchived ? "arrow.uturn.backward" : "archivebox") {
                 item.isArchived ? viewModel.restore(item) : viewModel.archive(item)
             })
-            items.append(NotchMenuItem(title: "Move to Trash", icon: "trash", role: .destructive) { viewModel.trash(item) })
+            items.append(NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { viewModel.trash(item) })
         }
         return items
     }

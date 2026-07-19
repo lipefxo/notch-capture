@@ -32,7 +32,7 @@ struct OnboardingView: View {
         HStack(spacing: 9) {
             Image(systemName: "square.and.pencil")
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(NotchTheme.mint)
+                .foregroundStyle(NotchTheme.primaryAccent)
             Text("Notch Capture")
                 .font(.system(size: 12, weight: .semibold))
                 .foregroundStyle(NotchTheme.primaryText)
@@ -57,11 +57,11 @@ struct OnboardingView: View {
 
             ZStack {
                 RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(NotchTheme.mint.opacity(0.09))
+                    .fill(NotchTheme.primaryAccent.opacity(0.09))
                     .frame(width: 88, height: 66)
                 Image(systemName: "tray.and.arrow.down.fill")
                     .font(.system(size: 29, weight: .light))
-                    .foregroundStyle(NotchTheme.mint)
+                    .foregroundStyle(NotchTheme.primaryAccent)
             }
 
             VStack(spacing: 7) {
@@ -152,7 +152,7 @@ struct OnboardingView: View {
             HStack(spacing: 5) {
                 ForEach(AppViewModel.OnboardingStep.allCases) { step in
                     Capsule()
-                        .fill(step == viewModel.onboardingStep ? NotchTheme.mint : Color.white.opacity(0.14))
+                        .fill(step == viewModel.onboardingStep ? NotchTheme.primaryAccent : Color.white.opacity(0.14))
                         .frame(width: step == viewModel.onboardingStep ? 14 : 5, height: 5)
                 }
             }
@@ -171,7 +171,7 @@ struct OnboardingView: View {
                     moveForward()
                 }
             }
-            .buttonStyle(MintButtonStyle())
+            .buttonStyle(PrimaryButtonStyle())
             .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .keyboardShortcut(.defaultAction)
         }
@@ -231,9 +231,9 @@ private struct OnboardingShortcutRow: View {
         HStack(spacing: 10) {
             Image(systemName: symbol)
                 .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(NotchTheme.mint)
+                .foregroundStyle(NotchTheme.primaryAccent)
                 .frame(width: 30, height: 30)
-                .background(NotchTheme.mint.opacity(0.08))
+                .background(NotchTheme.primaryAccent.opacity(0.08))
                 .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)

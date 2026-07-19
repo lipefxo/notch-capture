@@ -53,7 +53,15 @@ enum NotchTheme {
     static let topFlare: CGFloat = 10
     /// Equal content width on either side of a hardware notch while a live activity is visible.
     static let collapsedActivityWingWidth: CGFloat = 116
-    static let mint = Color(red: 0.23, green: 0.78, blue: 0.50)
+    private static let primaryAccentComponents = PomodoroTimerColor(
+        red: 1,
+        green: 1,
+        blue: 1
+    )
+    static let primaryAccent = primaryAccentComponents.color
+    /// Completion remains the app's positive mint signal even when the
+    /// general-purpose accent changes.
+    static let completionAccent = Color(red: 0.23, green: 0.78, blue: 0.50)
     static let ink = Color(red: 0.022, green: 0.024, blue: 0.027)
     static let graphite = Color(red: 0.070, green: 0.074, blue: 0.080)
     static let raisedGraphite = Color(red: 0.110, green: 0.114, blue: 0.122)
@@ -62,27 +70,36 @@ enum NotchTheme {
     static let selectedControl = Color.white.opacity(0.135)
     static let selectedLedger = Color.white.opacity(0.055)
     static let hoveredLedger = Color.white.opacity(0.028)
-    static let completedLedger = mint.opacity(0.045)
+    static let completedLedger = completionAccent.opacity(0.045)
     /// Specular highlight riding the crest of the completion wave.
-    static let completionCrest = mint.opacity(0.18)
+    static let completionCrest = completionAccent.opacity(0.18)
     /// Additional warmth layered behind the crest; multiplied by (1 - progress)
     /// so the trail cools into completedLedger as the liquid settles.
-    static let completionTrail = mint.opacity(0.075)
+    static let completionTrail = completionAccent.opacity(0.075)
+    /// Extra fill layered over completedLedger while the flood is live
+    /// (energy 1); cools away so the row rests at the quiet completed tint.
+    static let completionFloodBoost = completionAccent.opacity(0.18)
+    /// Tight unblurred glint riding the very front of the wave, inside the
+    /// blurred completionCrest halo.
+    static let completionCrestCore = completionAccent.opacity(0.42)
+    /// Center color of the radial bloom that ignites behind the checkbox at
+    /// the moment of completion.
+    static let completionIgnitionGlow = completionAccent.opacity(0.45)
     static let controlStroke = Color.white.opacity(0.075)
     static let hairline = Color.white.opacity(0.065)
     static let primaryText = Color.white.opacity(0.90)
     static let secondaryText = Color.white.opacity(0.55)
     // Completed rows sit below the secondary/tertiary ramp on purpose: the
     // deeper dim is what makes the done state legible at a glance.
-    static let completedPrimaryText = Color.white.opacity(0.36)
-    static let completedSecondaryText = Color.white.opacity(0.28)
+    static let completedPrimaryText = Color.white.opacity(0.24)
+    static let completedSecondaryText = Color.white.opacity(0.18)
     // 0.48 keeps small timestamps/captions at ~4.5:1 over ink (AA); 0.39 measured ~3.1:1.
     static let tertiaryText = Color.white.opacity(0.48)
     static let dueAccent = Color(red: 0.48, green: 0.49, blue: 0.86)
     static let warning = Color.orange
     static let destructive = Color.red
 
-    /// Maps the remaining share of a focus session from calm mint through amber to red.
+    /// Maps the remaining share of a focus session from calm white through amber to red.
     static func pomodoroTimerColor(remaining: TimeInterval, duration: TimeInterval) -> PomodoroTimerColor {
         guard duration.isFinite, duration > 0, remaining.isFinite else {
             return pomodoroDestructive
@@ -91,17 +108,16 @@ enum NotchTheme {
         let remainingFraction = min(max(remaining / duration, 0), 1)
         switch remainingFraction {
         case 0.5...:
-            return pomodoroMint
+            return primaryAccentComponents
         case 0.2...:
             let progress = (0.5 - remainingFraction) / 0.3
-            return pomodoroMint.interpolated(to: pomodoroWarning, amount: progress)
+            return primaryAccentComponents.interpolated(to: pomodoroWarning, amount: progress)
         default:
             let progress = (0.2 - remainingFraction) / 0.2
             return pomodoroWarning.interpolated(to: pomodoroDestructive, amount: progress)
         }
     }
 
-    private static let pomodoroMint = PomodoroTimerColor(red: 0.23, green: 0.78, blue: 0.50)
     private static let pomodoroWarning = PomodoroTimerColor(red: 1, green: 0.5, blue: 0)
     private static let pomodoroDestructive = PomodoroTimerColor(red: 1, green: 0, blue: 0)
     /// Bottom corner radius shared by every open surface state and the composer.
@@ -114,11 +130,6 @@ enum NotchTheme {
         TagPaletteAnchor(red: 1.00, green: 0.78, blue: 0.30),
         TagPaletteAnchor(red: 0.28, green: 0.94, blue: 0.65),
     ]
-    private static let composerIridescenceColors = tagPaletteAnchors.map(\.color)
-    static let composerIridescence = Gradient(
-        colors: composerIridescenceColors + [composerIridescenceColors[0]]
-    )
-
     static func tagPaletteIndex(seed: Double) -> Int {
         let normalized = seed - floor(seed)
         return Int(normalized * Double(tagPaletteAnchors.count)) % tagPaletteAnchors.count
@@ -199,7 +210,6 @@ enum NotchMotion {
     static let expandedLedgerOffset: CGFloat = 5
     static let expandedComposerOffset: CGFloat = 8
     static let composerFocusDuration: TimeInterval = 0.18
-    static let composerIridescenceCycleDuration: TimeInterval = 10
     static let reducedMotionDuration: TimeInterval = 0.12
     static let completionRevealDuration: TimeInterval = 0.40
     static let completionRetractDuration: TimeInterval = 0.16
@@ -210,6 +220,13 @@ enum NotchMotion {
     // outlast washDelay + reveal so the payoff is never cut short.
     static let completionWashDelay: TimeInterval = 0.04
     static let completionHoldDuration: TimeInterval = 0.60
+    // The flood peaks when the wash lands, then cools into the resting tint.
+    // Cooling starts before the hold releases so settle and cool-down overlap
+    // as one continuous exhale rather than two staged beats.
+    static let completionCooldownDuration: TimeInterval = 0.30
+    static let completionCooldownDelay = completionWashDelay + completionRevealDuration
+    static let completionCheckDrawDuration: TimeInterval = 0.28
+    static let completionCheckDrawDelay: TimeInterval = 0.06
 
     static func easeOut(duration: TimeInterval) -> Animation {
         .timingCurve(0.23, 1, 0.32, 1, duration: duration)
@@ -241,6 +258,8 @@ enum NotchMotion {
     static let completionReopen = easeOut(duration: completionReopenDuration)
     static let completionReveal = easeOut(duration: completionRevealDuration)
     static let completionRetract = easeOut(duration: completionRetractDuration)
+    static let completionCooldown = easeOut(duration: completionCooldownDuration)
+    static let completionCheckDraw = easeOut(duration: completionCheckDrawDuration)
     static let completionExit = easeOut(duration: completionExitDuration)
 
     static func landing(initialVelocity: Double) -> Animation {
@@ -330,7 +349,7 @@ struct PressableIconButtonStyle: ButtonStyle {
     }
 }
 
-struct MintButtonStyle: ButtonStyle {
+struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
@@ -339,7 +358,7 @@ struct MintButtonStyle: ButtonStyle {
             .foregroundStyle(Color.black.opacity(0.82))
             .padding(.horizontal, 12)
             .frame(height: 30)
-            .background(NotchTheme.mint.opacity(configuration.isPressed ? 0.78 : 1))
+            .background(NotchTheme.primaryAccent.opacity(configuration.isPressed ? 0.78 : 1))
             .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)

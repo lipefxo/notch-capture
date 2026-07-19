@@ -160,16 +160,22 @@ struct NotchPresentationLayer: View {
                     .onTapGesture {
                         coordinator.cancelActivePresentation()
                     }
+                    // Exit transitions keep removed views alive long enough to
+                    // animate them. Stop an outgoing scrim from swallowing the
+                    // first click intended for the restored surface.
+                    .allowsHitTesting(coordinator.hasModal)
                     .accessibilityHidden(true)
             }
             if let menu = coordinator.menu {
                 Color.clear
                     .contentShape(Rectangle())
                     .onTapGesture { coordinator.dismissMenu() }
+                    .allowsHitTesting(coordinator.menu?.id == menu.id)
                 NotchPopoverMenu(menu: menu)
                     // Keyed by menu identity so a drill-in (present over present)
                     // resets highlight/focus state instead of inheriting it.
                     .id(menu.id)
+                    .allowsHitTesting(coordinator.menu?.id == menu.id)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
             }
             if let modal = coordinator.modal {
@@ -180,6 +186,10 @@ struct NotchPresentationLayer: View {
             }
         }
         .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content, value: coordinator.hasActivePresentation)
+        // The layer fills the surface even when its conditional children are
+        // exiting. Disable the container as soon as presentation ownership is
+        // cleared so app controls become interactive in the same event cycle.
+        .allowsHitTesting(coordinator.hasActivePresentation)
         .clipped()
         .onExitCommand {
             if let modal = coordinator.modal {
@@ -268,7 +278,7 @@ private struct NotchPopoverMenu: View {
                                             if let icon = item.icon { Image(systemName: icon).frame(width: 14) }
                                             Text(item.title).lineLimit(1)
                                             Spacer(minLength: 8)
-                                            if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.mint) }
+                                            if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.primaryAccent) }
                                         }
                                         .font(.system(size: 11, weight: .medium))
                                         .foregroundStyle(item.role == .destructive ? NotchTheme.destructive.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
@@ -333,6 +343,11 @@ private struct NotchPopoverMenu: View {
                 return .handled
             }
             .onAppear { isFocused = true }
+            .onChange(of: coordinator.menu?.id) { _, presentedMenuID in
+                if presentedMenuID != menu.id {
+                    isFocused = false
+                }
+            }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(menu.title ?? "Actions")
         }
@@ -441,10 +456,10 @@ private struct NotchModalCard: View {
                         .buttonStyle(DestructiveButtonStyle())
                         .keyboardShortcut(.defaultAction)
                 } else if modal.kind == .shortcut {
-                    Button(modal.primaryTitle) { submit() }.buttonStyle(MintButtonStyle())
+                    Button(modal.primaryTitle) { submit() }.buttonStyle(PrimaryButtonStyle())
                 } else {
                     Button(modal.primaryTitle) { submit() }
-                        .buttonStyle(MintButtonStyle())
+                        .buttonStyle(PrimaryButtonStyle())
                         .keyboardShortcut(.defaultAction)
                 }
             }
@@ -483,12 +498,12 @@ struct NotchSegmentedControl<Option: Hashable & Identifiable & RawRepresentable>
     var body: some View {
         HStack(spacing: 3) {
             ForEach(options, id: \.id) { option in
-                Button(option.rawValue) { selection = option }
+                Button(option.rawValue.capitalized) { selection = option }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(selection == option ? Color.black.opacity(0.8) : NotchTheme.secondaryText)
                     .frame(maxWidth: .infinity, minHeight: 28)
-                    .background(selection == option ? NotchTheme.mint : NotchTheme.control)
+                    .background(selection == option ? NotchTheme.primaryAccent : NotchTheme.control)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .accessibilityAddTraits(selection == option ? .isSelected : [])
@@ -520,11 +535,17 @@ struct NotchToggle: View {
                 }
                 ZStack {
                     Capsule()
-                        .fill(isOn ? NotchTheme.mint : NotchTheme.control)
+                        .fill(isOn ? NotchTheme.primaryAccent : NotchTheme.control)
                         .animation(reduceMotion ? nil : NotchMotion.toggleTrack, value: isOn)
 
+                    Capsule()
+                        .strokeBorder(
+                            isOn ? NotchTheme.ink.opacity(0.16) : Color.white.opacity(0.10),
+                            lineWidth: 1
+                        )
+
                     Circle()
-                        .fill(Color.white.opacity(0.92))
+                        .fill(isOn ? NotchTheme.graphite : Color.white.opacity(0.92))
                         .frame(width: Self.thumbSize, height: Self.thumbSize)
                         .offset(x: isOn ? Self.thumbOffset : -Self.thumbOffset)
                         .animation(reduceMotion ? nil : NotchMotion.toggleThumb.animation, value: isOn)

@@ -56,6 +56,29 @@ final class NowPlayingModelTests: XCTestCase {
         XCTAssertEqual(snapshot.position(at: date, previewing: 2), 100)
     }
 
+    func testScrubCommitUsesLastPreviewWhenReleaseLocationIsStale() {
+        let committed = MusicScrubGeometry.committedFraction(
+            previewing: 0.75,
+            releaseX: 20,
+            width: 100
+        )
+
+        XCTAssertEqual(committed, 0.75)
+    }
+
+    func testScrubCommitUsesReleaseLocationForClickAndClampsIt() {
+        XCTAssertEqual(
+            MusicScrubGeometry.committedFraction(
+                previewing: nil,
+                releaseX: 60,
+                width: 100
+            ),
+            0.6
+        )
+        XCTAssertEqual(MusicScrubGeometry.fraction(at: -20, width: 100), 0)
+        XCTAssertEqual(MusicScrubGeometry.fraction(at: 120, width: 100), 1)
+    }
+
     func testOptimisticSeekingClampsAndReanchorsPosition() {
         let anchor = Date(timeIntervalSinceReferenceDate: 100)
         let update = Date(timeIntervalSinceReferenceDate: 150)
