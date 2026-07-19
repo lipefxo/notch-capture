@@ -195,6 +195,12 @@ struct PanelWindowInteractionPolicy {
     }
 }
 
+/// The surface needs to float over ordinary application windows, but it must
+/// remain beneath notification banners and other system-owned UI.
+struct PanelWindowLevelPolicy {
+    static let surfaceLevel = NSWindow.Level.floating
+}
+
 /// Transparent margin reserved around a rendered surface inside the panel
 /// window. Open surfaces need room for their drop shadow, while the collapsed
 /// pill deliberately has no outer shadow so its window can match its hit area.
@@ -389,10 +395,7 @@ public final class PanelController: NSObject, ObservableObject {
 
         state = newState
         panel.permitsKeyWindow = newState.acceptsKeyboardInput
-        // Keep the panel at the status-bar level even while it is expanded.
-        // Raising it above that level can cover macOS notification and system
-        // modal surfaces, preventing the user from interacting with them.
-        panel.level = .statusBar
+        panel.level = PanelWindowLevelPolicy.surfaceLevel
         installDismissalMonitorsIfNeeded()
 
         transitionGeneration += 1
@@ -625,7 +628,7 @@ public final class PanelController: NSObject, ObservableObject {
         shadowPanel.isMovableByWindowBackground = false
         shadowPanel.ignoresMouseEvents = true
         shadowPanel.setAccessibilityElement(false)
-        shadowPanel.level = .statusBar
+        shadowPanel.level = PanelWindowLevelPolicy.surfaceLevel
         shadowPanel.collectionBehavior = [
             .canJoinAllSpaces,
             .fullScreenAuxiliary,
