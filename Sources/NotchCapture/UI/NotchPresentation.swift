@@ -59,13 +59,37 @@ struct NotchMenuItem: Identifiable {
     var action: () -> Void
 }
 
+enum PomodoroDurationPickerLayout {
+    static let cardWidth: CGFloat = 220
+    static let rowHeight: CGFloat = 100
+    static let cardPadding: CGFloat = 4
+    static let rowDividerHeight: CGFloat = 1
+
+    static func cardSize(itemCount: Int) -> CGSize {
+        let count = max(0, itemCount)
+        let dividers = max(0, count - 1)
+        return CGSize(
+            width: cardWidth,
+            height: (cardPadding * 2)
+                + (CGFloat(count) * rowHeight)
+                + (CGFloat(dividers) * rowDividerHeight)
+        )
+    }
+}
+
 struct NotchMenu {
+    enum Style {
+        case standard
+        case pomodoroDurationPicker
+    }
+
     let id = UUID()
     let title: String?
     /// Frame of the invoking control in `NotchPresentationLayer.coordinateSpace`,
     /// so the popover opens attached to the control instead of a fixed point.
     let anchor: CGRect
     let items: [NotchMenuItem]
+    var style: Style = .standard
 }
 
 extension View {
@@ -170,71 +194,111 @@ private struct NotchPopoverMenu: View {
     @State private var highlightedIndex: Int?
     let menu: NotchMenu
 
-    private static let menuWidth: CGFloat = 190
-
     var body: some View {
         GeometryReader { proxy in
             let bounds = proxy.frame(in: .local)
+            let isDurationPicker = menu.style == .pomodoroDurationPicker
+            let cardSize = isDurationPicker
+                ? PomodoroDurationPickerLayout.cardSize(itemCount: menu.items.count)
+                : nil
+            let contentWidth = isDurationPicker
+                ? cardSize!.width - (PomodoroDurationPickerLayout.cardPadding * 2)
+                : Self.width(for: menu.items)
             // The scroll area gets an explicit height: a bare maxHeight lets
             // the greedy ScrollView inflate the card with empty space and
             // desynchronizes the placement math from the rendered size.
-            let rowsHeight = max(30, CGFloat(menu.items.count) * 31 - 1)
+            let dividerCount = max(0, menu.items.count - 1)
+            let rowsHeight = max(30, CGFloat(menu.items.count) * 30 + CGFloat(dividerCount))
             let scrollHeight = min(min(rowsHeight, 270), max(60, bounds.height - 80))
-            let height = scrollHeight + 8
+            let menuSize = cardSize ?? CGSize(width: contentWidth, height: scrollHeight + 8)
             let frame = NotchPopoverPlacement.frame(
                 anchor: menu.anchor,
-                menuSize: CGSize(width: Self.menuWidth, height: height),
+                menuSize: menuSize,
                 in: bounds
             )
             // The title is deliberately not rendered: the menu opens anchored
             // to its source row, so repeating the name is noise. It still
             // names the menu for accessibility below.
-            VStack(alignment: .leading, spacing: 2) {
-                ScrollView {
-                    VStack(spacing: 1) {
+            Group {
+                if isDurationPicker {
+                    VStack(spacing: 0) {
                         ForEach(Array(menu.items.enumerated()), id: \.element.id) { index, item in
                             Button {
-                                guard item.isEnabled else { return }
-                                coordinator.dismissMenu()
-                                item.action()
+                                activate(item)
                             } label: {
-                                HStack(spacing: 8) {
-                                    if let icon = item.icon { Image(systemName: icon).frame(width: 14) }
-                                    Text(item.title).lineLimit(1)
-                                    Spacer()
-                                    if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.mint) }
-                                }
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(item.role == .destructive ? NotchTheme.destructive.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
-                                .padding(.horizontal, 10)
-                                .frame(height: 30)
-                                .background(
-                                    highlightedIndex == index ? NotchTheme.control : Color.clear,
-                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                )
-                                .contentShape(Rectangle())
+                                Text(item.title)
+                                    .font(.system(size: 28, weight: .regular))
+                                    .monospacedDigit()
+                                    .foregroundStyle(item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+                                    .padding(.horizontal, 38)
+                                    .background(highlightedIndex == index ? NotchTheme.control : Color.clear)
+                                    .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .disabled(!item.isEnabled)
-                            .onHover { hovering in
-                                if hovering {
-                                    if item.isEnabled { highlightedIndex = index }
-                                } else if highlightedIndex == index {
-                                    highlightedIndex = nil
-                                }
-                            }
-                            .accessibilityLabel(item.title)
+                            .frame(height: PomodoroDurationPickerLayout.rowHeight)
+                            .onHover { updateHighlight(for: index, hovering: $0, isEnabled: item.isEnabled) }
+                            .accessibilityLabel("\(item.title) focus session")
                             .accessibilityAddTraits(item.isChecked ? .isSelected : [])
+
+                            if index < menu.items.count - 1 {
+                                Rectangle()
+                                    .fill(NotchTheme.hairline)
+                                    .frame(height: PomodoroDurationPickerLayout.rowDividerHeight)
+                            }
                         }
                     }
+                } else {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(Array(menu.items.enumerated()), id: \.element.id) { index, item in
+                                    Button {
+                                        activate(item)
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            if let icon = item.icon { Image(systemName: icon).frame(width: 14) }
+                                            Text(item.title).lineLimit(1)
+                                            Spacer(minLength: 8)
+                                            if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.mint) }
+                                        }
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(item.role == .destructive ? NotchTheme.destructive.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
+                                        .padding(.horizontal, 10)
+                                        .frame(height: 30)
+                                        .background(
+                                            highlightedIndex == index ? NotchTheme.control : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                        )
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .disabled(!item.isEnabled)
+                                    .onHover { updateHighlight(for: index, hovering: $0, isEnabled: item.isEnabled) }
+                                    .accessibilityLabel(item.title)
+                                    .accessibilityAddTraits(item.isChecked ? .isSelected : [])
+
+                                    if index < menu.items.count - 1 {
+                                        Rectangle()
+                                            .fill(NotchTheme.hairline)
+                                            .frame(height: 1)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(height: scrollHeight)
+                    }
                 }
-                .frame(height: scrollHeight)
             }
-            .frame(width: Self.menuWidth)
+            .frame(width: contentWidth)
             .padding(4)
             .background(NotchTheme.raisedGraphite)
-            .overlay { RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(NotchTheme.controlStroke) }
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay {
+                RoundedRectangle(cornerRadius: isDurationPicker ? 18 : 10, style: .continuous)
+                    .stroke(NotchTheme.controlStroke)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: isDurationPicker ? 18 : 10, style: .continuous))
             .shadow(color: .black.opacity(0.45), radius: 16, y: 8)
             .position(x: frame.midX, y: frame.midY)
             .focusable()
@@ -252,14 +316,39 @@ private struct NotchPopoverMenu: View {
                 guard let highlightedIndex,
                       menu.items.indices.contains(highlightedIndex),
                       menu.items[highlightedIndex].isEnabled else { return .ignored }
-                let item = menu.items[highlightedIndex]
-                coordinator.dismissMenu()
-                item.action()
+                activate(menu.items[highlightedIndex])
                 return .handled
             }
             .onAppear { isFocused = true }
             .accessibilityElement(children: .contain)
             .accessibilityLabel(menu.title ?? "Actions")
+        }
+    }
+
+    /// Hug the longest label instead of a fixed 190pt card that leaves a
+    /// dead strip beside short titles like "Open Folder".
+    private static func width(for items: [NotchMenuItem]) -> CGFloat {
+        let longest = items.map(\.title.count).max() ?? 8
+        let hasIcon = items.contains { $0.icon != nil }
+        let hasCheck = items.contains(where: \.isChecked)
+        let text = CGFloat(longest) * 6.9
+        let leading: CGFloat = (hasIcon ? 22 : 0) + 20
+        let trailing: CGFloat = hasCheck ? 18 : 4
+        let chrome: CGFloat = 8
+        return min(210, max(136, text + leading + trailing + chrome))
+    }
+
+    private func activate(_ item: NotchMenuItem) {
+        guard item.isEnabled else { return }
+        coordinator.dismissMenu()
+        item.action()
+    }
+
+    private func updateHighlight(for index: Int, hovering: Bool, isEnabled: Bool) {
+        if hovering {
+            if isEnabled { highlightedIndex = index }
+        } else if highlightedIndex == index {
+            highlightedIndex = nil
         }
     }
 
@@ -388,6 +477,7 @@ struct NotchSegmentedControl<Option: Hashable & Identifiable & RawRepresentable>
                     .frame(maxWidth: .infinity, minHeight: 28)
                     .background(selection == option ? NotchTheme.mint : NotchTheme.control)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .accessibilityAddTraits(selection == option ? .isSelected : [])
             }
         }
@@ -404,6 +494,10 @@ struct NotchToggle: View {
     @Binding var isOn: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
+    private static let trackSize = CGSize(width: 34, height: 20)
+    private static let thumbSize: CGFloat = 16
+    private static let thumbOffset: CGFloat = 7
+
     var body: some View {
         Button { isOn.toggle() } label: {
             HStack {
@@ -411,15 +505,22 @@ struct NotchToggle: View {
                     Text(title).font(.system(size: 11, weight: .medium)).foregroundStyle(NotchTheme.primaryText)
                     Spacer()
                 }
-                Capsule().fill(isOn ? NotchTheme.mint : NotchTheme.control).frame(width: 34, height: 20)
-                    .overlay(alignment: isOn ? .trailing : .leading) {
-                        Circle().fill(Color.white.opacity(0.92)).frame(width: 16, height: 16).padding(2)
-                    }
+                ZStack {
+                    Capsule()
+                        .fill(isOn ? NotchTheme.mint : NotchTheme.control)
+                        .animation(reduceMotion ? nil : NotchMotion.toggleTrack, value: isOn)
+
+                    Circle()
+                        .fill(Color.white.opacity(0.92))
+                        .frame(width: Self.thumbSize, height: Self.thumbSize)
+                        .offset(x: isOn ? Self.thumbOffset : -Self.thumbOffset)
+                        .animation(reduceMotion ? nil : NotchMotion.toggleThumb.animation, value: isOn)
+                }
+                .frame(width: Self.trackSize.width, height: Self.trackSize.height)
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.9))
-        .animation(reduceMotion ? nil : NotchMotion.filter, value: isOn)
         .accessibilityLabel(title)
         .accessibilityValue(isOn ? "On" : "Off")
         .accessibilityAddTraits(isOn ? .isSelected : [])

@@ -530,6 +530,7 @@ final class NotchMotionTokenTests: XCTestCase {
             (NotchMotion.surfaceContraction, 0.48, 0.12),
             (NotchMotion.surfaceHide, 0.44, 0.09),
             (NotchMotion.surfaceContent, 0.38, 0.07),
+            (NotchMotion.toggleThumb, 0.26, 0.16),
         ]
 
         for (profile, duration, bounce) in profiles {
@@ -560,6 +561,7 @@ final class NotchMotionTokenTests: XCTestCase {
     func testFastEaseOutDurationsRemainResponsive() {
         XCTAssertEqual(NotchMotion.hoverDuration, 0.08)
         XCTAssertEqual(NotchMotion.controlPressDuration, 0.12)
+        XCTAssertEqual(NotchMotion.toggleTrackDuration, 0.16)
         XCTAssertEqual(NotchMotion.insertionDuration, 0.18)
         XCTAssertEqual(NotchMotion.removalDuration, 0.14)
         XCTAssertEqual(NotchMotion.reducedMotionDuration, 0.12)

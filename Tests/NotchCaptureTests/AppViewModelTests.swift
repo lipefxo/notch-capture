@@ -555,6 +555,13 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persistedFormat, .twentyFourHour)
     }
 
+    func testTimeFormatUsesCompactSegmentLabelsAndReadsLegacyValues() {
+        XCTAssertEqual(AppViewModel.TimeFormat.twelveHour.rawValue, "12h")
+        XCTAssertEqual(AppViewModel.TimeFormat.twentyFourHour.rawValue, "24h")
+        XCTAssertEqual(AppViewModel.TimeFormat.fromStoredValue("12-hour"), .twelveHour)
+        XCTAssertEqual(AppViewModel.TimeFormat.fromStoredValue("24-hour"), .twentyFourHour)
+    }
+
     func testOnboardingNavigationStaysWithinTypedSteps() {
         let viewModel = AppViewModel(surfaceState: .onboarding)
 

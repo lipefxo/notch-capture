@@ -391,12 +391,15 @@ struct ExpandedInboxView: View {
 
     private func presentPomodoroMenu() {
         var items: [NotchMenuItem] = []
+        var style: NotchMenu.Style = .standard
         switch viewModel.pomodoro.phase {
         case .idle:
+            style = .pomodoroDurationPicker
             for minutes in [15, 25, 45, 60] {
                 items.append(NotchMenuItem(
-                    title: "\(minutes) minutes",
-                    icon: minutes == Int(viewModel.pomodoro.duration / 60) ? "checkmark" : nil
+                    title: String(format: "%d:00", minutes),
+                    icon: nil,
+                    isChecked: minutes == Int(viewModel.pomodoro.duration / 60)
                 ) {
                     viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
                     viewModel.togglePomodoro()
@@ -415,7 +418,12 @@ struct ExpandedInboxView: View {
             })
             items.append(NotchMenuItem(title: "Dismiss", icon: "xmark") { viewModel.acknowledgePomodoro() })
         }
-        presentation.present(NotchMenu(title: "Focus timer", anchor: pomodoroMenuAnchor, items: items))
+        presentation.present(NotchMenu(
+            title: "Focus timer",
+            anchor: pomodoroMenuAnchor,
+            items: items,
+            style: style
+        ))
     }
 
     private func navigate(forward: Bool, _ update: () -> Void) {

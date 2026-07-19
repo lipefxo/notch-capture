@@ -87,19 +87,6 @@ struct SettingsView: View {
                 .frame(width: 142)
                 .accessibilityLabel("Time format")
             }
-            SettingsDivider()
-            SettingsControlRow(title: "Focus timer", detail: "Default duration") {
-                HStack(spacing: 4) {
-                    ForEach([15, 25, 45, 60], id: \.self) { minutes in
-                        TimerChoiceButton(
-                            minutes: minutes,
-                            isSelected: Int(viewModel.pomodoro.duration / 60) == minutes
-                        ) {
-                            viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -181,15 +168,23 @@ struct SettingsView: View {
     }
 
     private var quitAction: some View {
-        HStack {
-            Spacer()
-            Button("Quit Notch Capture", action: viewModel.hooks.onQuit)
-                .buttonStyle(CompactTextButtonStyle())
+        SettingsGroup(title: "Application") {
+            Button(action: viewModel.hooks.onQuit) {
+                HStack(spacing: 10) {
+                    SettingsRowIcon(symbol: "power")
+                    Text("Quit Notch Capture")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(NotchTheme.destructive.opacity(0.9))
+                    Spacer()
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 44)
                 .notchHitTarget(Rectangle())
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(NotchTheme.destructive.opacity(0.82))
+            }
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.82))
+            .notchHitTarget(Rectangle())
+            .accessibilityLabel("Quit Notch Capture")
         }
-        .padding(.horizontal, 2)
     }
 
     private func presentShortcutRecorder(_ request: AppViewModel.ShortcutRecordingRequest) {
@@ -312,23 +307,6 @@ private struct SettingsRowIcon: View {
             .frame(width: 26, height: 26)
             .background(Color.white.opacity(0.045))
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-    }
-}
-
-private struct TimerChoiceButton: View {
-    let minutes: Int
-    let isSelected: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button("\(minutes)m", action: action)
-            .font(.system(size: 9.5, weight: .semibold, design: .rounded))
-            .foregroundStyle(isSelected ? NotchTheme.ink : NotchTheme.secondaryText)
-            .frame(width: 34, height: 26)
-            .background(isSelected ? NotchTheme.mint : Color.white.opacity(0.05))
-            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.85))
-            .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 

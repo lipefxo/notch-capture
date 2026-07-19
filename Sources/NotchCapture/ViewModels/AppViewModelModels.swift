@@ -71,10 +71,18 @@ extension AppViewModel {
     }
 
     enum TimeFormat: String, CaseIterable, Identifiable {
-        case twelveHour = "12-hour"
-        case twentyFourHour = "24-hour"
+        case twelveHour = "12h"
+        case twentyFourHour = "24h"
 
         var id: Self { self }
+
+        static func fromStoredValue(_ value: String?) -> Self {
+            switch value {
+            case "12-hour": .twelveHour
+            case "24-hour": .twentyFourHour
+            default: Self(rawValue: value ?? "") ?? .twelveHour
+            }
+        }
     }
 
     enum KeyboardFocus: Equatable {
