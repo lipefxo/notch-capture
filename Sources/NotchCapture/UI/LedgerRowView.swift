@@ -809,18 +809,24 @@ struct LedgerRowView: View, Equatable {
 
     private func completionControlVisual(completedPresentation: Bool) -> some View {
         ZStack {
-            Image(systemName: "circle")
-                .symbolVariant(.none)
+            Circle()
+                .strokeBorder(NotchTheme.secondaryText, lineWidth: 1.25)
+                .frame(width: 13, height: 13)
                 .opacity(completedPresentation ? 0 : 1)
                 .scaleEffect(symbolScale(isVisible: !item.isCompleted))
 
-            Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(NotchTheme.completionAccent)
-                .opacity(completedPresentation ? 1 : 0)
-                .scaleEffect(symbolScale(isVisible: item.isCompleted))
+            ZStack {
+                Circle()
+                    .fill(NotchTheme.completionAccent)
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(NotchTheme.ink)
+            }
+            .frame(width: 14, height: 14)
+            .opacity(completedPresentation ? 1 : 0)
+            .scaleEffect(symbolScale(isVisible: item.isCompleted))
         }
-        .font(.system(size: 12, weight: .light))
-        .foregroundStyle(NotchTheme.secondaryText)
         .frame(width: 20, height: 28)
         .notchHitTarget(Rectangle())
         .animation(completionStateAnimation, value: item.isCompleted)

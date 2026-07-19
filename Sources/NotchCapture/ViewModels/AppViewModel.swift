@@ -1529,6 +1529,11 @@ extension AppViewModel {
         if CommandLine.arguments.contains("--preview-pomodoro-paused") {
             model.pomodoro.phase = .paused(remaining: 24 * 60 + 23)
         }
+        if CommandLine.arguments.contains("--preview-completed-item"),
+           let index = model.items.firstIndex(where: { $0.id == selectedTask.id }) {
+            model.items[index].isCompleted = true
+            model.items[index].completedAt = .now
+        }
         if CommandLine.arguments.contains("--preview-folder-search") {
             model.composerText = "Projects"
         } else if CommandLine.arguments.contains("--preview-folder") {
