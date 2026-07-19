@@ -189,11 +189,11 @@ struct MusicProgressControl: View {
                 .frame(height: 3)
 
             Capsule()
-                .fill(NotchTheme.mint.opacity(0.9))
+                .fill(NotchTheme.primaryAccent.opacity(0.9))
                 .frame(width: fillWidth, height: 3)
 
             Circle()
-                .fill(NotchTheme.mint)
+                .fill(NotchTheme.primaryAccent)
                 .frame(width: 7, height: 7)
                 .position(x: thumbX, y: 7)
                 .opacity(isHovered || scrubFraction != nil ? 1 : 0)

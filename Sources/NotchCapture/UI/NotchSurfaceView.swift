@@ -130,6 +130,7 @@ struct NotchSurfaceView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .clipped()
+        .symbolVariant(.fill)
         .onChange(of: viewModel.surfaceState) { oldState, newState in
             handleSurfaceStateChange(from: oldState, to: newState)
         }
@@ -502,7 +503,7 @@ struct CollapsedPillView: View {
             HStack(spacing: isExtended ? 12 : 8) {
                 Image(systemName: "square.and.pencil")
                     .font(.system(size: isExtended ? 16 : 11, weight: .semibold))
-                    .foregroundStyle(NotchTheme.mint)
+                    .foregroundStyle(NotchTheme.primaryAccent)
                 Text("Capture")
                     .font(.system(size: isExtended ? 14 : 11, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.82))
@@ -514,7 +515,7 @@ struct CollapsedPillView: View {
             .overlay(alignment: .bottom) {
                 if !isExtended {
                     Capsule()
-                        .fill(isHovered ? NotchTheme.mint.opacity(0.65) : Color.white.opacity(0.1))
+                        .fill(isHovered ? NotchTheme.primaryAccent.opacity(0.65) : Color.white.opacity(0.1))
                         .frame(width: 38, height: 1)
                         .scaleEffect(x: isHovered ? 1 : 22 / 38)
                         .padding(.bottom, 3)

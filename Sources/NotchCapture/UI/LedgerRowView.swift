@@ -810,11 +810,12 @@ struct LedgerRowView: View, Equatable {
     private func completionControlVisual(completedPresentation: Bool) -> some View {
         ZStack {
             Image(systemName: "circle")
+                .symbolVariant(.none)
                 .opacity(completedPresentation ? 0 : 1)
                 .scaleEffect(symbolScale(isVisible: !item.isCompleted))
 
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(NotchTheme.mint)
+                .foregroundStyle(NotchTheme.completionAccent)
                 .opacity(completedPresentation ? 1 : 0)
                 .scaleEffect(symbolScale(isVisible: item.isCompleted))
         }

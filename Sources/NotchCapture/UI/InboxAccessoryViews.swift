@@ -97,7 +97,7 @@ struct FolderLedgerRow: View {
                     .font(.system(size: 12.5, weight: .regular))
                     .foregroundStyle(
                         isDropTarget
-                            ? NotchTheme.mint
+                            ? NotchTheme.primaryAccent
                             : (isHovered ? NotchTheme.primaryText : NotchTheme.secondaryText)
                     )
                     .frame(width: 18, height: 18)
@@ -123,7 +123,7 @@ struct FolderLedgerRow: View {
             .frame(minHeight: 50)
             .background(
                 isDropTarget
-                    ? NotchTheme.mint.opacity(0.08)
+                    ? NotchTheme.primaryAccent.opacity(0.08)
                     : (isSelected
                         ? NotchTheme.selectedLedger
                         : (isHovered ? NotchTheme.hoveredLedger : Color.clear))
@@ -131,7 +131,7 @@ struct FolderLedgerRow: View {
             .overlay {
                 if isDropTarget {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
-                        .strokeBorder(NotchTheme.mint.opacity(0.9), lineWidth: 1.5)
+                        .strokeBorder(NotchTheme.primaryAccent.opacity(0.9), lineWidth: 1.5)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 3)
                 }
@@ -202,7 +202,6 @@ struct EmptyInboxView: View {
     let filter: AppViewModel.InboxFilter
     let query: String
     let folderName: String?
-    let onCompose: () -> Void
 
     private var isSearching: Bool {
         !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -223,11 +222,6 @@ struct EmptyInboxView: View {
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 230)
                 .lineLimit(3)
-            if !isSearching && filter == .all {
-                Button("Capture something") { onCompose() }
-                    .buttonStyle(QuietButtonStyle())
-                    .notchHitTarget(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            }
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

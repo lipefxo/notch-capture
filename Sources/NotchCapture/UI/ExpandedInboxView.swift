@@ -373,14 +373,14 @@ struct ExpandedInboxView: View {
                     PomodoroCountdownLabel(state: viewModel.pomodoro)
                         .frame(minWidth: 38)
                 } else {
-                    Image(systemName: "timer")
+                    Image(systemName: "clock.fill")
                         .font(.system(size: 13, weight: .regular))
                 }
             }
             .frame(height: 28)
         }
         .buttonStyle(PressableIconButtonStyle(
-            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.mint : NotchTheme.secondaryText,
+            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.primaryAccent : NotchTheme.secondaryText,
             width: viewModel.pomodoro.isActive ? 42 : 28
         ))
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
@@ -504,36 +504,17 @@ struct ExpandedInboxView: View {
     }
 
     private var captureField: some View {
-        // Only the iridescent chrome lives inside the 30 Hz timeline; the
-        // TextField and its content must not re-render on every tick.
         captureFieldContent
             .background {
-                iridescentTimeline { angle in
-                    composerBackground(angle: angle)
-                }
+                composerBackground()
             }
             .clipShape(composerShape)
             .overlay {
-                iridescentTimeline { angle in
-                    composerBorder(angle: angle)
-                }
+                composerBorder()
             }
             .contentShape(composerShape)
             .shadow(color: .black.opacity(0.42), radius: 14, y: 8)
             .animation(reduceMotion ? nil : NotchMotion.content, value: viewModel.composerHasImages)
-    }
-
-    private func iridescentTimeline<Chrome: View>(
-        @ViewBuilder chrome: @escaping (Angle) -> Chrome
-    ) -> some View {
-        TimelineView(
-            .animation(
-                minimumInterval: 1 / 30,
-                paused: reduceMotion || focusedField != .unifiedInput
-            )
-        ) { context in
-            chrome(composerIridescenceAngle(at: context.date))
-        }
     }
 
     private var captureFieldContent: some View {
@@ -617,10 +598,10 @@ struct ExpandedInboxView: View {
                         Image(systemName: "return")
                             .font(.system(size: 11, weight: .regular))
                     }
-                    .foregroundStyle(NotchTheme.mint)
+                    .foregroundStyle(NotchTheme.primaryAccent)
                     .padding(.horizontal, 8)
                     .frame(height: 28)
-                    .background(NotchTheme.mint.opacity(0.08))
+                    .background(NotchTheme.primaryAccent.opacity(0.08))
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 }
@@ -774,7 +755,7 @@ struct ExpandedInboxView: View {
                     HStack(spacing: 8) {
                         Image(systemName: command.icon)
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(NotchTheme.mint)
+                            .foregroundStyle(NotchTheme.primaryAccent)
                             .frame(width: 16)
                         VStack(alignment: .leading, spacing: 1) {
                             Text(command.title)
@@ -859,7 +840,7 @@ struct ExpandedInboxView: View {
         RoundedRectangle(cornerRadius: NotchTheme.surfaceBottomRadius, style: .continuous)
     }
 
-    private func composerBackground(angle: Angle) -> some View {
+    private func composerBackground() -> some View {
         ZStack {
             if !reduceTransparency {
                 composerShape
@@ -871,9 +852,9 @@ struct ExpandedInboxView: View {
 
             if !reduceTransparency {
                 composerShape
-                    .fill(composerIridescentGradient(angle: angle))
-                    .blur(radius: 12)
-                    .opacity(focusedField == .unifiedInput ? 0.03 : 0)
+                    .fill(NotchTheme.primaryAccent)
+                    .blur(radius: 14)
+                    .opacity(focusedField == .unifiedInput ? 0.035 : 0)
                     .animation(composerFocusAnimation, value: focusedField)
             }
         }
@@ -881,13 +862,14 @@ struct ExpandedInboxView: View {
         .accessibilityHidden(true)
     }
 
-    private func composerBorder(angle: Angle) -> some View {
+    private func composerBorder() -> some View {
         ZStack {
             composerShape
-                .strokeBorder(composerIridescentGradient(angle: angle), lineWidth: 1)
+                .strokeBorder(NotchTheme.primaryAccent, lineWidth: 1)
+                .shadow(color: NotchTheme.primaryAccent.opacity(0.18), radius: 6)
                 .opacity(
                     focusedField == .unifiedInput && colorSchemeContrast != .increased
-                        ? 0.35
+                        ? 0.42
                         : 0
                 )
 
@@ -907,21 +889,6 @@ struct ExpandedInboxView: View {
         .animation(composerFocusAnimation, value: focusedField)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-
-    private func composerIridescentGradient(angle: Angle) -> AngularGradient {
-        AngularGradient(
-            gradient: NotchTheme.composerIridescence,
-            center: .center,
-            angle: angle
-        )
-    }
-
-    private func composerIridescenceAngle(at date: Date) -> Angle {
-        guard !reduceMotion else { return .degrees(0) }
-        let elapsed = date.timeIntervalSinceReferenceDate
-            .truncatingRemainder(dividingBy: NotchMotion.composerIridescenceCycleDuration)
-        return .degrees((elapsed / NotchMotion.composerIridescenceCycleDuration) * 360)
     }
 
     private var composerFocusAnimation: Animation {
@@ -1064,8 +1031,7 @@ struct ExpandedInboxView: View {
                 EmptyInboxView(
                     filter: viewModel.filter,
                     query: viewModel.composerText,
-                    folderName: viewModel.currentFolder?.name,
-                    onCompose: { focusedField = .unifiedInput }
+                    folderName: viewModel.currentFolder?.name
                 )
                 .padding(.bottom, ledgerBottomClearance)
             } else {
@@ -1325,7 +1291,7 @@ struct ExpandedInboxView: View {
     private func emptyGroupDropTarget(title: String, isPinned: Bool) -> some View {
         Text(title)
             .font(.system(size: 10.5, weight: .medium))
-            .foregroundStyle(NotchTheme.mint)
+            .foregroundStyle(NotchTheme.primaryAccent)
             .frame(maxWidth: .infinity)
             .frame(height: 30)
             .background(NotchTheme.raisedGraphite.opacity(0.96))
