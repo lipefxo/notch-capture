@@ -170,6 +170,9 @@ enum NotchMotion {
     static let onboardingSpring = NotchSpringProfile(perceptualDuration: 0.28, bounce: 0)
     static let confirmationSpring = NotchSpringProfile(perceptualDuration: 0.32, bounce: 0)
     static let completionSpring = NotchSpringProfile(perceptualDuration: 0.16, bounce: 0)
+    // Settings switches use a short, low-bounce thumb spring so their state
+    // change feels responsive without competing with the surface motion.
+    static let toggleThumb = NotchSpringProfile(perceptualDuration: 0.26, bounce: 0.16)
     // The checkmark is the one deliberately playful element in the completion
     // choreography: a touch of overshoot makes the pop feel earned without the
     // wash or the row itself bouncing.
@@ -183,6 +186,7 @@ enum NotchMotion {
     static let onboardingDuration = onboardingSpring.perceptualDuration
     static let filterDuration = selection.perceptualDuration
     static let controlPressDuration: TimeInterval = 0.12
+    static let toggleTrackDuration: TimeInterval = 0.16
     static let hoverDuration: TimeInterval = 0.08
     static let insertionDuration: TimeInterval = 0.18
     static let removalDuration: TimeInterval = 0.14
@@ -219,6 +223,7 @@ enum NotchMotion {
     static let filter = selection.animation
     static let keyboardScroll = selection.animation
     static let controlPress = easeOut(duration: controlPressDuration)
+    static let toggleTrack = easeOut(duration: toggleTrackDuration)
     static let hover = easeOut(duration: hoverDuration)
     static let insertion = easeOut(duration: insertionDuration)
     static let removal = easeOut(duration: removalDuration)

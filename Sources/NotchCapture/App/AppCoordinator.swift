@@ -87,9 +87,9 @@ final class AppCoordinator {
         )
         self.nowPlayingService = NowPlayingService()
 
-        let timeFormat = AppViewModel.TimeFormat(
-            rawValue: defaults.string(forKey: DefaultsKey.timeFormat) ?? ""
-        ) ?? .twelveHour
+        let timeFormat = AppViewModel.TimeFormat.fromStoredValue(
+            defaults.string(forKey: DefaultsKey.timeFormat)
+        )
         let initialState: AppViewModel.SurfaceState
         if previewMode {
             initialState = Self.requestedPreviewState()
@@ -458,6 +458,9 @@ final class AppCoordinator {
         }
         hooks.onReorder = { [weak self] assignments in
             self?.applyOrderAssignments(assignments)
+        }
+        hooks.onReorderFolders = { [weak self] assignments in
+            self?.applyFolderOrderAssignments(assignments)
         }
         hooks.onArchive = { [weak self] id in
             self?.archive(id: id)

@@ -1009,6 +1009,45 @@ final class AppViewModel: ObservableObject {
         visibleItems.filter { $0.isPinned == item.isPinned }.last?.id != item.id
     }
 
+    /// Folders are a single, flat collection. Reordering only rewrites their
+    /// display ranks; it never changes an item's folder membership.
+    var canReorderFolders: Bool {
+        browseLocation == .root && filter == .all && parsedComposerQuery.text.isEmpty && parsedComposerQuery.tagNames.isEmpty
+    }
+
+    @discardableResult
+    func reorderFolder(
+        folderID: UUID,
+        relativeTo targetID: UUID,
+        placement: ReorderPlacement
+    ) -> Bool {
+        guard canReorderFolders, folderID != targetID else { return false }
+        var ordered = folders.sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+        guard let sourceIndex = ordered.firstIndex(where: { $0.id == folderID }),
+              let originalTargetIndex = ordered.firstIndex(where: { $0.id == targetID }) else { return false }
+
+        let dragged = ordered.remove(at: sourceIndex)
+        let targetIndex = originalTargetIndex > sourceIndex ? originalTargetIndex - 1 : originalTargetIndex
+        ordered.insert(dragged, at: targetIndex + (placement == .after ? 1 : 0))
+
+        let assignments = ordered.enumerated().map { index, folder in
+            FolderOrderAssignment(id: folder.id, sortOrder: index)
+        }
+        guard assignments.contains(where: { assignment in
+            folders.first(where: { $0.id == assignment.id })?.sortOrder != assignment.sortOrder
+        }) else { return false }
+
+        let orderByID = Dictionary(uniqueKeysWithValues: assignments.map { ($0.id, $0.sortOrder) })
+        for index in folders.indices {
+            if let order = orderByID[folders[index].id] { folders[index].sortOrder = order }
+        }
+        hooks.onReorderFolders(assignments)
+        return true
+    }
+
     func archive(_ item: LedgerItem) {
         withAnimation(ledgerRemovalAnimation) {
             cancelCompletionHold(item.id)

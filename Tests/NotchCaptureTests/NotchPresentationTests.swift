@@ -43,6 +43,26 @@ final class NotchPresentationTests: XCTestCase {
         XCTAssertEqual(frame.minY, 384, accuracy: 0.001)
     }
 
+    func testPomodoroDurationPickerUsesDefaultMenuDimensions() {
+        let size = PomodoroDurationPickerLayout.cardSize(itemCount: 4)
+
+        XCTAssertEqual(size.width, 80, accuracy: 0.001)
+        XCTAssertEqual(size.height, 131, accuracy: 0.001)
+    }
+
+    func testPomodoroDurationPickerPlacementClampsWithinPanelMargins() {
+        let frame = NotchPopoverPlacement.frame(
+            anchor: CGRect(x: 340, y: 40, width: 28, height: 28),
+            menuSize: PomodoroDurationPickerLayout.cardSize(itemCount: 4),
+            in: CGRect(x: 0, y: 0, width: 420, height: 560)
+        )
+
+        XCTAssertEqual(frame.minX, 314, accuracy: 0.001)
+        XCTAssertEqual(frame.maxX, 394, accuracy: 0.001)
+        XCTAssertEqual(frame.minY, 74, accuracy: 0.001)
+        XCTAssertLessThanOrEqual(frame.maxY, 548)
+    }
+
     @MainActor
     func testModalSupersedesMenuAndCoordinatorKeepsOnePresentation() {
         let coordinator = NotchPresentationCoordinator()

@@ -459,6 +459,25 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(folderItem.list?.id, folder.id)
     }
 
+    func testFolderOrderAssignmentsPersistWithoutChangingFolderContents() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let first = try repository.createList(name: "First")
+        let second = try repository.createList(name: "Second")
+        let item = try repository.createItem(text: "Keep me here", origin: .manual, list: first)
+
+        try repository.applyFolderOrderAssignments([
+            FolderOrderAssignment(id: second.id, sortOrder: 0),
+            FolderOrderAssignment(id: first.id, sortOrder: 1),
+        ])
+
+        let folders = try container.mainContext.fetch(
+            FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
+        )
+        XCTAssertEqual(folders.map(\.id), [second.id, first.id])
+        XCTAssertEqual(item.list?.id, first.id)
+    }
+
     func testMovingAndDeletingFolderPreservesItemsAndRelativeOrder() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)

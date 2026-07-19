@@ -57,6 +57,24 @@ struct LedgerReorderSession: Equatable {
     }
 }
 
+struct FolderReorderSession: Equatable {
+    let draggedFolderID: UUID
+    var targetID: UUID?
+    var placement: AppViewModel.ReorderPlacement = .before
+
+    func previewing(_ folders: [AppViewModel.FolderSummary]) -> [AppViewModel.FolderSummary] {
+        guard let targetID,
+              targetID != draggedFolderID,
+              let sourceIndex = folders.firstIndex(where: { $0.id == draggedFolderID }),
+              let originalTargetIndex = folders.firstIndex(where: { $0.id == targetID }) else { return folders }
+        var preview = folders
+        let dragged = preview.remove(at: sourceIndex)
+        let targetIndex = originalTargetIndex > sourceIndex ? originalTargetIndex - 1 : originalTargetIndex
+        preview.insert(dragged, at: targetIndex + (placement == .after ? 1 : 0))
+        return preview
+    }
+}
+
 struct LedgerDragPresentation: Equatable {
     enum Phase: Equatable {
         case dragging

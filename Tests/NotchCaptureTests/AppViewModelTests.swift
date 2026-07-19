@@ -555,6 +555,13 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persistedFormat, .twentyFourHour)
     }
 
+    func testTimeFormatUsesCompactSegmentLabelsAndReadsLegacyValues() {
+        XCTAssertEqual(AppViewModel.TimeFormat.twelveHour.rawValue, "12h")
+        XCTAssertEqual(AppViewModel.TimeFormat.twentyFourHour.rawValue, "24h")
+        XCTAssertEqual(AppViewModel.TimeFormat.fromStoredValue("12-hour"), .twelveHour)
+        XCTAssertEqual(AppViewModel.TimeFormat.fromStoredValue("24-hour"), .twentyFourHour)
+    }
+
     func testOnboardingNavigationStaysWithinTypedSteps() {
         let viewModel = AppViewModel(surfaceState: .onboarding)
 
@@ -1570,6 +1577,41 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.visibleItems.map(\.id), [third.id, first.id, second.id])
         XCTAssertEqual(persisted.map(\.id), [third.id, first.id, second.id])
         XCTAssertEqual(persisted.map(\.sortOrder), [0, 1, 2])
+    }
+
+    func testFolderReorderPersistsOnlyFlatFolderRanks() {
+        let first = AppViewModel.FolderSummary(name: "First", sortOrder: 0)
+        let second = AppViewModel.FolderSummary(name: "Second", sortOrder: 1)
+        let third = AppViewModel.FolderSummary(name: "Third", sortOrder: 2)
+        var persisted: [FolderOrderAssignment] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onReorderFolders = { persisted = $0 }
+        let viewModel = AppViewModel(folders: [first, second, third], hooks: hooks)
+
+        XCTAssertTrue(viewModel.reorderFolder(
+            folderID: third.id,
+            relativeTo: first.id,
+            placement: .before
+        ))
+
+        XCTAssertEqual(viewModel.visibleFolders.map(\.id), [third.id, first.id, second.id])
+        XCTAssertEqual(persisted.map(\.id), [third.id, first.id, second.id])
+        XCTAssertEqual(persisted.map(\.sortOrder), [0, 1, 2])
+    }
+
+    func testFolderReorderIsUnavailableOutsideTheUnfilteredRoot() {
+        let first = AppViewModel.FolderSummary(name: "First", sortOrder: 0)
+        let second = AppViewModel.FolderSummary(name: "Second", sortOrder: 1)
+        let viewModel = AppViewModel(folders: [first, second])
+
+        viewModel.composerText = "First"
+        XCTAssertFalse(viewModel.canReorderFolders)
+        XCTAssertFalse(viewModel.reorderFolder(folderID: second.id, relativeTo: first.id, placement: .before))
+
+        viewModel.composerText = ""
+        viewModel.openFolder(first)
+        XCTAssertFalse(viewModel.canReorderFolders)
+        XCTAssertFalse(viewModel.reorderFolder(folderID: second.id, relativeTo: first.id, placement: .before))
     }
 
     func testCrossGroupReorderPinsAtRequestedPosition() {

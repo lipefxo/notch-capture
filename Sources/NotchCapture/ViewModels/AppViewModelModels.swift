@@ -71,10 +71,18 @@ extension AppViewModel {
     }
 
     enum TimeFormat: String, CaseIterable, Identifiable {
-        case twelveHour = "12-hour"
-        case twentyFourHour = "24-hour"
+        case twelveHour = "12h"
+        case twentyFourHour = "24h"
 
         var id: Self { self }
+
+        static func fromStoredValue(_ value: String?) -> Self {
+            switch value {
+            case "12-hour": .twelveHour
+            case "24-hour": .twentyFourHour
+            default: Self(rawValue: value ?? "") ?? .twelveHour
+            }
+        }
     }
 
     enum KeyboardFocus: Equatable {
@@ -378,6 +386,7 @@ extension AppViewModel {
         var onUpdateText: (UUID, String) -> String? = { _, _ in nil }
         var onTogglePin: (UUID) -> Void = { _ in }
         var onReorder: ([ItemOrderAssignment]) -> Void = { _ in }
+        var onReorderFolders: ([FolderOrderAssignment]) -> Void = { _ in }
         var onArchive: (UUID) -> Void = { _ in }
         var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
         var onMove: (UUID, UUID?) -> Void = { _, _ in }

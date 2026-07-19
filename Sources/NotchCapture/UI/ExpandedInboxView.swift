@@ -47,6 +47,7 @@ struct ExpandedInboxView: View {
 
     @GestureState private var isReorderGestureActive = false
     @State private var reorderSession: LedgerReorderSession?
+    @State private var folderReorderSession: FolderReorderSession?
     @State private var dragRegionStore = LedgerDragRegionStore()
     @State private var dragPresentation: LedgerDragPresentation?
     @State private var dragGeneration = 0
@@ -89,6 +90,9 @@ struct ExpandedInboxView: View {
     }
     private var previewPinnedItems: [AppViewModel.LedgerItem] {
         previewVisibleItems.filter(\.isPinned)
+    }
+    private var previewFolders: [AppViewModel.FolderSummary] {
+        folderReorderSession?.previewing(viewModel.visibleFolders) ?? viewModel.visibleFolders
     }
     private var previewUnpinnedItems: [AppViewModel.LedgerItem] {
         previewVisibleItems.filter { !$0.isPinned }
@@ -387,12 +391,15 @@ struct ExpandedInboxView: View {
 
     private func presentPomodoroMenu() {
         var items: [NotchMenuItem] = []
+        var style: NotchMenu.Style = .standard
         switch viewModel.pomodoro.phase {
         case .idle:
+            style = .pomodoroDurationPicker
             for minutes in [15, 25, 45, 60] {
                 items.append(NotchMenuItem(
-                    title: "\(minutes) minutes",
-                    icon: minutes == Int(viewModel.pomodoro.duration / 60) ? "checkmark" : nil
+                    title: String(format: "%d:00", minutes),
+                    icon: nil,
+                    isChecked: minutes == Int(viewModel.pomodoro.duration / 60)
                 ) {
                     viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
                     viewModel.togglePomodoro()
@@ -411,7 +418,12 @@ struct ExpandedInboxView: View {
             })
             items.append(NotchMenuItem(title: "Dismiss", icon: "xmark") { viewModel.acknowledgePomodoro() })
         }
-        presentation.present(NotchMenu(title: "Focus timer", anchor: pomodoroMenuAnchor, items: items))
+        presentation.present(NotchMenu(
+            title: "Focus timer",
+            anchor: pomodoroMenuAnchor,
+            items: items,
+            style: style
+        ))
     }
 
     private func navigate(forward: Bool, _ update: () -> Void) {
@@ -1098,6 +1110,7 @@ struct ExpandedInboxView: View {
                 }
             }
             .simultaneousGesture(reorderGesture)
+            .simultaneousGesture(folderReorderGesture)
             .scrollIndicators(.hidden)
             .onChange(of: selectedLedgerScrollTarget) { _, target in
                 scrollToSelectedLedgerRow(target, using: proxy)
@@ -1139,8 +1152,8 @@ struct ExpandedInboxView: View {
             tagShelf
         }
 
-        if !viewModel.visibleFolders.isEmpty {
-            ForEach(viewModel.visibleFolders) { folder in
+        if !previewFolders.isEmpty {
+            ForEach(previewFolders) { folder in
                 folderRow(folder)
             }
         }
@@ -1154,10 +1167,6 @@ struct ExpandedInboxView: View {
             ForEach(previewPinnedItems) { item in
                 reorderableRow(item)
             }
-        }
-
-        if !previewPinnedItems.isEmpty, !previewUnpinnedItems.isEmpty {
-            reorderSectionDivider(isPinned: false)
         }
 
         ForEach(previewUnpinnedItems) { item in
@@ -1235,6 +1244,11 @@ struct ExpandedInboxView: View {
             onRename: { beginRenaming(folder) },
             onDelete: { presentDeleteFolder(folder) }
         )
+        .overlay {
+            LedgerInsertionIndicator(
+                placement: folderReorderSession?.targetID == folder.id ? folderReorderSession?.placement : nil
+            )
+        }
         .ledgerDragRegion(.folder(folder.id))
         .id(LedgerScrollTarget.folder(folder.id))
     }
@@ -1308,25 +1322,6 @@ struct ExpandedInboxView: View {
             .ledgerDragRegion(.section(isPinned: isPinned))
     }
 
-    private func reorderSectionDivider(isPinned: Bool) -> some View {
-        Rectangle()
-            .fill(NotchTheme.hairline)
-            .frame(height: 1)
-            .padding(.vertical, 8)
-            .overlay {
-                LedgerInsertionIndicator(
-                    placement: reorderTarget == LedgerReorderTarget(
-                        targetID: nil,
-                        placement: .before,
-                        destinationPinned: isPinned
-                    ) ? .before : nil
-                )
-            }
-            .ledgerDragRegion(.section(isPinned: isPinned))
-            .accessibilityLabel(isPinned ? "Pinned items" : "Unpinned items")
-            .accessibilityHint("Drop an item here to move it to this section")
-    }
-
     private func emptyGroupDropTarget(title: String, isPinned: Bool) -> some View {
         Text(title)
             .font(.system(size: 10.5, weight: .medium))
@@ -1378,6 +1373,60 @@ struct ExpandedInboxView: View {
             }
             .onEnded { value in
                 finishReorder(at: value.location, velocity: value.velocity)
+            }
+    }
+
+    private var folderReorderGesture: some Gesture {
+        DragGesture(minimumDistance: 8, coordinateSpace: .named("ledger-feed"))
+            .onChanged { value in
+                if folderReorderSession == nil {
+                    guard viewModel.canReorderFolders,
+                          let source = dragRegionStore.regions.first(where: { region, frame in
+                              if case .folder = region { return frame.contains(value.startLocation) }
+                              return false
+                          }),
+                          case let .folder(folderID) = source.key else { return }
+                    folderReorderSession = FolderReorderSession(draggedFolderID: folderID)
+                }
+
+                guard var session = folderReorderSession else { return }
+                guard let target = dragRegionStore.regions.first(where: { region, frame in
+                    if case .folder = region { return frame.contains(value.location) }
+                    return false
+                }), case let .folder(targetID) = target.key, targetID != session.draggedFolderID else {
+                    if session.targetID != nil {
+                        session.targetID = nil
+                        folderReorderSession = session
+                    }
+                    return
+                }
+
+                let placement: AppViewModel.ReorderPlacement = value.location.y < target.value.midY ? .before : .after
+                guard session.targetID != targetID || session.placement != placement else { return }
+                session.targetID = targetID
+                session.placement = placement
+                if reduceMotion {
+                    folderReorderSession = session
+                } else {
+                    withAnimation(NotchMotion.reorder) { folderReorderSession = session }
+                }
+            }
+            .onEnded { _ in
+                guard let session = folderReorderSession else { return }
+                defer { folderReorderSession = nil }
+                guard let targetID = session.targetID else { return }
+                let update = {
+                    _ = viewModel.reorderFolder(
+                        folderID: session.draggedFolderID,
+                        relativeTo: targetID,
+                        placement: session.placement
+                    )
+                }
+                if reduceMotion {
+                    update()
+                } else {
+                    withAnimation(NotchMotion.reorder, update)
+                }
             }
     }
 
