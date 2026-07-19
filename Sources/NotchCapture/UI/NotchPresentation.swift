@@ -60,16 +60,20 @@ struct NotchMenuItem: Identifiable {
 }
 
 enum PomodoroDurationPickerLayout {
-    static let cardWidth: CGFloat = 220
-    static let rowHeight: CGFloat = 100
+    /// Five monospaced digits plus the app's normal 10pt row padding and 4pt
+    /// card inset. Unlike a general action menu, this picker has no icon or
+    /// trailing checkmark to reserve space for.
+    static let contentWidth: CGFloat = 72
+    static let rowHeight: CGFloat = 30
     static let cardPadding: CGFloat = 4
     static let rowDividerHeight: CGFloat = 1
+    static let cornerRadius: CGFloat = 10
 
     static func cardSize(itemCount: Int) -> CGSize {
         let count = max(0, itemCount)
         let dividers = max(0, count - 1)
         return CGSize(
-            width: cardWidth,
+            width: contentWidth + (cardPadding * 2),
             height: (cardPadding * 2)
                 + (CGFloat(count) * rowHeight)
                 + (CGFloat(dividers) * rowDividerHeight)
@@ -227,12 +231,15 @@ private struct NotchPopoverMenu: View {
                                 activate(item)
                             } label: {
                                 Text(item.title)
-                                    .font(.system(size: 28, weight: .regular))
+                                    .font(.system(size: 11, weight: .medium))
                                     .monospacedDigit()
                                     .foregroundStyle(item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 38)
-                                    .background(highlightedIndex == index ? NotchTheme.control : Color.clear)
+                                    .padding(.horizontal, 10)
+                                    .background(
+                                        highlightedIndex == index ? NotchTheme.control : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                    )
                                     .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
@@ -295,10 +302,16 @@ private struct NotchPopoverMenu: View {
             .padding(4)
             .background(NotchTheme.raisedGraphite)
             .overlay {
-                RoundedRectangle(cornerRadius: isDurationPicker ? 18 : 10, style: .continuous)
+                RoundedRectangle(
+                    cornerRadius: isDurationPicker ? PomodoroDurationPickerLayout.cornerRadius : 10,
+                    style: .continuous
+                )
                     .stroke(NotchTheme.controlStroke)
             }
-            .clipShape(RoundedRectangle(cornerRadius: isDurationPicker ? 18 : 10, style: .continuous))
+            .clipShape(RoundedRectangle(
+                cornerRadius: isDurationPicker ? PomodoroDurationPickerLayout.cornerRadius : 10,
+                style: .continuous
+            ))
             .shadow(color: .black.opacity(0.45), radius: 16, y: 8)
             .position(x: frame.midX, y: frame.midY)
             .focusable()

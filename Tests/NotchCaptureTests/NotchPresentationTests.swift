@@ -43,11 +43,11 @@ final class NotchPresentationTests: XCTestCase {
         XCTAssertEqual(frame.minY, 384, accuracy: 0.001)
     }
 
-    func testPomodoroDurationPickerUsesReferenceCardDimensions() {
+    func testPomodoroDurationPickerUsesDefaultMenuDimensions() {
         let size = PomodoroDurationPickerLayout.cardSize(itemCount: 4)
 
-        XCTAssertEqual(size.width, 220, accuracy: 0.001)
-        XCTAssertEqual(size.height, 411, accuracy: 0.001)
+        XCTAssertEqual(size.width, 80, accuracy: 0.001)
+        XCTAssertEqual(size.height, 131, accuracy: 0.001)
     }
 
     func testPomodoroDurationPickerPlacementClampsWithinPanelMargins() {
@@ -57,7 +57,8 @@ final class NotchPresentationTests: XCTestCase {
             in: CGRect(x: 0, y: 0, width: 420, height: 560)
         )
 
-        XCTAssertEqual(frame.maxX, 408, accuracy: 0.001)
+        XCTAssertEqual(frame.minX, 314, accuracy: 0.001)
+        XCTAssertEqual(frame.maxX, 394, accuracy: 0.001)
         XCTAssertEqual(frame.minY, 74, accuracy: 0.001)
         XCTAssertLessThanOrEqual(frame.maxY, 548)
     }
