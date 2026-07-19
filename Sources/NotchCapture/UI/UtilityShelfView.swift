@@ -118,6 +118,24 @@ struct MusicDurationLabel: View {
     }
 }
 
+enum MusicScrubGeometry {
+    static func fraction(at xPosition: CGFloat, width: CGFloat) -> Double {
+        guard width > 0 else { return 0 }
+        return min(1, max(0, xPosition / width))
+    }
+
+    static func committedFraction(
+        previewing previewFraction: Double?,
+        releaseX: CGFloat,
+        width: CGFloat
+    ) -> Double {
+        // SwiftUI can report the gesture's initial local location on mouse-up
+        // after the track redraws during a drag. The continuously updated
+        // preview is therefore the authoritative release position.
+        previewFraction ?? fraction(at: releaseX, width: width)
+    }
+}
+
 struct MusicProgressControl: View {
     let snapshot: NowPlayingSnapshot
     let onSeek: (TimeInterval) -> Void
@@ -210,16 +228,23 @@ struct MusicProgressControl: View {
         DragGesture(minimumDistance: 0, coordinateSpace: .local)
             .onChanged { value in
                 guard snapshot.duration > 0, width > 0 else { return }
-                scrubFraction = min(1, max(0, value.location.x / width))
+                scrubFraction = MusicScrubGeometry.fraction(
+                    at: value.location.x,
+                    width: width
+                )
             }
             .onEnded { value in
                 guard snapshot.duration > 0, width > 0 else {
                     scrubFraction = nil
                     return
                 }
-                let fraction = min(1, max(0, value.location.x / width))
-                scrubFraction = nil
+                let fraction = MusicScrubGeometry.committedFraction(
+                    previewing: scrubFraction,
+                    releaseX: value.location.x,
+                    width: width
+                )
                 onSeek(snapshot.duration * fraction)
+                scrubFraction = nil
             }
     }
 
