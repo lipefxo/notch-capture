@@ -64,7 +64,6 @@ extension AppViewModel {
     enum OnboardingStep: Int, CaseIterable, Identifiable {
         case welcome
         case shortcuts
-        case permission
 
         var id: Self { self }
 
@@ -349,7 +348,6 @@ extension AppViewModel {
 
     struct Shortcut: Identifiable, Hashable {
         enum Action: String, Hashable {
-            case captureSelection
             case openComposer
         }
 
@@ -380,7 +378,7 @@ extension AppViewModel {
         var onArchive: (UUID) -> Void = { _ in }
         var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
         var onMove: (UUID, UUID?) -> Void = { _, _ in }
-        var onCreateFolder: (String) -> Void = { _ in }
+        var onCreateFolder: (String) -> UUID? = { _ in nil }
         var onRenameFolder: (UUID, String) -> Void = { _, _ in }
         var onDeleteFolder: (UUID) -> Void = { _ in }
         var onCreateTag: (String) -> Void = { _ in }
@@ -391,7 +389,6 @@ extension AppViewModel {
         var onDeletePermanently: (UUID) -> Void = { _ in }
         var onEmptyTrash: () -> Void = {}
         var onDroppedProviders: ([NSItemProvider]) -> Void = { _ in }
-        var onRequestAccessibility: () -> Void = {}
         var onCompleteOnboarding: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }
         var onSetTimeFormat: (TimeFormat) -> Void = { _ in }

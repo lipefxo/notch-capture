@@ -15,8 +15,6 @@ struct OnboardingView: View {
                     welcomePage
                 case .shortcuts:
                     shortcutsPage
-                case .permission:
-                    permissionPage
                 }
             }
             .id(viewModel.onboardingStep)
@@ -82,7 +80,6 @@ struct OnboardingView: View {
             }
 
             HStack(spacing: 7) {
-                OnboardingCapability(symbol: "text.quote", title: "Selections")
                 OnboardingCapability(symbol: "note.text", title: "Notes")
                 OnboardingCapability(symbol: "paperclip", title: "Files")
             }
@@ -98,12 +95,12 @@ struct OnboardingView: View {
             Spacer(minLength: 18)
 
             VStack(spacing: 7) {
-                Text("Two shortcuts, one inbox")
+                Text("Your capture inbox")
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(NotchTheme.primaryText)
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Capture what is already selected, or open the inbox to write and attach anything.")
+                Text("Open the inbox from anywhere to write and attach anything.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(NotchTheme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -113,16 +110,6 @@ struct OnboardingView: View {
             }
 
             VStack(spacing: 0) {
-                OnboardingShortcutRow(
-                    symbol: "text.cursor",
-                    title: "Capture selection",
-                    detail: "Save selected text from the frontmost app",
-                    shortcut: viewModel.shortcutDisplayValue(for: .captureSelection)
-                )
-                Rectangle()
-                    .fill(NotchTheme.hairline)
-                    .frame(height: 1)
-                    .padding(.leading, 48)
                 OnboardingShortcutRow(
                     symbol: "square.and.pencil",
                     title: "Open Notch Capture",
@@ -137,54 +124,10 @@ struct OnboardingView: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
-            Text("You can change both shortcuts later in Settings.")
+            Text("You can change this shortcut later in Settings.")
                 .font(.system(size: 10))
                 .foregroundStyle(NotchTheme.tertiaryText)
                 .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 18)
-        }
-        .padding(.horizontal, 28)
-    }
-
-    private var permissionPage: some View {
-        VStack(spacing: 17) {
-            Spacer(minLength: 18)
-
-            VStack(spacing: 7) {
-                Text("Allow selected-text capture")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(NotchTheme.primaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Accessibility lets Notch Capture read only the selection you ask it to capture. Everything stays on this Mac.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .frame(maxWidth: 315)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            OnboardingPermissionRow(
-                isGranted: viewModel.accessibilityGranted,
-                action: viewModel.hooks.onRequestAccessibility
-            )
-
-            if viewModel.accessibilityGranted {
-                Label("Ready to capture selected text", systemImage: "checkmark.circle.fill")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(NotchTheme.mint)
-                    .fixedSize()
-            } else {
-                Text("You can continue without allowing access. The selection shortcut will ask again when you use it.")
-                    .font(.system(size: 10))
-                    .foregroundStyle(NotchTheme.tertiaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(2)
-                    .frame(maxWidth: 300)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
 
             Spacer(minLength: 18)
         }
@@ -221,8 +164,8 @@ struct OnboardingView: View {
 
             Spacer()
 
-            Button(viewModel.onboardingStep == .permission ? "Open inbox" : "Continue") {
-                if viewModel.onboardingStep == .permission {
+            Button(viewModel.onboardingStep == .shortcuts ? "Open inbox" : "Continue") {
+                if viewModel.onboardingStep == .shortcuts {
                     viewModel.finishOnboarding()
                 } else {
                     moveForward()
@@ -307,48 +250,5 @@ private struct OnboardingShortcutRow: View {
         .frame(height: 57)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title), \(shortcut). \(detail)")
-    }
-}
-
-private struct OnboardingPermissionRow: View {
-    let isGranted: Bool
-    let action: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "cursorarrow.rays")
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(isGranted ? NotchTheme.mint : Color.white.opacity(0.68))
-                .frame(width: 32, height: 32)
-                .background(Color.white.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Accessibility")
-                    .font(.system(size: 11, weight: .semibold))
-                Text(isGranted ? "Selected-text capture is enabled" : "Required only for selected-text capture")
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-            }
-            Spacer()
-            if isGranted {
-                Label("Allowed", systemImage: "checkmark")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(NotchTheme.mint)
-            } else {
-                Button("Allow", action: action)
-                    .buttonStyle(MintButtonStyle())
-                    .notchHitTarget(RoundedRectangle(cornerRadius: 9, style: .continuous))
-            }
-        }
-        .padding(.horizontal, 11)
-        .frame(height: 56)
-        .background(Color.white.opacity(0.035))
-        .overlay {
-            RoundedRectangle(cornerRadius: 11, style: .continuous)
-                .strokeBorder(NotchTheme.hairline, lineWidth: 1)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Accessibility, \(isGranted ? "allowed" : "not allowed")")
     }
 }

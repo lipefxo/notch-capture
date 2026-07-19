@@ -202,7 +202,6 @@ struct EmptyInboxView: View {
     let filter: AppViewModel.InboxFilter
     let query: String
     let folderName: String?
-    let captureShortcut: String
     let onCompose: () -> Void
 
     private var isSearching: Bool {
@@ -254,7 +253,7 @@ struct EmptyInboxView: View {
             return "Add a thought here or move an item into this folder."
         }
         return filter == .all
-            ? "Press \(captureShortcut) anywhere to capture the current selection."
+            ? "Write a thought or attach a file to start your inbox."
             : "Items in this view will appear here."
     }
 }

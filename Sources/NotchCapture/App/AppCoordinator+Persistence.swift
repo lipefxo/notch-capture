@@ -102,11 +102,13 @@ extension AppCoordinator {
         }
     }
 
-    func createFolder(named name: String) {
+    func createFolder(named name: String) -> UUID? {
         do {
-            _ = try repository.createList(name: name)
+            let list = try repository.createList(name: name)
             reloadFromStore()
+            return list.id
         } catch { show(error) }
+        return nil
     }
 
     func renameFolder(id: UUID, to name: String) {

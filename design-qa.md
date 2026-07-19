@@ -46,6 +46,39 @@ final result: passed
 
 ---
 
+# Design QA — Text-Only Pomodoro Toggle
+
+## Comparison
+
+- Source visual truth: `/Users/lipe/.codex/generated_images/019f7b71-2d79-75a3-b72e-6dfa3840f8ee/exec-08ee969c-106a-4434-82c7-2a2308d6dad5.png`
+- Combined source and native implementation comparison: `.context/qa/pomodoro-toggle/source-vs-implementation.png`
+- External-display states: `.context/qa/pomodoro-toggle/external-rest.png`, `external-hover.png`, `external-focus.png`, `external-pressed.png`, `external-paused.png`, and `external-paused-hover.png`
+- Hardware-notch states: `.context/qa/pomodoro-toggle/hardware-rest.png`, `hardware-hover.png`, and `hardware-paused.png`
+- Mixed activity layouts: `.context/qa/pomodoro-toggle/external-combined.png` and `hardware-combined.png`
+- Completion and expanded surfaces: `.context/qa/pomodoro-toggle/completion.png` and `expanded.png`
+- Environment: native AppKit `NSPanel` hosting SwiftUI, 2× snapshots; external compact pill and simulated 156-point hardware notch with 116-point content wings
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The compact timer is plain monospaced text at rest, with no timer icon, persistent capsule, border, progress line, or transport glyph.
+- Hover and keyboard focus reveal the same tightly fitted 54 × 28-point, 7-point-radius control-tint backdrop. The pressed snapshot confirms a stronger tint and the existing 120 ms press treatment without layout shift.
+- Running states preserve the existing mint urgency color. Paused states freeze at the deterministic preview value and use the neutral secondary-text token.
+- External Pomodoro-only layouts center the hit target; hardware-notch layouts right-align it inside the 116-point wing. Music-plus-Pomodoro snapshots retain transport controls and show no clipping.
+- Typography, spacing, color tokens, corner geometry, and alignment match the selected Quiet Hit Area direction. No source image assets were needed because this is a code-native control treatment.
+- The expanded header remains visually unchanged, while the completion surface fits both Done and Restart without truncation.
+
+## Interaction and accessibility checks
+
+- The compact action routes through `togglePomodoro()` and preserves `surfaceState`; service tests cover running → paused → running with a stable remaining value.
+- Native Button behavior retains Return/Space activation. Pointer hover and keyboard focus share the same visible treatment, and Reduce Motion removes the press scale animations.
+- Help and accessibility action copy changes between Pause and Resume according to phase. The remaining time is exposed in spoken minute/second units.
+- The complete Swift test suite passes 220 tests. The native snapshot matrix covers rest, hover, keyboard focus, press, running, paused, external, hardware-notch, mixed activity, expanded, and completion states.
+
+final result: passed
+
+---
+
 # Design QA — Music Timing + Paused Visualization
 
 ## Selected references and native captures

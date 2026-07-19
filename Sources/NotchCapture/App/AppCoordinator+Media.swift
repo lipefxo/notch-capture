@@ -8,8 +8,11 @@ extension AppCoordinator {
 
         nowPlayingService.onSnapshotChange = { [weak self] snapshot in
             guard let self else { return }
+            let previousTrackKey = self.viewModel.nowPlaying?.trackKey
             self.viewModel.nowPlaying = snapshot
-            if snapshot == nil { self.viewModel.nowPlayingArtwork = nil }
+            if snapshot?.trackKey != previousTrackKey {
+                self.viewModel.nowPlayingArtwork = nil
+            }
             self.refreshIdleActivitySurface()
         }
         nowPlayingService.onArtworkChange = { [weak self] trackKey, artwork in

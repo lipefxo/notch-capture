@@ -116,6 +116,20 @@ final class NowPlayingModelTests: XCTestCase {
         XCTAssertEqual(selected?.source, .spotify)
     }
 
+    func testArtworkStillLoadsAfterCancelledRefreshForSameTrack() {
+        // First launch often publishes metadata, then cancels mid-artwork fetch.
+        // The follow-up refresh keeps the same track key and must still load art.
+        XCTAssertTrue(
+            NowPlayingService.needsArtworkLoad(trackKey: "track-1", artworkLoadedForTrackKey: nil)
+        )
+        XCTAssertTrue(
+            NowPlayingService.needsArtworkLoad(trackKey: "track-1", artworkLoadedForTrackKey: "other")
+        )
+        XCTAssertFalse(
+            NowPlayingService.needsArtworkLoad(trackKey: "track-1", artworkLoadedForTrackKey: "track-1")
+        )
+    }
+
     private func makeSnapshot(source: NowPlayingSource, isPlaying: Bool, anchor: Date) -> NowPlayingSnapshot {
         NowPlayingSnapshot(
             source: source,
@@ -204,5 +218,35 @@ final class LiveActivityViewModelTests: XCTestCase {
         XCTAssertEqual(nextCount, 1)
         XCTAssertEqual(seekPosition, 91)
         XCTAssertEqual(model.surfaceState, .collapsedActivity)
+    }
+
+    func testPomodoroToggleIntentRoutesWithoutChangingSurface() {
+        var toggleCount = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onPomodoroToggle = { toggleCount += 1 }
+        let model = AppViewModel(
+            surfaceState: .collapsedActivity,
+            pomodoro: PomodoroState(
+                duration: 25 * 60,
+                phase: .running(endsAt: .now.addingTimeInterval(10 * 60))
+            ),
+            hooks: hooks
+        )
+
+        model.togglePomodoro()
+
+        XCTAssertEqual(toggleCount, 1)
+        XCTAssertEqual(model.surfaceState, .collapsedActivity)
+    }
+
+    func testPomodoroAccessibilityValueUsesSpokenUnits() {
+        XCTAssertEqual(
+            PomodoroCountdownLabel.accessibilityValue(61),
+            "1 minute, 1 second remaining"
+        )
+        XCTAssertEqual(
+            PomodoroCountdownLabel.accessibilityValue(24 * 60 + 23),
+            "24 minutes, 23 seconds remaining"
+        )
     }
 }

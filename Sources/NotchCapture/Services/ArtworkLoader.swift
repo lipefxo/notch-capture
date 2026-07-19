@@ -36,9 +36,17 @@ final class ArtworkLoader {
         guard let url, url.scheme?.lowercased() == "https" else { return nil }
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
-        return NSImage(data: data)
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
+            return NSImage(data: data)
+        } catch is CancellationError {
+            // Propagate cancellation to the caller via Task.isCancelled so a
+            // cancelled first-launch refresh can retry instead of caching failure.
+            return nil
+        } catch {
+            return nil
+        }
     }
 
     private func fetchMusicArtwork() async -> NSImage? {

@@ -1,5 +1,4 @@
 import AppKit
-import ApplicationServices
 import Combine
 import SwiftData
 import SwiftUI
@@ -22,7 +21,6 @@ final class AppCoordinator {
     let repository: ItemRepository
     let attachmentStore: AttachmentStore
     let packageService: CapturePackageService
-    let selectionService: SelectionCaptureService
     private let loginItemService: LoginItemService
     let displayLocator: DisplayLocator
     let nowPlayingService: NowPlayingService
@@ -34,11 +32,6 @@ final class AppCoordinator {
     let panelController: PanelController
     var hotKeyManager: GlobalHotKeyManager?
     private var cancellables: Set<AnyCancellable> = []
-    var permissionReturnState: AppViewModel.SurfaceState?
-    var permissionLocalEventMonitor: Any?
-    var permissionGlobalEventMonitor: Any?
-    var permissionActivationObserver: NSObjectProtocol?
-    var permissionRestoreTask: Task<Void, Never>?
     var composerPasteTask: Task<Void, Never>?
     var pendingShortcutDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition]?
     var displayEnvironmentObservers: [NSObjectProtocol] = []
@@ -81,7 +74,6 @@ final class AppCoordinator {
             modelContext: modelContainer.mainContext,
             attachmentStore: attachmentStore
         )
-        self.selectionService = SelectionCaptureService()
         self.loginItemService = LoginItemService()
         self.displayLocator = DisplayLocator()
         let storedPomodoroDuration = defaults.double(forKey: DefaultsKey.pomodoroDuration)
@@ -108,9 +100,6 @@ final class AppCoordinator {
             let preview = AppViewModel.preview
             preview.surfaceState = initialState
             preview.onboardingStep = Self.requestedPreviewOnboardingStep()
-            preview.accessibilityGranted = Self.requestedPreviewAccessibilityGranted(
-                defaultValue: preview.accessibilityGranted
-            )
             if initialState == .confirmation {
                 preview.confirmation = AppViewModel.Confirmation(
                     title: "Send the revised capture flow",
@@ -123,8 +112,7 @@ final class AppCoordinator {
                 surfaceState: initialState,
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
                 launchAtLogin: loginItemService.isEnabled,
-                timeFormat: timeFormat,
-                accessibilityGranted: selectionService.isAccessibilityTrusted
+                timeFormat: timeFormat
             )
         }
         if let storeRecoveryBackupURL {
@@ -372,20 +360,8 @@ final class AppCoordinator {
         }
         switch argument.dropFirst("--preview-onboarding-step=".count) {
         case "shortcuts": return .shortcuts
-        case "permission": return .permission
         default: return .welcome
         }
-    }
-
-    private nonisolated static func requestedPreviewAccessibilityGranted(
-        defaultValue: Bool
-    ) -> Bool {
-        guard let argument = CommandLine.arguments.first(where: {
-            $0.hasPrefix("--preview-accessibility=")
-        }) else {
-            return defaultValue
-        }
-        return argument.dropFirst("--preview-accessibility=".count) != "denied"
     }
 
     func start() {
@@ -440,7 +416,6 @@ final class AppCoordinator {
         hotKeyManager = nil
         nowPlayingService.stop()
         composerPasteTask?.cancel()
-        clearPermissionSuspension()
         displayEnvironmentObservers.forEach(NotificationCenter.default.removeObserver)
         displayEnvironmentObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         displayEnvironmentObservers.removeAll()
@@ -526,9 +501,6 @@ final class AppCoordinator {
         }
         hooks.onDroppedProviders = { [weak self] providers in
             self?.handleDrop(providers)
-        }
-        hooks.onRequestAccessibility = { [weak self] in
-            self?.requestAccessibility()
         }
         hooks.onCompleteOnboarding = { [weak self] in
             self?.defaults.set(true, forKey: DefaultsKey.onboardingComplete)
@@ -641,10 +613,7 @@ final class AppCoordinator {
     }
 
     private func handleHotKey(_ action: GlobalHotKeyAction) {
-        clearPermissionSuspension()
         switch action {
-        case .captureSelection:
-            captureCurrentSelection()
         case .openComposer:
             viewModel.openExpanded()
         }

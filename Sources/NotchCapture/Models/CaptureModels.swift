@@ -8,6 +8,8 @@ enum CaptureItemKind: String, Codable, CaseIterable, Sendable {
 }
 
 enum CaptureOrigin: String, Codable, CaseIterable, Sendable {
+    // Retained only to preserve provenance when importing libraries created
+    // before selected-text capture was removed.
     case selection
     case manual
     case drop
@@ -38,14 +40,6 @@ enum CompletionVisibility {
     static func remainsOnMainPage(completedAt: Date, now: Date = .now) -> Bool {
         completedAt.addingTimeInterval(mainPageRetention) > now
     }
-}
-
-enum CaptureRequest: Sendable {
-    case selection
-    case manual(String)
-    case drop([URL])
-    case screenshot
-    case importPackage(URL)
 }
 
 struct ItemOrderAssignment: Equatable, Sendable {
@@ -87,12 +81,6 @@ struct CaptureSource: Codable, Equatable, Sendable {
         self.bundleIdentifier = bundleIdentifier
         self.documentURL = documentURL
     }
-}
-
-struct SelectionCaptureResult: Equatable, Sendable {
-    let payload: CapturePayload
-    let source: CaptureSource
-    let usedPasteboardFallback: Bool
 }
 
 @Model

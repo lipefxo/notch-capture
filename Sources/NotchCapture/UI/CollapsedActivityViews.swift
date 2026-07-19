@@ -40,17 +40,8 @@ struct CollapsedActivityPillView: View {
             .padding(.horizontal, 12)
             .frame(width: 280, height: 34)
         case let .pomodoroOnly(state):
-            Button { viewModel.openExpanded() } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "timer")
-                        .foregroundStyle(NotchTheme.mint)
-                    PomodoroCountdownLabel(state: state)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
-            .frame(width: 280, height: 34)
-            .accessibilityLabel("Open focus timer")
+            CompactPomodoroButton(viewModel: viewModel, state: state)
+                .frame(width: 280, height: 34)
         case let .both(snapshot, state):
             HStack(spacing: 6) {
                 musicInfoView(snapshot, artworkSize: 22)
@@ -58,7 +49,7 @@ struct CollapsedActivityPillView: View {
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 42)
                 compactPomodoroButton(state)
-                    .frame(width: 42)
+                    .frame(width: 54)
             }
             .padding(.horizontal, 12)
             .frame(width: 280, height: 34)
@@ -84,29 +75,20 @@ struct CollapsedActivityPillView: View {
                     .frame(width: viewModel.pomodoro.isActive ? 42 : nil)
                 if viewModel.pomodoro.isActive {
                     compactPomodoroButton(viewModel.pomodoro)
-                        .frame(width: 42)
+                        .frame(width: 54)
                 }
             }
             .padding(.horizontal, 2)
             .frame(maxWidth: .infinity, maxHeight: 34)
         } else if viewModel.pomodoro.isActive {
-            Button { viewModel.openExpanded() } label: {
-                PomodoroCountdownLabel(state: viewModel.pomodoro)
-                    .frame(maxWidth: .infinity, maxHeight: 34)
-            }
-            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
-            .accessibilityLabel("Open focus timer")
+            CompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
+                .padding(.trailing, 2)
+                .frame(maxWidth: .infinity, maxHeight: 34, alignment: .trailing)
         }
     }
 
     private func compactPomodoroButton(_ state: PomodoroState) -> some View {
-        Button { viewModel.openExpanded() } label: {
-            PomodoroCountdownLabel(state: state)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
-        .help("Open focus timer")
-        .accessibilityLabel("Open focus timer")
+        CompactPomodoroButton(viewModel: viewModel, state: state)
     }
 
     private func musicInfoView(
@@ -151,6 +133,80 @@ struct CollapsedActivityPillView: View {
 
     private func musicAccessibilityLabel(_ snapshot: NowPlayingSnapshot) -> String {
         "Open \(snapshot.title) by \(snapshot.artist)"
+    }
+}
+
+private struct CompactPomodoroButton: View {
+    @ObservedObject var viewModel: AppViewModel
+    let state: PomodoroState
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @FocusState private var isFocused: Bool
+    @State private var isHovered = false
+
+    private var isHighlighted: Bool {
+        isHovered
+            || isFocused
+            || CommandLine.arguments.contains("--preview-pomodoro-hover")
+            || CommandLine.arguments.contains("--preview-pomodoro-focus")
+    }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            let remaining = state.remaining(at: context.date)
+            Button(action: viewModel.togglePomodoro) {
+                PomodoroCountdownText(
+                    state: state,
+                    remaining: remaining,
+                    emphasized: isHighlighted
+                )
+            }
+            .buttonStyle(CompactPomodoroButtonStyle(
+                isHighlighted: isHighlighted,
+                isPreviewPressed: CommandLine.arguments.contains("--preview-pomodoro-pressed"),
+                reduceMotion: reduceMotion
+            ))
+            .focused($isFocused)
+            .focusEffectDisabled()
+            .onHover { isHovered = $0 }
+            .help(actionLabel)
+            .accessibilityLabel(actionLabel)
+            .accessibilityValue(PomodoroCountdownLabel.accessibilityValue(remaining))
+        }
+    }
+
+    private var actionLabel: String {
+        switch state.phase {
+        case .idle: "Start focus timer"
+        case .running: "Pause focus timer"
+        case .paused: "Resume focus timer"
+        case .finished: "Restart focus timer"
+        }
+    }
+}
+
+private struct CompactPomodoroButtonStyle: ButtonStyle {
+    let isHighlighted: Bool
+    let isPreviewPressed: Bool
+    let reduceMotion: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        let isPressed = configuration.isPressed || isPreviewPressed
+        configuration.label
+            .frame(width: 54, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(backgroundColor(isPressed: isPressed))
+            )
+            .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .scaleEffect(isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(reduceMotion ? nil : NotchMotion.hover, value: isHighlighted)
+            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: isPressed)
+    }
+
+    private func backgroundColor(isPressed: Bool) -> Color {
+        if isPressed { return Color.white.opacity(0.10) }
+        return isHighlighted ? NotchTheme.control : .clear
     }
 }
 
@@ -205,18 +261,45 @@ struct PomodoroCountdownLabel: View {
     var body: some View {
         TimelineView(.periodic(from: .now, by: 1)) { context in
             let remaining = state.remaining(at: context.date)
-            Text(Self.format(remaining))
-                .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                .monospacedDigit()
-                .foregroundStyle(NotchTheme.pomodoroTimerColor(
-                    remaining: remaining,
-                    duration: state.duration
-                ).color)
+            PomodoroCountdownText(state: state, remaining: remaining)
         }
     }
 
     static func format(_ seconds: TimeInterval) -> String {
         let value = max(0, Int(ceil(seconds)))
         return String(format: "%02d:%02d", value / 60, value % 60)
+    }
+
+    static func accessibilityValue(_ seconds: TimeInterval) -> String {
+        let value = max(0, Int(ceil(seconds)))
+        let minutes = value / 60
+        let seconds = value % 60
+        let minuteUnit = minutes == 1 ? "minute" : "minutes"
+        let secondUnit = seconds == 1 ? "second" : "seconds"
+        return "\(minutes) \(minuteUnit), \(seconds) \(secondUnit) remaining"
+    }
+}
+
+private struct PomodoroCountdownText: View {
+    let state: PomodoroState
+    let remaining: TimeInterval
+    var emphasized = false
+
+    var body: some View {
+        Text(PomodoroCountdownLabel.format(remaining))
+            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+            .monospacedDigit()
+            .foregroundStyle(foregroundColor)
+            .brightness(emphasized ? 0.08 : 0)
+    }
+
+    private var foregroundColor: Color {
+        if case .paused = state.phase {
+            return NotchTheme.secondaryText
+        }
+        return NotchTheme.pomodoroTimerColor(
+            remaining: remaining,
+            duration: state.duration
+        ).color
     }
 }

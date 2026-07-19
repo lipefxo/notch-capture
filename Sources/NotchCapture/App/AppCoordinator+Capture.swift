@@ -3,23 +3,6 @@ import Foundation
 import UniformTypeIdentifiers
 
 extension AppCoordinator {
-    func captureCurrentSelection() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                let result = try await selectionService.captureSelection()
-                let item = try repository.createItem(from: result)
-                presentConfirmation(for: item)
-            } catch {
-                if case SelectionCaptureError.accessibilityPermissionRequired = error {
-                    selectionService.requestAccessibilityAccess()
-                }
-                viewModel.errorMessage = error.localizedDescription
-                viewModel.openExpanded()
-            }
-        }
-    }
-
     func captureManualText(_ text: String, folderID: UUID?) {
         do {
             let parsed = CaptureTagParser.parse(text)

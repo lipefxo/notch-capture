@@ -36,7 +36,8 @@ private func notchCaptureHotKeyEventHandler(
 }
 
 public enum GlobalHotKeyAction: UInt32, CaseIterable, Hashable, Sendable {
-    case captureSelection = 1
+    // Keep this identifier stable so existing composer shortcut preferences
+    // remain valid. The retired selection shortcut used identifier 1.
     case openComposer = 2
 }
 
@@ -93,10 +94,6 @@ public final class GlobalHotKeyManager {
     public typealias ActionHandler = @MainActor (GlobalHotKeyAction) -> Void
 
     public static let defaultDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition] = [
-        .captureSelection: GlobalHotKeyDefinition(
-            keyCode: UInt32(kVK_Space),
-            modifiers: UInt32(controlKey | shiftKey)
-        ),
         .openComposer: GlobalHotKeyDefinition(
             keyCode: UInt32(kVK_ANSI_N),
             modifiers: UInt32(controlKey | shiftKey)

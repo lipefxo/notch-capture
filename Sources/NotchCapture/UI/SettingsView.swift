@@ -110,7 +110,7 @@ struct SettingsView: View {
                     viewModel.hooks.onOpenShortcutRecorder(shortcut.action)
                 } label: {
                     HStack(spacing: 10) {
-                        SettingsRowIcon(symbol: shortcut.action == .captureSelection ? "text.cursor" : "square.and.pencil")
+                        SettingsRowIcon(symbol: "square.and.pencil")
                         Text(shortcut.title)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(NotchTheme.primaryText)
@@ -135,14 +135,6 @@ struct SettingsView: View {
 
     private var privacyAndDataSection: some View {
         SettingsGroup(title: "Privacy & Data", subtitle: "Everything is stored only on this Mac") {
-            PermissionRow(
-                title: "Accessibility",
-                detail: "Read the selection only when you capture it",
-                systemImage: "cursorarrow.rays",
-                isGranted: viewModel.accessibilityGranted,
-                request: viewModel.hooks.onRequestAccessibility
-            )
-            SettingsDivider(leadingInset: 44)
             HStack(spacing: 8) {
                 SettingsRowIcon(symbol: "externaldrive")
                 VStack(alignment: .leading, spacing: 2) {
@@ -313,42 +305,6 @@ private struct TimerChoiceButton: View {
             .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
             .buttonStyle(NotchPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.85))
             .accessibilityAddTraits(isSelected ? .isSelected : [])
-    }
-}
-
-private struct PermissionRow: View {
-    let title: String
-    let detail: String
-    let systemImage: String
-    let isGranted: Bool
-    let request: () -> Void
-
-    var body: some View {
-        HStack(spacing: 9) {
-            SettingsRowIcon(symbol: systemImage)
-                .foregroundStyle(isGranted ? NotchTheme.mint : NotchTheme.secondaryText)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(NotchTheme.primaryText)
-                Text(detail)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-            }
-            Spacer()
-            if isGranted {
-                Label("Allowed", systemImage: "checkmark")
-                    .font(.system(size: 9.5, weight: .semibold))
-                    .foregroundStyle(NotchTheme.mint)
-            } else {
-                Button("Allow", action: request)
-                    .buttonStyle(MintButtonStyle())
-            }
-        }
-        .padding(.horizontal, 10)
-        .frame(height: 46)
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(title), \(isGranted ? "allowed" : "not allowed")")
     }
 }
 

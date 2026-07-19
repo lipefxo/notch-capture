@@ -10,6 +10,28 @@ final class AppViewModel: ObservableObject {
         case task
     }
 
+    enum ComposerCommand: String, CaseIterable, Identifiable, Hashable {
+        case folder
+
+        var id: String { rawValue }
+        var completion: String { "/\(rawValue) " }
+        var title: String {
+            switch self {
+            case .folder: "Create folder"
+            }
+        }
+        var detail: String {
+            switch self {
+            case .folder: "Create a top-level folder"
+            }
+        }
+        var icon: String {
+            switch self {
+            case .folder: "folder.badge.plus"
+            }
+        }
+    }
+
     enum ReorderPlacement: Hashable {
         case before
         case after
@@ -43,6 +65,7 @@ final class AppViewModel: ObservableObject {
     }
     @Published var newFolderName = ""
     @Published private(set) var selectedTagSuggestionIndex = 0
+    @Published private(set) var selectedComposerCommandIndex = 0
     @Published private(set) var isTagAutocompleteDismissed = false
     @Published var autoHideExternalPill: Bool
     @Published var launchAtLogin: Bool {
@@ -51,7 +74,6 @@ final class AppViewModel: ObservableObject {
     @Published var timeFormat: TimeFormat {
         didSet { hooks.onSetTimeFormat(timeFormat) }
     }
-    @Published var accessibilityGranted: Bool
     @Published var nowPlaying: NowPlayingSnapshot?
     @Published var nowPlayingArtwork: NSImage?
     @Published var pomodoro: PomodoroState
@@ -97,12 +119,10 @@ final class AppViewModel: ObservableObject {
         autoHideExternalPill: Bool = false,
         launchAtLogin: Bool = false,
         timeFormat: TimeFormat = .twelveHour,
-        accessibilityGranted: Bool = false,
         nowPlaying: NowPlayingSnapshot? = nil,
         nowPlayingArtwork: NSImage? = nil,
         pomodoro: PomodoroState = PomodoroState(),
         shortcuts: [Shortcut] = [
-            Shortcut(action: .captureSelection, title: "Capture selection", displayValue: "⌃⇧Space"),
             Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N")
         ],
         hooks: Hooks = Hooks(),
@@ -116,7 +136,6 @@ final class AppViewModel: ObservableObject {
         self.autoHideExternalPill = autoHideExternalPill
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
-        self.accessibilityGranted = accessibilityGranted
         self.nowPlaying = nowPlaying
         self.nowPlayingArtwork = nowPlayingArtwork
         self.pomodoro = pomodoro
@@ -188,9 +207,41 @@ final class AppViewModel: ObservableObject {
     }
     var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
 
-    var composerHasQuery: Bool { !normalizedComposerText.isEmpty }
+    /// `/folder` is deliberately a complete command rather than search text.
+    /// It must begin the composer text and be followed by whitespace or end of input,
+    /// so `/folderish` remains an ordinary capture/search query.
+    private var folderCommandName: String? {
+        let command = "/folder"
+        guard composerText.count >= command.count,
+              composerText.prefix(command.count).caseInsensitiveCompare(command) == .orderedSame else {
+            return nil
+        }
+        let remainder = composerText.dropFirst(command.count)
+        guard remainder.isEmpty || remainder.first?.isWhitespace == true else { return nil }
+        return String(remainder)
+    }
+
+    private var slashCommandQuery: String? {
+        guard composerText.first == "/" else { return nil }
+        let query = String(composerText.dropFirst())
+        guard !query.contains(where: \.isWhitespace) else { return nil }
+        return query
+    }
+
+    var isFolderCommandActive: Bool { folderCommandName != nil }
+    var composerCommandSuggestions: [ComposerCommand] {
+        guard let query = slashCommandQuery else { return [] }
+        guard !query.isEmpty else { return ComposerCommand.allCases }
+        return ComposerCommand.allCases.filter {
+            $0.rawValue.range(
+                of: query,
+                options: [.caseInsensitive, .anchored]
+            ) != nil
+        }
+    }
+    var composerHasQuery: Bool { !isFolderCommandActive && !normalizedComposerText.isEmpty }
     var composerHasImages: Bool { !composerImages.isEmpty }
-    var composerHasDraft: Bool { composerHasQuery || composerHasImages }
+    var composerHasDraft: Bool { !normalizedComposerText.isEmpty || composerHasImages }
     var searchMatchCount: Int { visibleFolders.count + visibleItems.count }
     var composerHasMatches: Bool { composerHasQuery && searchMatchCount > 0 }
     var canCreateStandaloneTag: Bool {
@@ -208,10 +259,15 @@ final class AppViewModel: ObservableObject {
         return tags.contains { CaptureTagParser.normalize($0.name) == normalized }
     }
     var canAddComposerText: Bool {
-        composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
+        !isFolderCommandActive && composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
     }
     var canSubmitComposer: Bool {
-        composerHasImages || canAddComposerText || canCreateStandaloneTag
+        isFolderCommandActive || composerHasImages || canAddComposerText || canCreateStandaloneTag
+    }
+    var composerActionLabel: String {
+        if isFolderCommandActive { return "Create folder" }
+        if canCreateStandaloneTag { return "Create tag" }
+        return "Add"
     }
 
     var visibleTagGroups: [TagGroup] {
@@ -234,7 +290,8 @@ final class AppViewModel: ObservableObject {
     }
 
     var tagSuggestions: [TagSuggestion] {
-        guard !isTagAutocompleteDismissed,
+        guard !isFolderCommandActive,
+              !isTagAutocompleteDismissed,
               let fragment = CaptureTagParser.activeTagFragment(in: composerText) else { return [] }
         let normalized = CaptureTagParser.normalize(fragment)
         let matches = tags
@@ -295,6 +352,12 @@ final class AppViewModel: ObservableObject {
     /// Pass `capturingAnyway` (⌘Return) to create a new item even when the
     /// text matches existing items; plain Return selects the first match.
     func submitComposer(capturingAnyway: Bool = false) {
+        if let proposedFolderName = folderCommandName {
+            guard let folderID = createFolderAndReturnID(named: proposedFolderName) else { return }
+            openCreatedFolder(id: folderID)
+            return
+        }
+
         let text = normalizedComposerText
         if composerHasImages {
             errorMessage = nil
@@ -373,7 +436,28 @@ final class AppViewModel: ObservableObject {
 
     func composerTextDidChange(from _: String, to _: String) {
         selectedTagSuggestionIndex = 0
+        selectedComposerCommandIndex = 0
         isTagAutocompleteDismissed = false
+    }
+
+    @discardableResult
+    func acceptSelectedComposerCommand() -> Bool {
+        let commands = composerCommandSuggestions
+        guard !commands.isEmpty else { return false }
+        let index = min(selectedComposerCommandIndex, commands.count - 1)
+        acceptComposerCommand(commands[index])
+        return true
+    }
+
+    func acceptComposerCommand(_ command: ComposerCommand) {
+        composerText = command.completion
+        selectedComposerCommandIndex = 0
+    }
+
+    func moveComposerCommandSelection(by offset: Int) {
+        let count = composerCommandSuggestions.count
+        guard count > 0 else { return }
+        selectedComposerCommandIndex = (selectedComposerCommandIndex + offset + count) % count
     }
 
     @discardableResult
@@ -386,6 +470,11 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleComposerReturn() {
+        if acceptSelectedComposerCommand() { return }
+        if isFolderCommandActive {
+            submitComposer()
+            return
+        }
         if composerIsTagOnly && (canCreateStandaloneTag || exactComposerTagExists) {
             submitComposer()
             return
@@ -445,6 +534,16 @@ final class AppViewModel: ObservableObject {
         browseLocation = .folder(folder.id)
     }
 
+    /// Opens a newly created folder without resetting attachment state. This keeps
+    /// an in-flight paste tied to the same draft while the command text clears.
+    private func openCreatedFolder(id: UUID) {
+        clearSelection()
+        composerText = ""
+        errorMessage = nil
+        browseLocation = .folder(id)
+        keyboardFocus = .composer
+    }
+
     func openRoot() {
         clearSelection()
         resetComposerDraft()
@@ -469,10 +568,7 @@ final class AppViewModel: ObservableObject {
            !display.isEmpty {
             return display
         }
-        switch action {
-        case .captureSelection: return "⌃⇧Space"
-        case .openComposer: return "⌃⇧N"
-        }
+        return "⌃⇧N"
     }
 
     func beginEditing(_ item: LedgerItem) {
@@ -958,19 +1054,34 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     func createFolder(named proposedName: String) -> Bool {
+        createFolderAndReturnID(named: proposedName) != nil
+    }
+
+    private func createFolderAndReturnID(named proposedName: String) -> UUID? {
         let name = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else {
             errorMessage = "Give the folder a name."
-            return false
+            return nil
         }
         guard !folders.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
             errorMessage = "That folder already exists."
-            return false
+            return nil
         }
         errorMessage = nil
-        hooks.onCreateFolder(name)
+        guard let folderID = hooks.onCreateFolder(name) else {
+            if errorMessage == nil {
+                errorMessage = "Could not create the folder."
+            }
+            return nil
+        }
+        // The coordinator reloads synchronously. Keep test and alternate hook
+        // implementations coherent if they return an ID before updating folders.
+        if !folders.contains(where: { $0.id == folderID }) {
+            let nextOrder = (folders.map(\.sortOrder).max() ?? -1) + 1
+            folders.append(FolderSummary(id: folderID, name: name, sortOrder: nextOrder))
+        }
         newFolderName = ""
-        return true
+        return folderID
     }
 
     @discardableResult
@@ -1116,6 +1227,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private var parsedComposerQuery: ParsedTagText {
+        guard !isFolderCommandActive else { return CaptureTagParser.parse("") }
         let source = normalizedComposerText
         if let cachedParsedQuery, cachedParsedQuery.source == source {
             return cachedParsedQuery.parsed
@@ -1262,6 +1374,7 @@ final class AppViewModel: ObservableObject {
         composerImages = []
         composerDraftID = UUID()
         selectedTagSuggestionIndex = 0
+        selectedComposerCommandIndex = 0
         isTagAutocompleteDismissed = false
     }
 }
@@ -1330,7 +1443,6 @@ extension AppViewModel {
             ],
             folders: [projectsFolder],
             tags: [lipeTag, launchTag, ideasTag],
-            accessibilityGranted: true,
             nowPlaying: NowPlayingSnapshot(
                 source: .spotify,
                 trackKey: "preview-night-drive",
@@ -1361,6 +1473,9 @@ extension AppViewModel {
             snapshot.isPlaying = false
             snapshot.positionAnchor = .now
             model.nowPlaying = snapshot
+        }
+        if CommandLine.arguments.contains("--preview-pomodoro-paused") {
+            model.pomodoro.phase = .paused(remaining: 24 * 60 + 23)
         }
         if CommandLine.arguments.contains("--preview-folder-search") {
             model.composerText = "Projects"

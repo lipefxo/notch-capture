@@ -46,6 +46,10 @@ final class NowPlayingService {
     private var deniedSources: Set<NowPlayingSource> = []
     private var lastActivity: [NowPlayingSource: Date] = [:]
     private var refreshTask: Task<Void, Never>?
+    /// Track key for which artwork was last successfully delivered.
+    /// Kept separately from `snapshot` so a cancelled refresh that already
+    /// published metadata still retries artwork on the next pass.
+    private var artworkLoadedForTrackKey: String?
 
     init(
         runner: AppleScriptRunner = AppleScriptRunner(),
@@ -160,6 +164,16 @@ final class NowPlayingService {
             ?? pool.first
     }
 
+    /// Artwork must load whenever we have not yet successfully delivered art for
+    /// this track — including after a cancelled first-launch refresh that already
+    /// published the same metadata.
+    nonisolated static func needsArtworkLoad(
+        trackKey: String,
+        artworkLoadedForTrackKey: String?
+    ) -> Bool {
+        trackKey != artworkLoadedForTrackKey
+    }
+
     private func performRefresh() async {
         var candidates: [NowPlayingSnapshot] = []
         for source in NowPlayingSource.allCases where isRunning(source) && !deniedSources.contains(source) {
@@ -186,12 +200,27 @@ final class NowPlayingService {
         let oldTrackKey = snapshot?.trackKey
         snapshot = selected
         onSnapshotChange?(selected)
-        guard let selected, selected.trackKey != oldTrackKey else {
-            if selected == nil { onArtworkChange?(oldTrackKey ?? "", nil) }
+
+        guard let selected else {
+            if oldTrackKey != nil {
+                artworkLoadedForTrackKey = nil
+                onArtworkChange?(oldTrackKey ?? "", nil)
+            }
             return
         }
+
+        // Metadata refreshes cancel in-flight work. If the previous task already
+        // published this track but was cancelled during artwork fetch, the next
+        // pass must still load artwork — not bail just because the key matches.
+        guard Self.needsArtworkLoad(
+            trackKey: selected.trackKey,
+            artworkLoadedForTrackKey: artworkLoadedForTrackKey
+        ) else { return }
+
         let artwork = await artworkLoader.artwork(for: selected)
+        guard !Task.isCancelled else { return }
         guard snapshot?.trackKey == selected.trackKey else { return }
+        artworkLoadedForTrackKey = selected.trackKey
         onArtworkChange?(selected.trackKey, artwork)
     }
 

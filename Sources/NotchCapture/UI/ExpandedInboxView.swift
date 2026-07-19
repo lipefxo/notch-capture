@@ -154,7 +154,7 @@ struct ExpandedInboxView: View {
                 resetReorderState()
                 return
             }
-            if viewModel.composerHasQuery {
+            if viewModel.composerHasDraft {
                 viewModel.handleDismissalRequest(.escape)
                 return
             }
@@ -228,7 +228,10 @@ struct ExpandedInboxView: View {
             floatingGlassFade
 
             VStack(spacing: 6) {
-                if !viewModel.tagSuggestions.isEmpty {
+                if !viewModel.composerCommandSuggestions.isEmpty {
+                    commandAutocomplete
+                        .transition(tagAutocompleteTransition)
+                } else if !viewModel.tagSuggestions.isEmpty {
                     tagAutocomplete
                         .transition(tagAutocompleteTransition)
                 }
@@ -397,10 +400,10 @@ struct ExpandedInboxView: View {
             }
         case .running:
             items.append(NotchMenuItem(title: "Pause", icon: "pause.fill") { viewModel.togglePomodoro() })
-            items.append(NotchMenuItem(title: "Reset", icon: "arrow.counterclockwise") { viewModel.resetPomodoro() })
+            items.append(NotchMenuItem(title: "End session", icon: "stop.fill") { viewModel.resetPomodoro() })
         case .paused:
             items.append(NotchMenuItem(title: "Resume", icon: "play.fill") { viewModel.togglePomodoro() })
-            items.append(NotchMenuItem(title: "Reset", icon: "arrow.counterclockwise") { viewModel.resetPomodoro() })
+            items.append(NotchMenuItem(title: "End session", icon: "stop.fill") { viewModel.resetPomodoro() })
         case .finished:
             items.append(NotchMenuItem(title: "Restart", icon: "arrow.clockwise") {
                 viewModel.acknowledgePomodoro()
@@ -539,12 +542,15 @@ struct ExpandedInboxView: View {
 
     private var captureTextRow: some View {
         HStack(spacing: 13) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 15, weight: .light))
-                .foregroundStyle(NotchTheme.secondaryText)
-                .frame(width: 24, height: 24)
+            if focusedField != .unifiedInput {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 15, weight: .light))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .transition(.opacity)
+            }
 
-            TextField("Search or add to \(viewModel.captureDestinationName)", text: $viewModel.composerText, axis: .vertical)
+            TextField("Search, add an item, or / to see actions", text: $viewModel.composerText, axis: .vertical)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(NotchTheme.primaryText)
@@ -562,14 +568,23 @@ struct ExpandedInboxView: View {
                     return .handled
                 }
                 .onKeyPress(.tab) {
-                    viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
+                    if viewModel.acceptSelectedComposerCommand() { return .handled }
+                    return viewModel.acceptSelectedTagSuggestion() ? .handled : .ignored
                 }
                 .onKeyPress(.upArrow) {
+                    if !viewModel.composerCommandSuggestions.isEmpty {
+                        viewModel.moveComposerCommandSelection(by: -1)
+                        return .handled
+                    }
                     guard !viewModel.tagSuggestions.isEmpty else { return .ignored }
                     viewModel.moveTagSuggestionSelection(by: -1)
                     return .handled
                 }
                 .onKeyPress(.downArrow) {
+                    if !viewModel.composerCommandSuggestions.isEmpty {
+                        viewModel.moveComposerCommandSelection(by: 1)
+                        return .handled
+                    }
                     if !viewModel.tagSuggestions.isEmpty {
                         viewModel.moveTagSuggestionSelection(by: 1)
                         return .handled
@@ -577,7 +592,7 @@ struct ExpandedInboxView: View {
                     // Enter the ledger with the keyboard from the composer.
                     return viewModel.moveLedgerSelection(by: 1) ? .handled : .ignored
                 }
-                .accessibilityLabel("Search or add to \(viewModel.captureDestinationName)")
+                .accessibilityLabel("Search, add an item, or / to see actions")
                 .accessibilityHint(unifiedInputHint)
 
             if viewModel.canSubmitComposer {
@@ -585,7 +600,7 @@ struct ExpandedInboxView: View {
                     viewModel.submitComposer()
                 } label: {
                     HStack(spacing: 5) {
-                        Text(viewModel.canCreateStandaloneTag ? "Create tag" : "Add")
+                        Text(viewModel.composerActionLabel)
                             .font(.system(size: 11, weight: .medium))
                         Image(systemName: "return")
                             .font(.system(size: 11, weight: .regular))
@@ -600,14 +615,18 @@ struct ExpandedInboxView: View {
                 .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .help(
-                    viewModel.canCreateStandaloneTag
-                        ? "Create this tag group"
-                        : "Add this thought to \(viewModel.captureDestinationName)"
+                    viewModel.isFolderCommandActive
+                        ? "Create a folder"
+                        : viewModel.canCreateStandaloneTag
+                            ? "Create this tag group"
+                            : "Add this thought to \(viewModel.captureDestinationName)"
                 )
                 .accessibilityLabel(
-                    viewModel.canCreateStandaloneTag
-                        ? "Create tag group"
-                        : "Add thought to \(viewModel.captureDestinationName)"
+                    viewModel.isFolderCommandActive
+                        ? "Create folder"
+                        : viewModel.canCreateStandaloneTag
+                            ? "Create tag group"
+                            : "Add thought to \(viewModel.captureDestinationName)"
                 )
             } else if viewModel.composerHasMatches {
                 Text("\(viewModel.searchMatchCount) \(viewModel.searchMatchCount == 1 ? "match" : "matches")")
@@ -619,6 +638,7 @@ struct ExpandedInboxView: View {
         }
         .padding(.horizontal, 16)
         .frame(height: composerTextRowHeight)
+        .animation(composerFocusAnimation, value: focusedField)
     }
 
     private var composerImageStrip: some View {
@@ -730,6 +750,54 @@ struct ExpandedInboxView: View {
         .shadow(color: .black.opacity(0.32), radius: 10, y: 5)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Tag suggestions")
+    }
+
+    private var commandAutocomplete: some View {
+        VStack(spacing: 0) {
+            ForEach(Array(viewModel.composerCommandSuggestions.enumerated()), id: \.element.id) { index, command in
+                Button {
+                    viewModel.acceptComposerCommand(command)
+                    focusComposer()
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: command.icon)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(NotchTheme.mint)
+                            .frame(width: 16)
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(command.title)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(NotchTheme.primaryText)
+                            Text(command.detail)
+                                .font(.system(size: 10, weight: .regular))
+                                .foregroundStyle(NotchTheme.secondaryText)
+                        }
+                        Spacer()
+                        Text("/\(command.rawValue)")
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(NotchTheme.tertiaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(height: 42)
+                    .background(
+                        index == viewModel.selectedComposerCommandIndex
+                            ? NotchTheme.selectedLedger
+                            : Color.clear
+                    )
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .background(NotchTheme.raisedGraphite.opacity(0.98))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(NotchTheme.controlStroke, lineWidth: 1)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .shadow(color: .black.opacity(0.32), radius: 10, y: 5)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Composer commands")
     }
 
     private var tagAutocompleteTransition: AnyTransition {
@@ -985,7 +1053,6 @@ struct ExpandedInboxView: View {
                     filter: viewModel.filter,
                     query: viewModel.composerText,
                     folderName: viewModel.currentFolder?.name,
-                    captureShortcut: viewModel.shortcutDisplayValue(for: .captureSelection),
                     onCompose: { focusedField = .unifiedInput }
                 )
                 .padding(.bottom, ledgerBottomClearance)

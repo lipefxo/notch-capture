@@ -28,15 +28,23 @@ private struct MusicPlayerBand: View {
             )
 
             VStack(alignment: .leading, spacing: 4) {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text(snapshot.title)
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(NotchTheme.primaryText)
-                    Text(snapshot.artist)
-                        .font(.system(size: 10.5, weight: .regular))
-                        .foregroundStyle(NotchTheme.secondaryText)
+                HStack(alignment: .center, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(snapshot.title)
+                            .font(.system(size: 11.5, weight: .semibold))
+                            .foregroundStyle(NotchTheme.primaryText)
+                        Text(snapshot.artist)
+                            .font(.system(size: 10.5, weight: .regular))
+                            .foregroundStyle(NotchTheme.secondaryText)
+                    }
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                    HStack(spacing: 2) {
+                        transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)
+                        transportButton("forward.fill", label: "Next track", action: viewModel.musicNext, compact: true)
+                    }
                 }
-                .lineLimit(1)
 
                 HStack(spacing: 6) {
                     MusicProgressControl(snapshot: snapshot, onSeek: viewModel.musicSeek)
@@ -48,11 +56,6 @@ private struct MusicPlayerBand: View {
                 .frame(height: 14)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-
-            HStack(spacing: 2) {
-                transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)
-                transportButton("forward.fill", label: "Next track", action: viewModel.musicNext, compact: true)
-            }
         }
         .padding(.horizontal, 14)
         .frame(height: 62)
