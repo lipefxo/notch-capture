@@ -639,7 +639,16 @@ final class AppViewModel: ObservableObject {
             if selectedVisibleFolder != nil { return true }
             guard let item = selectedVisibleItem else { return false }
             guard !item.isTrashed else { return true }
+            let removedIndex = keyboardNavigationRows.firstIndex(of: .item(item.id))
             trash(item)
+            let remainingRows = keyboardNavigationRows
+            if let removedIndex, !remainingRows.isEmpty {
+                // The row after the deletion slides into the same index. When
+                // the last row is removed, keep navigating from its predecessor.
+                applyKeyboardSelection(remainingRows[min(removedIndex, remainingRows.count - 1)])
+            } else {
+                focusComposer()
+            }
             return true
         }
     }

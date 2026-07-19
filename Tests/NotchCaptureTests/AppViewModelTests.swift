@@ -854,7 +854,25 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.items[0].isTrashed)
         XCTAssertEqual(trashedIDs, [item.id])
         XCTAssertNil(viewModel.selectedItemID)
-        XCTAssertEqual(viewModel.keyboardFocus, .none)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
+    func testKeyboardDeleteSelectsTheRowThatReplacesTheRemovedRow() {
+        let first = AppViewModel.LedgerItem(title: "First", sortOrder: 0)
+        let middle = AppViewModel.LedgerItem(title: "Middle", sortOrder: 1)
+        let last = AppViewModel.LedgerItem(title: "Last", sortOrder: 2)
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [first, middle, last])
+
+        viewModel.select(middle)
+
+        XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.moveToTrash))
+        XCTAssertEqual(viewModel.selectedItemID, last.id)
+        XCTAssertEqual(viewModel.keyboardFocus, .selectedRow)
+
+        // Deleting the final visible row falls back to its predecessor.
+        XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.moveToTrash))
+        XCTAssertEqual(viewModel.selectedItemID, first.id)
+        XCTAssertEqual(viewModel.keyboardFocus, .selectedRow)
     }
 
     func testSelectedRowKeyboardCommandsRespectComposerFocusAndTrashSafety() {
