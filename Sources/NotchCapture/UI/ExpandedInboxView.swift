@@ -370,7 +370,12 @@ struct ExpandedInboxView: View {
             }
             .frame(height: 54)
         }
-        .padding(.horizontal, 20)
+        // The settings glyph sits 7 points inside its 28-point hit target.
+        // Reduce only the trailing shell inset by that amount so the visible
+        // glyph, rather than the invisible button frame, aligns with the
+        // shared 20-point content edge.
+        .padding(.leading, 20)
+        .padding(.trailing, 13)
         .padding(.top, 8)
         .background(NotchTheme.ink)
     }
