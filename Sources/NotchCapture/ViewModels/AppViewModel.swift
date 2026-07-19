@@ -1534,7 +1534,9 @@ extension AppViewModel {
             model.items[index].isCompleted = true
             model.items[index].completedAt = .now
         }
-        if CommandLine.arguments.contains("--preview-folder-search") {
+        if CommandLine.arguments.contains("--preview-empty-search") {
+            model.composerText = "No matching capture"
+        } else if CommandLine.arguments.contains("--preview-folder-search") {
             model.composerText = "Projects"
         } else if CommandLine.arguments.contains("--preview-folder") {
             model.openFolder(projectsFolder)

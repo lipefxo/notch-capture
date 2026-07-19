@@ -229,7 +229,13 @@ struct ExpandedInboxView: View {
 
     private var floatingComposer: some View {
         ZStack(alignment: .bottom) {
-            floatingGlassFade
+            // The fade only exists to separate the composer from scrolling
+            // rows. Keeping its material layer mounted over an empty search
+            // result leaves a detached, slow-updating glass band behind.
+            if viewModel.hasVisibleContent {
+                floatingGlassFade
+                    .transition(.identity)
+            }
 
             VStack(spacing: 6) {
                 if !viewModel.composerCommandSuggestions.isEmpty {
@@ -1034,8 +1040,10 @@ struct ExpandedInboxView: View {
                     folderName: viewModel.currentFolder?.name
                 )
                 .padding(.bottom, ledgerBottomClearance)
+                .transition(.identity)
             } else {
                 itemFeed
+                    .transition(.identity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

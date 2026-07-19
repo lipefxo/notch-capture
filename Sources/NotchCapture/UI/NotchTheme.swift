@@ -76,6 +76,15 @@ enum NotchTheme {
     /// Additional warmth layered behind the crest; multiplied by (1 - progress)
     /// so the trail cools into completedLedger as the liquid settles.
     static let completionTrail = completionAccent.opacity(0.075)
+    /// Extra fill layered over completedLedger while the flood is live
+    /// (energy 1); cools away so the row rests at the quiet completed tint.
+    static let completionFloodBoost = completionAccent.opacity(0.18)
+    /// Tight unblurred glint riding the very front of the wave, inside the
+    /// blurred completionCrest halo.
+    static let completionCrestCore = completionAccent.opacity(0.42)
+    /// Center color of the radial bloom that ignites behind the checkbox at
+    /// the moment of completion.
+    static let completionIgnitionGlow = completionAccent.opacity(0.45)
     static let controlStroke = Color.white.opacity(0.075)
     static let hairline = Color.white.opacity(0.065)
     static let primaryText = Color.white.opacity(0.90)
@@ -211,6 +220,13 @@ enum NotchMotion {
     // outlast washDelay + reveal so the payoff is never cut short.
     static let completionWashDelay: TimeInterval = 0.04
     static let completionHoldDuration: TimeInterval = 0.60
+    // The flood peaks when the wash lands, then cools into the resting tint.
+    // Cooling starts before the hold releases so settle and cool-down overlap
+    // as one continuous exhale rather than two staged beats.
+    static let completionCooldownDuration: TimeInterval = 0.30
+    static let completionCooldownDelay = completionWashDelay + completionRevealDuration
+    static let completionCheckDrawDuration: TimeInterval = 0.28
+    static let completionCheckDrawDelay: TimeInterval = 0.06
 
     static func easeOut(duration: TimeInterval) -> Animation {
         .timingCurve(0.23, 1, 0.32, 1, duration: duration)
@@ -242,6 +258,8 @@ enum NotchMotion {
     static let completionReopen = easeOut(duration: completionReopenDuration)
     static let completionReveal = easeOut(duration: completionRevealDuration)
     static let completionRetract = easeOut(duration: completionRetractDuration)
+    static let completionCooldown = easeOut(duration: completionCooldownDuration)
+    static let completionCheckDraw = easeOut(duration: completionCheckDrawDuration)
     static let completionExit = easeOut(duration: completionExitDuration)
 
     static func landing(initialVelocity: Double) -> Animation {
