@@ -580,18 +580,58 @@ final class AppViewModelTests: XCTestCase {
 
     func testOnboardingNavigationStaysWithinTypedSteps() {
         let viewModel = AppViewModel(surfaceState: .onboarding)
+        let steps = AppViewModel.OnboardingStep.allCases
 
-        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+        XCTAssertEqual(steps, [.capture, .organize, .music, .pomodoro])
+        XCTAssertEqual(steps.first, .capture)
+        XCTAssertEqual(steps.last, .pomodoro)
+
+        XCTAssertEqual(viewModel.onboardingStep, .capture)
         viewModel.retreatOnboarding()
-        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+        XCTAssertEqual(viewModel.onboardingStep, .capture)
 
+        for step in steps.dropFirst() {
+            viewModel.advanceOnboarding()
+            XCTAssertEqual(viewModel.onboardingStep, step)
+        }
         viewModel.advanceOnboarding()
-        XCTAssertEqual(viewModel.onboardingStep, .shortcuts)
-        viewModel.advanceOnboarding()
-        XCTAssertEqual(viewModel.onboardingStep, .shortcuts)
+        XCTAssertEqual(viewModel.onboardingStep, steps.last)
 
         viewModel.retreatOnboarding()
-        XCTAssertEqual(viewModel.onboardingStep, .welcome)
+        XCTAssertEqual(viewModel.onboardingStep, steps.dropLast().last)
+    }
+
+    func testOnboardingStepNumbersMatchOrdinalPosition() {
+        for (index, step) in AppViewModel.OnboardingStep.allCases.enumerated() {
+            XCTAssertEqual(step.number, index + 1)
+        }
+        XCTAssertTrue(AppViewModel.OnboardingStep.allCases.last?.isFinal ?? false)
+        XCTAssertTrue(AppViewModel.OnboardingStep.allCases.first?.isFirst ?? false)
+        XCTAssertFalse(AppViewModel.OnboardingStep.capture.isFinal)
+        XCTAssertFalse(AppViewModel.OnboardingStep.pomodoro.isFirst)
+    }
+
+    func testOpeningExpandedResumesOnboardingUntilFinished() {
+        let viewModel = AppViewModel(surfaceState: .onboarding)
+        viewModel.advanceOnboarding()
+        XCTAssertEqual(viewModel.onboardingStep, .organize)
+
+        viewModel.dismiss()
+        XCTAssertNotEqual(viewModel.surfaceState, .onboarding)
+
+        viewModel.openExpanded()
+        XCTAssertEqual(viewModel.surfaceState, .onboarding)
+        XCTAssertEqual(viewModel.onboardingStep, .organize)
+
+        while !viewModel.onboardingStep.isFinal {
+            viewModel.advanceOnboarding()
+        }
+        viewModel.finishOnboarding()
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+
+        viewModel.dismiss()
+        viewModel.openExpanded()
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
     }
 
     func testFinishingOnboardingPersistsOnceAndOpensInbox() {
@@ -599,7 +639,7 @@ final class AppViewModelTests: XCTestCase {
         var hooks = AppViewModel.Hooks()
         hooks.onCompleteOnboarding = { completionCount += 1 }
         let viewModel = AppViewModel(surfaceState: .onboarding, hooks: hooks)
-        viewModel.onboardingStep = .shortcuts
+        viewModel.onboardingStep = .pomodoro
 
         viewModel.finishOnboarding()
         viewModel.finishOnboarding()

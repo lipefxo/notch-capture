@@ -62,12 +62,18 @@ extension AppViewModel {
     }
 
     enum OnboardingStep: Int, CaseIterable, Identifiable {
-        case welcome
-        case shortcuts
+        case capture
+        case organize
+        case music
+        case pomodoro
 
         var id: Self { self }
 
         var number: Int { rawValue + 1 }
+
+        var isFirst: Bool { self == Self.allCases.first }
+
+        var isFinal: Bool { self == Self.allCases.last }
     }
 
     enum TimeFormat: String, CaseIterable, Identifiable {

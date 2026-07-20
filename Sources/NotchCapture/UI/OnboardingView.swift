@@ -7,14 +7,18 @@ struct OnboardingView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            onboardingHeader
+            onboardingTopBand
 
             Group {
                 switch viewModel.onboardingStep {
-                case .welcome:
-                    welcomePage
-                case .shortcuts:
-                    shortcutsPage
+                case .capture:
+                    OnboardingCapturePage()
+                case .organize:
+                    OnboardingOrganizePage()
+                case .music:
+                    OnboardingMusicPage()
+                case .pomodoro:
+                    OnboardingPomodoroPage()
                 }
             }
             .id(viewModel.onboardingStep)
@@ -28,20 +32,26 @@ struct OnboardingView: View {
         .accessibilityLabel("Notch Capture setup")
     }
 
-    private var onboardingHeader: some View {
-        HStack(spacing: 9) {
-            Image(systemName: "square.and.pencil")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(NotchTheme.primaryAccent)
-            Text("Notch Capture")
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(NotchTheme.primaryText)
-                .fixedSize()
+    private var onboardingTopBand: some View {
+        HStack {
             Spacer()
-            Text("Step \(viewModel.onboardingStep.number) of \(AppViewModel.OnboardingStep.allCases.count)")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(NotchTheme.tertiaryText)
-                .fixedSize()
+
+            HStack(spacing: 5) {
+                ForEach(AppViewModel.OnboardingStep.allCases) { step in
+                    Capsule()
+                        .fill(
+                            step == viewModel.onboardingStep
+                                ? NotchTheme.primaryAccent
+                                : Color.white.opacity(0.14)
+                        )
+                        .frame(width: step == viewModel.onboardingStep ? 14 : 5, height: 5)
+                }
+            }
+            .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.onboardingStep)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(
+                "Step \(viewModel.onboardingStep.number) of \(AppViewModel.OnboardingStep.allCases.count)"
+            )
         }
         .padding(.horizontal, 16)
         .frame(height: 52)
@@ -51,92 +61,9 @@ struct OnboardingView: View {
         }
     }
 
-    private var welcomePage: some View {
-        VStack(spacing: 16) {
-            Spacer(minLength: 20)
-
-            ZStack {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(NotchTheme.primaryAccent.opacity(0.09))
-                    .frame(width: 88, height: 66)
-                Image(systemName: "tray.and.arrow.down.fill")
-                    .font(.system(size: 29, weight: .light))
-                    .foregroundStyle(NotchTheme.primaryAccent)
-            }
-
-            VStack(spacing: 7) {
-                Text("Capture without breaking focus")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(NotchTheme.primaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Save what matters from any app, then get straight back to what you were doing.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .frame(maxWidth: 300)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            HStack(spacing: 7) {
-                OnboardingCapability(symbol: "note.text", title: "Notes")
-                OnboardingCapability(symbol: "paperclip", title: "Files")
-            }
-            .padding(.top, 4)
-
-            Spacer(minLength: 20)
-        }
-        .padding(.horizontal, 28)
-    }
-
-    private var shortcutsPage: some View {
-        VStack(spacing: 17) {
-            Spacer(minLength: 18)
-
-            VStack(spacing: 7) {
-                Text("Your capture inbox")
-                    .font(.system(size: 20, weight: .semibold))
-                    .foregroundStyle(NotchTheme.primaryText)
-                    .multilineTextAlignment(.center)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text("Open the inbox from anywhere to write and attach anything.")
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .frame(maxWidth: 305)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            VStack(spacing: 0) {
-                OnboardingShortcutRow(
-                    symbol: "square.and.pencil",
-                    title: "Open Notch Capture",
-                    detail: "Write a note or add a file",
-                    shortcut: viewModel.shortcutDisplayValue(for: .openComposer)
-                )
-            }
-            .background(Color.white.opacity(0.035))
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(NotchTheme.hairline, lineWidth: 1)
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-            Text("You can change this shortcut later in Settings.")
-                .font(.system(size: 10))
-                .foregroundStyle(NotchTheme.tertiaryText)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 18)
-        }
-        .padding(.horizontal, 28)
-    }
-
     private var onboardingFooter: some View {
         HStack {
-            if viewModel.onboardingStep != .welcome {
+            if !viewModel.onboardingStep.isFirst {
                 Button("Back", action: moveBackward)
                     .buttonStyle(CompactTextButtonStyle())
                     .notchHitTarget(Rectangle())
@@ -149,23 +76,8 @@ struct OnboardingView: View {
 
             Spacer()
 
-            HStack(spacing: 5) {
-                ForEach(AppViewModel.OnboardingStep.allCases) { step in
-                    Capsule()
-                        .fill(step == viewModel.onboardingStep ? NotchTheme.primaryAccent : Color.white.opacity(0.14))
-                        .frame(width: step == viewModel.onboardingStep ? 14 : 5, height: 5)
-                }
-            }
-            .animation(reduceMotion ? nil : NotchMotion.filter, value: viewModel.onboardingStep)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(
-                "Step \(viewModel.onboardingStep.number) of \(AppViewModel.OnboardingStep.allCases.count)"
-            )
-
-            Spacer()
-
-            Button(viewModel.onboardingStep == .shortcuts ? "Open inbox" : "Continue") {
-                if viewModel.onboardingStep == .shortcuts {
+            Button(viewModel.onboardingStep.isFinal ? "Open inbox" : "Continue") {
+                if viewModel.onboardingStep.isFinal {
                     viewModel.finishOnboarding()
                 } else {
                     moveForward()
@@ -203,52 +115,5 @@ struct OnboardingView: View {
             insertion: .opacity.combined(with: .offset(x: 10 * navigationDirection)),
             removal: .opacity.combined(with: .offset(x: -10 * navigationDirection))
         )
-    }
-}
-
-private struct OnboardingCapability: View {
-    let symbol: String
-    let title: String
-
-    var body: some View {
-        Label(title, systemImage: symbol)
-            .font(.system(size: 9.5, weight: .medium))
-            .foregroundStyle(NotchTheme.secondaryText)
-            .padding(.horizontal, 9)
-            .frame(height: 28)
-            .background(Color.white.opacity(0.045))
-            .clipShape(Capsule())
-    }
-}
-
-private struct OnboardingShortcutRow: View {
-    let symbol: String
-    let title: String
-    let detail: String
-    let shortcut: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: symbol)
-                .font(.system(size: 13, weight: .medium))
-                .foregroundStyle(NotchTheme.primaryAccent)
-                .frame(width: 30, height: 30)
-                .background(NotchTheme.primaryAccent.opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(NotchTheme.primaryText)
-                Text(detail)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(NotchTheme.secondaryText)
-            }
-            Spacer(minLength: 8)
-            ShortcutKeycap(value: shortcut)
-        }
-        .padding(.horizontal, 11)
-        .frame(height: 57)
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(title), \(shortcut). \(detail)")
     }
 }
