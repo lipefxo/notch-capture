@@ -474,6 +474,23 @@ final class ItemRepository {
         try modelContext.save()
     }
 
+    @discardableResult
+    func trashCompletedTasks(at date: Date = .now) throws -> Int {
+        let items = try fetch(scope: .completed)
+        guard !items.isEmpty else { return 0 }
+        do {
+            for item in items {
+                item.trashedAt = date
+                item.touch(at: date)
+            }
+            try modelContext.save()
+            return items.count
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
+
     func restore(_ item: CaptureItem) throws {
         item.archivedAt = nil
         item.trashedAt = nil

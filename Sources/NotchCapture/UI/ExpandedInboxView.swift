@@ -30,6 +30,42 @@ struct ExpandedSurfaceRevealPlan: Equatable {
     }
 }
 
+/// A single identity domain for every ledger row. Pinning changes a row's
+/// position in this collection instead of removing it from one `ForEach` and
+/// inserting it into another while the outgoing row transition is still alive.
+enum LedgerFeedLayoutEntry: Identifiable {
+    enum ID: Hashable {
+        case pinnedHeader
+        case item(UUID)
+    }
+
+    case pinnedHeader(count: Int)
+    case item(AppViewModel.LedgerItem)
+
+    var id: ID {
+        switch self {
+        case .pinnedHeader:
+            return .pinnedHeader
+        case let .item(item):
+            return .item(item.id)
+        }
+    }
+
+    static func make(
+        pinnedItems: [AppViewModel.LedgerItem],
+        unpinnedItems: [AppViewModel.LedgerItem]
+    ) -> [Self] {
+        var entries: [Self] = []
+        entries.reserveCapacity(pinnedItems.count + unpinnedItems.count + (pinnedItems.isEmpty ? 0 : 1))
+        if !pinnedItems.isEmpty {
+            entries.append(.pinnedHeader(count: pinnedItems.count))
+        }
+        entries.append(contentsOf: pinnedItems.map(Self.item))
+        entries.append(contentsOf: unpinnedItems.map(Self.item))
+        return entries
+    }
+}
+
 struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
     @EnvironmentObject private var presentation: NotchPresentationCoordinator
@@ -99,6 +135,12 @@ struct ExpandedInboxView: View {
     }
     private var previewUnpinnedItems: [AppViewModel.LedgerItem] {
         previewVisibleItems.filter { !$0.isPinned }
+    }
+    private var previewFeedEntries: [LedgerFeedLayoutEntry] {
+        LedgerFeedLayoutEntry.make(
+            pinnedItems: previewPinnedItems,
+            unpinnedItems: previewUnpinnedItems
+        )
     }
     private enum Field {
         case unifiedInput
@@ -494,6 +536,19 @@ struct ExpandedInboxView: View {
         }, onCancel: {}))
     }
 
+    private func presentClearCompletedTasks() {
+        let count = viewModel.completedTaskCount
+        guard count > 0 else {
+            viewModel.clearCompletedTasks()
+            focusComposer()
+            return
+        }
+        presentation.present(NotchModal(kind: .destructive, title: "Clear \(count) completed \(count == 1 ? "task" : "tasks")?", message: "They’ll move to Trash and can be restored.", textFieldLabel: nil, draft: "", primaryTitle: "Move to Trash", cancelTitle: "Cancel", onSubmit: { _ in
+            viewModel.clearCompletedTasks()
+            return nil
+        }, onCancel: {}))
+    }
+
     private func presentTagActions(_ tag: AppViewModel.TagSummary, count: Int, anchor: CGRect) {
         presentation.present(NotchMenu(title: "@\(tag.name)", anchor: anchor, items: [
             NotchMenuItem(title: "Search @\(tag.name)", icon: "magnifyingglass") {
@@ -569,7 +624,9 @@ struct ExpandedInboxView: View {
                     _ = viewModel.acceptPastedImages(providers)
                 }
                 .onKeyPress(keys: [.return], phases: .down) { press in
-                    if press.modifiers.contains(.command) {
+                    if viewModel.isClearCommandActive {
+                        presentClearCompletedTasks()
+                    } else if press.modifiers.contains(.command) {
                         viewModel.submitComposer(capturingAnyway: true)
                     } else {
                         viewModel.handleComposerReturn()
@@ -606,7 +663,11 @@ struct ExpandedInboxView: View {
 
             if viewModel.canSubmitComposer {
                 Button {
-                    viewModel.submitComposer()
+                    if viewModel.isClearCommandActive {
+                        presentClearCompletedTasks()
+                    } else {
+                        viewModel.submitComposer()
+                    }
                 } label: {
                     HStack(spacing: 5) {
                         Text(viewModel.composerActionLabel)
@@ -626,6 +687,8 @@ struct ExpandedInboxView: View {
                 .help(
                     viewModel.isFolderCommandActive
                         ? "Create a folder"
+                        : viewModel.isClearCommandActive
+                            ? "Move all completed tasks to Trash"
                         : viewModel.canCreateStandaloneTag
                             ? "Create this tag group"
                             : "Add this thought to \(viewModel.captureDestinationName)"
@@ -633,6 +696,8 @@ struct ExpandedInboxView: View {
                 .accessibilityLabel(
                     viewModel.isFolderCommandActive
                         ? "Create folder"
+                        : viewModel.isClearCommandActive
+                            ? "Clear completed tasks"
                         : viewModel.canCreateStandaloneTag
                             ? "Create tag group"
                             : "Add thought to \(viewModel.captureDestinationName)"
@@ -1146,15 +1211,13 @@ struct ExpandedInboxView: View {
             LedgerSectionHeader(title: "Results", count: viewModel.visibleItems.count)
         }
 
-        if !previewPinnedItems.isEmpty {
-            reorderSectionHeader(title: "Pinned", count: previewPinnedItems.count, isPinned: true)
-            ForEach(previewPinnedItems) { item in
+        ForEach(previewFeedEntries) { entry in
+            switch entry {
+            case let .pinnedHeader(count):
+                reorderSectionHeader(title: "Pinned", count: count, isPinned: true)
+            case let .item(item):
                 reorderableRow(item)
             }
-        }
-
-        ForEach(previewUnpinnedItems) { item in
-            reorderableRow(item)
         }
 
         if draggedItemID != nil, reorderTarget != nil, previewUnpinnedItems.isEmpty {

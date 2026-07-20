@@ -1,34 +1,101 @@
+import AppKit
 import XCTest
 @testable import NotchCapture
 
 final class NotchThemeTests: XCTestCase {
-    func testArtworkAccentUsesDominantChromaticHue() throws {
-        let blue = ArtworkAccentColor.Sample(red: 0.05, green: 0.25, blue: 0.95, alpha: 1)
-        let red = ArtworkAccentColor.Sample(red: 0.95, green: 0.08, blue: 0.04, alpha: 1)
-        let samples = Array(repeating: blue, count: 80) + Array(repeating: red, count: 20)
+    func testArtworkOverlayUsesWhiteForDarkCenterFootprint() throws {
+        let dark = ArtworkOverlayColor.Sample(red: 0.10, green: 0.12, blue: 0.14, alpha: 1)
 
-        let color = try XCTUnwrap(ArtworkAccentColor.resolvedColor(from: samples))
-        var hue: CGFloat = 0
-        var saturation: CGFloat = 0
-        var brightness: CGFloat = 0
-        var alpha: CGFloat = 0
-        color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        XCTAssertEqual(hue, 2.0 / 3.0, accuracy: 0.05)
-        XCTAssertGreaterThan(saturation, 0.5)
-        XCTAssertGreaterThan(brightness, 0.9)
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.resolvedColor(from: Array(repeating: dark, count: 40)),
+            red: 1,
+            green: 1,
+            blue: 1
+        )
     }
 
-    func testArtworkAccentFallsBackToNeutralForMonochromeArtwork() throws {
-        let gray = ArtworkAccentColor.Sample(red: 0.45, green: 0.45, blue: 0.45, alpha: 1)
-        let color = try XCTUnwrap(ArtworkAccentColor.resolvedColor(from: Array(repeating: gray, count: 40)))
+    func testArtworkOverlayUsesBlackForBrightCenterFootprint() throws {
+        let bright = ArtworkOverlayColor.Sample(red: 0.92, green: 0.88, blue: 0.80, alpha: 1)
 
-        var hue: CGFloat = 0
-        var saturation: CGFloat = 0
-        var brightness: CGFloat = 0
-        var alpha: CGFloat = 0
-        color.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: &alpha)
-        XCTAssertEqual(saturation, 0, accuracy: 0.01)
-        XCTAssertGreaterThan(brightness, 0.9)
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.resolvedColor(from: Array(repeating: bright, count: 40)),
+            red: 0,
+            green: 0,
+            blue: 0
+        )
+    }
+
+    func testArtworkOverlaySamplesOnlyTheCenteredControlFootprint() throws {
+        let image = NSImage(size: NSSize(width: 100, height: 100))
+        image.lockFocus()
+        NSColor.black.setFill()
+        NSBezierPath(rect: NSRect(x: 0, y: 0, width: 100, height: 100)).fill()
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(x: 21, y: 21, width: 58, height: 58)).fill()
+        image.unlockFocus()
+
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.color(from: image),
+            red: 0,
+            green: 0,
+            blue: 0
+        )
+    }
+
+    func testArtworkOverlayUsesWhiteAtLuminanceThresholdAndBlackImmediatelyAboveIt() throws {
+        let atThreshold = ArtworkOverlayColor.Sample(red: 0.46, green: 0.46, blue: 0.46, alpha: 1)
+        let aboveThreshold = ArtworkOverlayColor.Sample(red: 0.461, green: 0.461, blue: 0.461, alpha: 1)
+
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.resolvedColor(from: [atThreshold]),
+            red: 1,
+            green: 1,
+            blue: 1
+        )
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.resolvedColor(from: [aboveThreshold]),
+            red: 0,
+            green: 0,
+            blue: 0
+        )
+    }
+
+    func testArtworkOverlayIgnoresFullyTransparentCenterSamples() throws {
+        let transparentDark = ArtworkOverlayColor.Sample(red: 0, green: 0, blue: 0, alpha: 0)
+        let bright = ArtworkOverlayColor.Sample(red: 0.95, green: 0.95, blue: 0.95, alpha: 1)
+
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.resolvedColor(from: [transparentDark, bright]),
+            red: 0,
+            green: 0,
+            blue: 0
+        )
+    }
+
+    func testArtworkOverlayFallsBackToWhiteWithoutReadableArtwork() throws {
+        XCTAssertNil(
+            ArtworkOverlayColor.resolvedColor(from: [
+                ArtworkOverlayColor.Sample(red: 0, green: 0, blue: 0, alpha: 0)
+            ])
+        )
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.color(from: nil),
+            red: 1,
+            green: 1,
+            blue: 1
+        )
+    }
+
+    func testArtworkOverlayUsesAlphaWeightedMixedCenterSamples() throws {
+        let dark = ArtworkOverlayColor.Sample(red: 0.10, green: 0.10, blue: 0.10, alpha: 1)
+        let bright = ArtworkOverlayColor.Sample(red: 0.95, green: 0.95, blue: 0.95, alpha: 0.2)
+
+        try assertArtworkOverlayColor(
+            ArtworkOverlayColor.resolvedColor(from: [dark, bright]),
+            red: 1,
+            green: 1,
+            blue: 1
+        )
     }
 
     func testTagPaletteIndexCoversEveryPaletteBucket() {
@@ -133,5 +200,34 @@ final class NotchThemeTests: XCTestCase {
         XCTAssertEqual(color.red, red, accuracy: 0.000_001, file: file, line: line)
         XCTAssertEqual(color.green, green, accuracy: 0.000_001, file: file, line: line)
         XCTAssertEqual(color.blue, blue, accuracy: 0.000_001, file: file, line: line)
+    }
+
+    private func assertArtworkOverlayColor(
+        _ color: NSColor?,
+        red: CGFloat,
+        green: CGFloat,
+        blue: CGFloat,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        let color = try XCTUnwrap(color, file: file, line: line)
+        var resolvedRed: CGFloat = 0
+        var resolvedGreen: CGFloat = 0
+        var resolvedBlue: CGFloat = 0
+        var alpha: CGFloat = 0
+        guard let sRGBColor = color.usingColorSpace(.sRGB) else {
+            XCTFail("Expected an sRGB color.", file: file, line: line)
+            return
+        }
+        sRGBColor.getRed(
+            &resolvedRed,
+            green: &resolvedGreen,
+            blue: &resolvedBlue,
+            alpha: &alpha
+        )
+        XCTAssertEqual(resolvedRed, red, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(resolvedGreen, green, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(resolvedBlue, blue, accuracy: 0.000_001, file: file, line: line)
+        XCTAssertEqual(alpha, 1, accuracy: 0.000_001, file: file, line: line)
     }
 }

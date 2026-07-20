@@ -164,6 +164,62 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(try repository.fetch(scope: .completed).map(\.id), [note.id])
     }
 
+    func testTrashCompletedTasksIsGlobalRecoverableAndPreservesAttachments() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        let store = try AttachmentStore(rootURL: temporary)
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext, attachmentStore: store)
+        let completedAt = Date(timeIntervalSince1970: 1_700_100_000)
+        let clearedAt = Date(timeIntervalSince1970: 1_700_200_000)
+
+        let completedWithImage = try repository.createItem(
+            from: .image(Data("pixels".utf8), typeIdentifier: UTType.png.identifier),
+            origin: .manual
+        )
+        try repository.setKind(.task, for: completedWithImage)
+        try repository.setCompleted(true, for: completedWithImage, at: completedAt)
+        let storedPath = try XCTUnwrap(completedWithImage.attachments.first?.relativePath)
+
+        let archivedCompleted = try repository.createItem(text: "Archived done", origin: .manual)
+        try repository.setKind(.task, for: archivedCompleted)
+        try repository.setCompleted(true, for: archivedCompleted, at: completedAt)
+        try repository.archive(archivedCompleted)
+
+        let incomplete = try repository.createItem(text: "Still open", origin: .manual)
+        try repository.setKind(.task, for: incomplete)
+
+        let alreadyTrashed = try repository.createItem(text: "Already trashed", origin: .manual)
+        try repository.setKind(.task, for: alreadyTrashed)
+        try repository.setCompleted(true, for: alreadyTrashed, at: completedAt)
+        try repository.trash(alreadyTrashed, at: completedAt)
+
+        XCTAssertEqual(try repository.trashCompletedTasks(at: clearedAt), 2)
+
+        XCTAssertEqual(completedWithImage.trashedAt, clearedAt)
+        XCTAssertEqual(completedWithImage.updatedAt, clearedAt)
+        XCTAssertEqual(archivedCompleted.trashedAt, clearedAt)
+        XCTAssertNil(incomplete.trashedAt)
+        XCTAssertEqual(alreadyTrashed.trashedAt, completedAt)
+        XCTAssertTrue(try repository.fetch(scope: .completed).isEmpty)
+        XCTAssertEqual(
+            Set(try repository.fetch(scope: .trash).map(\.id)),
+            Set([completedWithImage.id, archivedCompleted.id, alreadyTrashed.id])
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: try store.resolve(relativePath: storedPath).path
+            )
+        )
+        XCTAssertEqual(try repository.trashCompletedTasks(at: clearedAt), 0)
+
+        try repository.restore(completedWithImage)
+        XCTAssertEqual(try repository.fetch(scope: .completed).map(\.id), [completedWithImage.id])
+    }
+
     func testEmptyCaptureIsRejected() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)

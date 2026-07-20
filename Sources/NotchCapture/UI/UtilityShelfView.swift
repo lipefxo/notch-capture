@@ -126,6 +126,17 @@ enum MusicScrubGeometry {
         return min(1, max(0, xPosition / width))
     }
 
+    static func thumbCenter(
+        fraction: Double,
+        width: CGFloat,
+        diameter: CGFloat
+    ) -> CGFloat {
+        guard width > 0 else { return 0 }
+        let radius = min(width / 2, max(0, diameter / 2))
+        let rawPosition = width * CGFloat(min(1, max(0, fraction)))
+        return min(max(radius, rawPosition), width - radius)
+    }
+
     static func committedFraction(
         previewing previewFraction: Double?,
         releaseX: CGFloat,
@@ -143,6 +154,7 @@ struct MusicProgressControl: View {
     let onSeek: (TimeInterval) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var scrubFraction: Double?
     @State private var isHovered = false
 
@@ -153,8 +165,9 @@ struct MusicProgressControl: View {
                 paused: !snapshot.isPlaying
             )
         ) { context in
-            let fraction = scrubFraction ?? snapshot.progress(at: context.date)
-            let displayedPosition = snapshot.position(at: context.date, previewing: scrubFraction)
+            let previewFraction = scrubFraction ?? forcedPreviewScrubFraction
+            let fraction = previewFraction ?? snapshot.progress(at: context.date)
+            let displayedPosition = snapshot.position(at: context.date, previewing: previewFraction)
 
             HStack(spacing: 6) {
                 if let total = MusicTimeFormatter.durationString(from: snapshot.duration) {
@@ -198,8 +211,9 @@ struct MusicProgressControl: View {
     }
 
     private func seekTrack(width: CGFloat, fraction: Double) -> some View {
-        let fillWidth = width * fraction
-        let thumbX = min(max(3.5, fillWidth), max(3.5, width - 3.5))
+        let clampedFraction = min(1, max(0, fraction))
+        let fillWidth = width * clampedFraction
+        let showsThumb = isHovered || scrubFraction != nil || forcedPreviewScrubFraction != nil
 
         return ZStack(alignment: .leading) {
             Color.black.opacity(0.001)
@@ -208,6 +222,44 @@ struct MusicProgressControl: View {
                 .fill(Color.white.opacity(0.09))
                 .frame(height: 3)
 
+            if #available(macOS 26.0, *), !reduceTransparency {
+                LiquidGlassMusicProgressTrack(
+                    trackWidth: width,
+                    fillWidth: fillWidth,
+                    thumbX: MusicScrubGeometry.thumbCenter(
+                        fraction: clampedFraction,
+                        width: width,
+                        diameter: 9
+                    ),
+                    showsThumb: showsThumb,
+                    reduceMotion: reduceMotion
+                )
+            } else {
+                legacyProgressTrack(
+                    trackWidth: width,
+                    fillWidth: fillWidth,
+                    thumbX: MusicScrubGeometry.thumbCenter(
+                        fraction: clampedFraction,
+                        width: width,
+                        diameter: 7
+                    ),
+                    showsThumb: showsThumb
+                )
+            }
+        }
+        .frame(width: width, height: 14)
+        .contentShape(Rectangle())
+        .gesture(seekGesture(width: width))
+        .onHover { isHovered = $0 }
+    }
+
+    private func legacyProgressTrack(
+        trackWidth: CGFloat,
+        fillWidth: CGFloat,
+        thumbX: CGFloat,
+        showsThumb: Bool
+    ) -> some View {
+        ZStack(alignment: .leading) {
             Capsule()
                 .fill(NotchTheme.primaryAccent.opacity(0.9))
                 .frame(width: fillWidth, height: 3)
@@ -216,14 +268,11 @@ struct MusicProgressControl: View {
                 .fill(NotchTheme.primaryAccent)
                 .frame(width: 7, height: 7)
                 .position(x: thumbX, y: 7)
-                .opacity(isHovered || scrubFraction != nil ? 1 : 0)
-                .scaleEffect(isHovered || scrubFraction != nil ? 1 : 0.7)
-                .animation(reduceMotion ? nil : NotchMotion.hover, value: isHovered)
+                .opacity(showsThumb ? 1 : 0)
+                .scaleEffect(showsThumb ? 1 : 0.7)
+                .animation(reduceMotion ? nil : NotchMotion.hover, value: showsThumb)
         }
-        .frame(width: width, height: 14)
-        .contentShape(Rectangle())
-        .gesture(seekGesture(width: width))
-        .onHover { isHovered = $0 }
+        .frame(width: trackWidth, height: 14, alignment: .leading)
     }
 
     private func seekGesture(width: CGFloat) -> some Gesture {
@@ -258,6 +307,20 @@ struct MusicProgressControl: View {
         return "\(current) of \(total)"
     }
 
+    private var forcedPreviewScrubFraction: Double? {
+#if DEBUG
+        guard let argument = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--preview-music-scrub=")
+        }) else {
+            return nil
+        }
+        let value = String(argument.dropFirst("--preview-music-scrub=".count))
+        return Double(value).map { min(1, max(0, $0)) }
+#else
+        return nil
+#endif
+    }
+
     private func timeLabel(
         _ value: String,
         width: CGFloat,
@@ -271,5 +334,42 @@ struct MusicProgressControl: View {
             .frame(width: width, alignment: alignment)
             .layoutPriority(1)
             .accessibilityHidden(true)
+    }
+}
+
+@available(macOS 26.0, *)
+private struct LiquidGlassMusicProgressTrack: View {
+    let trackWidth: CGFloat
+    let fillWidth: CGFloat
+    let thumbX: CGFloat
+    let showsThumb: Bool
+    let reduceMotion: Bool
+
+    var body: some View {
+        GlassEffectContainer(spacing: 2) {
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(NotchTheme.primaryAccent.opacity(0.38))
+                    .frame(width: fillWidth, height: 4)
+                    .glassEffect(glass, in: Capsule())
+
+                if showsThumb {
+                    Circle()
+                        .fill(NotchTheme.primaryAccent.opacity(0.42))
+                        .frame(width: 9, height: 9)
+                        .glassEffect(glass, in: Circle())
+                        .glassEffectTransition(reduceMotion ? .identity : .materialize)
+                        .position(x: thumbX, y: 7)
+                }
+            }
+            .frame(width: trackWidth, height: 14, alignment: .leading)
+        }
+        .animation(reduceMotion ? nil : NotchMotion.hover, value: showsThumb)
+    }
+
+    private var glass: Glass {
+        .regular
+            .tint(NotchTheme.primaryAccent.opacity(0.55))
+            .interactive()
     }
 }
