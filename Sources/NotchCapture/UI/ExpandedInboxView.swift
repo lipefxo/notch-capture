@@ -30,6 +30,36 @@ struct ExpandedSurfaceRevealPlan: Equatable {
     }
 }
 
+/// Keeps route direction independent from the control that initiated it.
+/// A route can change through a click, keyboard command, folder creation, or
+/// model reconciliation, and each path should resolve to the same transition.
+struct FolderNavigationMotionPlan: Equatable {
+    let offset: CGFloat
+    let reduceMotion: Bool
+
+    static func resolve(
+        for location: AppViewModel.BrowseLocation,
+        reduceMotion: Bool
+    ) -> Self {
+        let directionalOffset: CGFloat = switch location {
+        case .root: -NotchMotion.navigationOffset
+        case .folder: NotchMotion.navigationOffset
+        }
+        return Self(offset: reduceMotion ? 0 : directionalOffset, reduceMotion: reduceMotion)
+    }
+
+    var transition: AnyTransition {
+        guard !reduceMotion else {
+            return .opacity.animation(NotchMotion.reducedMotion)
+        }
+        let routeTransition = AnyTransition.opacity.combined(with: .offset(x: offset))
+        return .asymmetric(
+            insertion: routeTransition.animation(NotchMotion.navigation),
+            removal: routeTransition.animation(NotchMotion.navigation)
+        )
+    }
+}
+
 /// A single identity domain for every ledger row. Pinning changes a row's
 /// position in this collection instead of removing it from one `ForEach` and
 /// inserting it into another while the outgoing row transition is still alive.
@@ -87,7 +117,6 @@ struct ExpandedInboxView: View {
     @State private var dragRegionStore = LedgerDragRegionStore()
     @State private var dragPresentation: LedgerDragPresentation?
     @State private var dragGeneration = 0
-    @State private var navigationDirection: CGFloat = 1
     @State private var ledgerAppearance = 1.0
     @State private var composerAppearance = 1.0
     @State private var appearanceGeneration: Int?
@@ -158,14 +187,16 @@ struct ExpandedInboxView: View {
         return nil
     }
 
+    private var navigationPlan: FolderNavigationMotionPlan {
+        .resolve(for: viewModel.browseLocation, reduceMotion: reduceMotion)
+    }
+
     var body: some View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
                 UtilityShelfView(viewModel: viewModel)
-                ledgerBody
-                    .id(viewModel.browseLocation)
-                    .transition(navigationTransition)
+                navigationViewport
                     .opacity(ledgerAppearance)
                     .offset(y: -NotchMotion.expandedLedgerOffset * (1 - ledgerAppearance))
                     .scaleEffect(
@@ -210,7 +241,7 @@ struct ExpandedInboxView: View {
             if viewModel.isAtRoot {
                 viewModel.dismiss()
             } else {
-                navigate(forward: false) { viewModel.openRoot() }
+                navigate { viewModel.openRoot() }
             }
         }
         .onAppear {
@@ -230,6 +261,12 @@ struct ExpandedInboxView: View {
             } else {
                 resetReorderState()
             }
+        }
+        .onChange(of: viewModel.browseLocation) { _, _ in
+            // Navigation can originate outside a button action (for example
+            // `/folder`, deleting the open folder, or reconciliation). Keep
+            // drag state and the next route's scroll position deterministic.
+            resetReorderState()
         }
         .onChange(of: focusedField) { _, field in
             if field == .unifiedInput {
@@ -347,54 +384,9 @@ struct ExpandedInboxView: View {
     private var header: some View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
-                HStack(spacing: 2) {
-                    if !viewModel.isAtRoot {
-                        Button {
-                            navigate(forward: false) { viewModel.openRoot() }
-                        } label: {
-                            Image(systemName: "chevron.left")
-                                .font(.system(size: 11, weight: .semibold))
-                        }
-                        .buttonStyle(PressableIconButtonStyle(width: 20))
-                        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .help("Back to Inbox")
-                        .accessibilityLabel("Back to Inbox")
-                    }
+                routeHeaderLeading
 
-                    Text(viewModel.navigationTitle)
-                        .font(.system(size: 18, weight: .medium))
-                        .foregroundStyle(NotchTheme.primaryText)
-                        .lineLimit(1)
-
-                    if let folder = viewModel.currentFolder {
-                        Button {
-                            presentFolderActions(folder)
-                        } label: {
-                            Image(systemName: "ellipsis")
-                                .font(.system(size: 13, weight: .semibold))
-                        }
-                        .buttonStyle(PressableIconButtonStyle())
-                        .menuAnchor($folderHeaderMenuAnchor)
-                        .help("Folder actions")
-                        .accessibilityLabel("Actions for \(folder.name)")
-                    }
-                }
-
-                Spacer(minLength: 8)
-
-                if viewModel.isAtRoot {
-                    Button {
-                        viewModel.newFolderName = ""
-                        presentCreateFolder()
-                    } label: {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 13, weight: .regular))
-                    }
-                    .buttonStyle(PressableIconButtonStyle())
-                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .help("New folder")
-                    .accessibilityLabel("Create a new folder")
-                }
+                routeHeaderTrailingAction
 
                 pomodoroControl
 
@@ -420,6 +412,74 @@ struct ExpandedInboxView: View {
         .padding(.trailing, 13)
         .padding(.top, 8)
         .background(NotchTheme.ink)
+        .animation(
+            reduceMotion ? NotchMotion.reducedMotion : NotchMotion.navigation,
+            value: viewModel.browseLocation
+        )
+    }
+
+    private var routeHeaderLeading: some View {
+        ZStack(alignment: .leading) {
+            HStack(spacing: 2) {
+                if !viewModel.isAtRoot {
+                    Button {
+                        navigate { viewModel.openRoot() }
+                    } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(PressableIconButtonStyle(width: 20))
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .help("Back to Inbox")
+                    .accessibilityLabel("Back to Inbox")
+                }
+
+                Text(viewModel.navigationTitle)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(NotchTheme.primaryText)
+                    .lineLimit(1)
+
+                if let folder = viewModel.currentFolder {
+                    Button {
+                        presentFolderActions(folder)
+                    } label: {
+                        Image(systemName: "ellipsis")
+                            .font(.system(size: 13, weight: .semibold))
+                    }
+                    .buttonStyle(PressableIconButtonStyle())
+                    .menuAnchor($folderHeaderMenuAnchor)
+                    .help("Folder actions")
+                    .accessibilityLabel("Actions for \(folder.name)")
+                }
+            }
+            .id(viewModel.browseLocation)
+            .transition(navigationPlan.transition)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .clipped()
+    }
+
+    private var routeHeaderTrailingAction: some View {
+        ZStack {
+            if viewModel.isAtRoot {
+                Button {
+                    viewModel.newFolderName = ""
+                    presentCreateFolder()
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                        .font(.system(size: 13, weight: .regular))
+                }
+                .buttonStyle(PressableIconButtonStyle())
+                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                .help("New folder")
+                .accessibilityLabel("Create a new folder")
+                .transition(navigationPlan.transition)
+            }
+        }
+        // This fixed slot prevents the Pomodoro and Settings controls from
+        // shifting when the root-only action comes and goes.
+        .frame(width: 28, height: 28)
+        .clipped()
     }
 
     private var pomodoroControl: some View {
@@ -484,29 +544,10 @@ struct ExpandedInboxView: View {
         ))
     }
 
-    private func navigate(forward: Bool, _ update: () -> Void) {
+    private func navigate(_ update: () -> Void) {
         guard viewModel.saveEditing() else { return }
-        navigationDirection = forward ? 1 : -1
-        if reduceMotion {
-            update()
-        } else {
-            withAnimation(NotchMotion.navigation, update)
-        }
+        update()
         resetReorderState()
-    }
-
-    private var navigationTransition: AnyTransition {
-        guard !reduceMotion else {
-            return .opacity.animation(NotchMotion.reducedMotion)
-        }
-        return .asymmetric(
-            insertion: .opacity
-                .combined(with: .offset(x: 12 * navigationDirection))
-                .animation(NotchMotion.navigation),
-            removal: .opacity
-                .combined(with: .offset(x: -12 * navigationDirection))
-                .animation(NotchMotion.navigation)
-        )
     }
 
     private func beginRenaming(_ folder: AppViewModel.FolderSummary) {
@@ -1097,6 +1138,23 @@ struct ExpandedInboxView: View {
         }
     }
 
+    /// The two route trees share one bounded viewport while SwiftUI retains
+    /// the outgoing identity for its removal transition. The shelf and
+    /// composer deliberately sit outside this stack so they never move.
+    private var navigationViewport: some View {
+        ZStack {
+            ledgerBody
+                .id(viewModel.browseLocation)
+                .transition(navigationPlan.transition)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .clipped()
+        .animation(
+            reduceMotion ? NotchMotion.reducedMotion : NotchMotion.navigation,
+            value: viewModel.browseLocation
+        )
+    }
+
     private var ledgerBody: some View {
         Group {
             if let error = viewModel.errorMessage {
@@ -1287,7 +1345,7 @@ struct ExpandedInboxView: View {
             isSelected: viewModel.selectedFolderID == folder.id,
             isDropTarget: targetedFolderID == folder.id,
             reduceMotion: reduceMotion,
-            onOpen: { navigate(forward: true) { viewModel.openFolder(folder) } },
+            onOpen: { navigate { viewModel.openFolder(folder) } },
             onRename: { beginRenaming(folder) },
             onDelete: { presentDeleteFolder(folder) }
         )

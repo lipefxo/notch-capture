@@ -563,6 +563,28 @@ final class PanelShadowApronTests: XCTestCase {
 }
 
 final class NotchMotionTokenTests: XCTestCase {
+    func testFolderNavigationUsesMirroredRouteOffsets() {
+        let root = FolderNavigationMotionPlan.resolve(for: .root, reduceMotion: false)
+        let folder = FolderNavigationMotionPlan.resolve(for: .folder(UUID()), reduceMotion: false)
+
+        XCTAssertEqual(root.offset, -NotchMotion.navigationOffset)
+        XCTAssertEqual(folder.offset, NotchMotion.navigationOffset)
+        XCTAssertEqual(abs(root.offset), abs(folder.offset))
+        XCTAssertFalse(root.reduceMotion)
+        XCTAssertFalse(folder.reduceMotion)
+    }
+
+    func testFolderNavigationRemovesDisplacementForReduceMotion() {
+        for location in [
+            AppViewModel.BrowseLocation.root,
+            .folder(UUID()),
+        ] {
+            let plan = FolderNavigationMotionPlan.resolve(for: location, reduceMotion: true)
+            XCTAssertEqual(plan.offset, 0)
+            XCTAssertTrue(plan.reduceMotion)
+        }
+    }
+
     func testLiquidSurfaceProfilesAreUnderdamped() {
         let profiles: [(NotchSpringProfile, TimeInterval, Double)] = [
             (NotchMotion.surfaceExpansion, 0.56, 0.16),
@@ -609,6 +631,7 @@ final class NotchMotionTokenTests: XCTestCase {
         XCTAssertEqual(NotchMotion.expandedLedgerDelay, 0.10)
         XCTAssertEqual(NotchMotion.expandedComposerDelay, 0.24)
         XCTAssertEqual(NotchMotion.expandedElementRevealDuration, 0.24)
+        XCTAssertEqual(NotchMotion.navigationOffset, 18)
         XCTAssertLessThan(
             NotchMotion.expandedLedgerDelay,
             NotchMotion.expandedComposerDelay

@@ -209,6 +209,9 @@ enum NotchMotion {
     static let expandedElementRevealDuration: TimeInterval = 0.24
     static let expandedLedgerOffset: CGFloat = 5
     static let expandedComposerOffset: CGFloat = 8
+    /// Folder routes travel just far enough to establish direction without
+    /// pulling focus from the ledger itself.
+    static let navigationOffset: CGFloat = 18
     static let composerFocusDuration: TimeInterval = 0.18
     static let reducedMotionDuration: TimeInterval = 0.12
     static let completionRevealDuration: TimeInterval = 0.40
