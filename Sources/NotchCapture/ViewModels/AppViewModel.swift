@@ -85,7 +85,11 @@ final class AppViewModel: ObservableObject {
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
     @Published var isPomodoroCardVisible = false
     @Published var expandedUtilityFocus: UtilityFocus?
-    @Published var onboardingStep: OnboardingStep = .welcome
+    @Published var onboardingStep: OnboardingStep = .capture
+
+    /// True while the user has not finished onboarding; every attempt to open
+    /// the expanded surface resumes onboarding at the current step instead.
+    private(set) var needsOnboarding: Bool
     @Published private(set) var isIdlePillHidden = false
     @Published var shortcuts: [Shortcut]
     @Published var shortcutRecordingRequest: ShortcutRecordingRequest?
@@ -135,6 +139,7 @@ final class AppViewModel: ObservableObject {
         now: @escaping () -> Date = { .now }
     ) {
         self.surfaceState = surfaceState
+        self.needsOnboarding = surfaceState == .onboarding
         self.items = items
         self.itemEditSession = nil
         self.folders = folders
@@ -320,6 +325,10 @@ final class AppViewModel: ObservableObject {
 
     func openExpanded() {
         errorMessage = nil
+        guard !needsOnboarding else {
+            surfaceState = .onboarding
+            return
+        }
         keyboardFocus = .composer
         surfaceState = .expanded
     }
@@ -336,6 +345,7 @@ final class AppViewModel: ObservableObject {
 
     func finishOnboarding() {
         guard surfaceState == .onboarding else { return }
+        needsOnboarding = false
         hooks.onCompleteOnboarding()
         openExpanded()
     }

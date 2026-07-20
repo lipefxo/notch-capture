@@ -369,11 +369,14 @@ final class AppCoordinator {
         guard let argument = CommandLine.arguments.first(where: {
             $0.hasPrefix("--preview-onboarding-step=")
         }) else {
-            return .welcome
+            return .capture
         }
         switch argument.dropFirst("--preview-onboarding-step=".count) {
-        case "shortcuts": return .shortcuts
-        default: return .welcome
+        case "capture": return .capture
+        case "organize": return .organize
+        case "music": return .music
+        case "pomodoro": return .pomodoro
+        default: return .capture
         }
     }
 
