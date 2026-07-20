@@ -12,22 +12,31 @@ final class AppViewModel: ObservableObject {
 
     enum ComposerCommand: String, CaseIterable, Identifiable, Hashable {
         case folder
+        case clear
 
         var id: String { rawValue }
-        var completion: String { "/\(rawValue) " }
+        var completion: String {
+            switch self {
+            case .folder: "/folder "
+            case .clear: "/clear"
+            }
+        }
         var title: String {
             switch self {
             case .folder: "Create folder"
+            case .clear: "Clear completed tasks"
             }
         }
         var detail: String {
             switch self {
             case .folder: "Create a top-level folder"
+            case .clear: "Move all completed tasks to Trash"
             }
         }
         var icon: String {
             switch self {
             case .folder: "folder.badge.plus"
+            case .clear: "checkmark.circle"
             }
         }
     }
@@ -241,6 +250,9 @@ final class AppViewModel: ObservableObject {
     }
 
     var isFolderCommandActive: Bool { folderCommandName != nil }
+    var isClearCommandActive: Bool {
+        normalizedComposerText.caseInsensitiveCompare("/clear") == .orderedSame
+    }
     var composerCommandSuggestions: [ComposerCommand] {
         guard let query = slashCommandQuery else { return [] }
         guard !query.isEmpty else { return ComposerCommand.allCases }
@@ -251,7 +263,9 @@ final class AppViewModel: ObservableObject {
             ) != nil
         }
     }
-    var composerHasQuery: Bool { !isFolderCommandActive && !normalizedComposerText.isEmpty }
+    var composerHasQuery: Bool {
+        !isFolderCommandActive && !isClearCommandActive && !normalizedComposerText.isEmpty
+    }
     var composerHasImages: Bool { !composerImages.isEmpty }
     var composerHasDraft: Bool { !normalizedComposerText.isEmpty || composerHasImages }
     var searchMatchCount: Int { visibleFolders.count + visibleItems.count }
@@ -271,15 +285,22 @@ final class AppViewModel: ObservableObject {
         return tags.contains { CaptureTagParser.normalize($0.name) == normalized }
     }
     var canAddComposerText: Bool {
-        !isFolderCommandActive && composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
+        !isFolderCommandActive && !isClearCommandActive
+            && composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
     }
     var canSubmitComposer: Bool {
-        isFolderCommandActive || composerHasImages || canAddComposerText || canCreateStandaloneTag
+        isFolderCommandActive || isClearCommandActive
+            || composerHasImages || canAddComposerText || canCreateStandaloneTag
     }
     var composerActionLabel: String {
         if isFolderCommandActive { return "Create folder" }
+        if isClearCommandActive { return "Clear" }
         if canCreateStandaloneTag { return "Create tag" }
         return "Add"
+    }
+
+    var completedTaskCount: Int {
+        clearableCompletedTaskIDs.count
     }
 
     var visibleTagGroups: [TagGroup] {
@@ -756,6 +777,29 @@ final class AppViewModel: ObservableObject {
         withAnimation(ledgerRemovalAnimation) {
             hooks.onEmptyTrash()
         }
+    }
+
+    func clearCompletedTasks() {
+        let targetIDs = clearableCompletedTaskIDs
+        composerText = ""
+
+        guard !targetIDs.isEmpty else {
+            errorMessage = "No completed tasks to clear."
+            return
+        }
+
+        errorMessage = nil
+        for id in targetIDs { cancelCompletionHold(id) }
+        withAnimation(ledgerRemovalAnimation) {
+            for index in items.indices where targetIDs.contains(items[index].id) {
+                items[index].isTrashed = true
+            }
+        }
+        if selectedItemID.map(targetIDs.contains) == true {
+            clearSelection()
+        }
+        focusComposer()
+        hooks.onClearCompletedTasks()
     }
 
     @discardableResult
@@ -1283,7 +1327,7 @@ final class AppViewModel: ObservableObject {
     }
 
     private var parsedComposerQuery: ParsedTagText {
-        guard !isFolderCommandActive else { return CaptureTagParser.parse("") }
+        guard !isFolderCommandActive, !isClearCommandActive else { return CaptureTagParser.parse("") }
         let source = normalizedComposerText
         if let cachedParsedQuery, cachedParsedQuery.source == source {
             return cachedParsedQuery.parsed
@@ -1375,6 +1419,12 @@ final class AppViewModel: ObservableObject {
     private func mutateItem(_ id: UUID, mutation: (inout LedgerItem) -> Void) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         mutation(&items[index])
+    }
+
+    private var clearableCompletedTaskIDs: Set<UUID> {
+        Set(items.lazy.filter {
+            $0.kind == .task && $0.isCompleted && !$0.isTrashed
+        }.map(\.id))
     }
 
     private func applyEditedText(_ text: String, to itemID: UUID) {

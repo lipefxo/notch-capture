@@ -406,6 +406,7 @@ extension AppViewModel {
         var onRestore: (UUID) -> Void = { _ in }
         var onDeletePermanently: (UUID) -> Void = { _ in }
         var onEmptyTrash: () -> Void = {}
+        var onClearCompletedTasks: () -> Void = {}
         var onDroppedProviders: ([NSItemProvider]) -> Void = { _ in }
         var onCompleteOnboarding: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }

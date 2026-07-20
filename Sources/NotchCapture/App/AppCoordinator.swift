@@ -518,6 +518,16 @@ final class AppCoordinator {
                 self.show(error)
             }
         }
+        hooks.onClearCompletedTasks = { [weak self] in
+            guard let self else { return }
+            do {
+                try self.repository.trashCompletedTasks()
+                self.reloadFromStore()
+            } catch {
+                self.reloadFromStore()
+                self.show(error)
+            }
+        }
         hooks.onDroppedProviders = { [weak self] providers in
             self?.handleDrop(providers)
         }

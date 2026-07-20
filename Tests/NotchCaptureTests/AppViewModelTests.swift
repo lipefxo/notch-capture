@@ -4,6 +4,70 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testLedgerFeedLayoutWithoutPinsContainsUniqueItemIdentitiesAndNoHeader() {
+        let first = AppViewModel.LedgerItem(title: "First")
+        let second = AppViewModel.LedgerItem(title: "Second")
+
+        let entries = LedgerFeedLayoutEntry.make(
+            pinnedItems: [],
+            unpinnedItems: [first, second]
+        )
+
+        XCTAssertEqual(entries.map(\.id), [.item(first.id), .item(second.id)])
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
+    }
+
+    func testLedgerFeedLayoutKeepsItemIdentityAcrossPinAndUnpinMoves() {
+        let moving = AppViewModel.LedgerItem(title: "Moving")
+        let other = AppViewModel.LedgerItem(title: "Other")
+        let before = LedgerFeedLayoutEntry.make(
+            pinnedItems: [],
+            unpinnedItems: [moving, other]
+        )
+        var pinnedMoving = moving
+        pinnedMoving.isPinned = true
+
+        let after = LedgerFeedLayoutEntry.make(
+            pinnedItems: [pinnedMoving],
+            unpinnedItems: [other]
+        )
+        let unpinnedAgain = LedgerFeedLayoutEntry.make(
+            pinnedItems: [],
+            unpinnedItems: [moving, other]
+        )
+
+        XCTAssertTrue(before.contains { $0.id == .item(moving.id) })
+        XCTAssertTrue(after.contains { $0.id == .item(moving.id) })
+        XCTAssertEqual(after.map(\.id), [.pinnedHeader, .item(moving.id), .item(other.id)])
+        XCTAssertEqual(Set(after.map(\.id)).count, after.count)
+        XCTAssertEqual(unpinnedAgain.map(\.id), before.map(\.id))
+        XCTAssertEqual(Set(unpinnedAgain.map(\.id)).count, unpinnedAgain.count)
+    }
+
+    func testLedgerFeedLayoutPlacesOneHeaderBeforeMultiplePinnedRows() {
+        let firstPinned = AppViewModel.LedgerItem(title: "First pinned", isPinned: true)
+        let secondPinned = AppViewModel.LedgerItem(title: "Second pinned", isPinned: true)
+        let unpinned = AppViewModel.LedgerItem(title: "Unpinned")
+
+        let entries = LedgerFeedLayoutEntry.make(
+            pinnedItems: [firstPinned, secondPinned],
+            unpinnedItems: [unpinned]
+        )
+
+        XCTAssertEqual(entries.map(\.id), [
+            .pinnedHeader,
+            .item(firstPinned.id),
+            .item(secondPinned.id),
+            .item(unpinned.id),
+        ])
+        let headerCounts = entries.compactMap { entry -> Int? in
+            guard case let .pinnedHeader(count) = entry else { return nil }
+            return count
+        }
+        XCTAssertEqual(headerCounts, [2])
+        XCTAssertEqual(Set(entries.map(\.id)).count, entries.count)
+    }
+
     func testFolderCommandParsingIsCaseInsensitiveAndRequiresACompleteCommand() {
         let viewModel = AppViewModel()
 
@@ -26,13 +90,129 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.composerText = "/"
 
-        XCTAssertEqual(viewModel.composerCommandSuggestions, [.folder])
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.folder, .clear])
         XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
         XCTAssertEqual(viewModel.composerText, "/folder ")
         XCTAssertTrue(viewModel.isFolderCommandActive)
 
         viewModel.composerText = "/unknown"
         XCTAssertTrue(viewModel.composerCommandSuggestions.isEmpty)
+    }
+
+    func testClearCommandParsingIsCaseInsensitiveExactAndArgumentFree() {
+        let viewModel = AppViewModel()
+
+        viewModel.composerText = "/ClEaR"
+
+        XCTAssertTrue(viewModel.isClearCommandActive)
+        XCTAssertFalse(viewModel.composerHasQuery)
+        XCTAssertTrue(viewModel.canSubmitComposer)
+        XCTAssertEqual(viewModel.composerActionLabel, "Clear")
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.clear])
+
+        viewModel.composerText = "/clearance"
+        XCTAssertFalse(viewModel.isClearCommandActive)
+        XCTAssertTrue(viewModel.composerHasQuery)
+
+        viewModel.composerText = "/clear later"
+        XCTAssertFalse(viewModel.isClearCommandActive)
+        XCTAssertTrue(viewModel.composerHasQuery)
+
+        viewModel.composerText = "/cl"
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.clear])
+        XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
+        XCTAssertEqual(viewModel.composerText, "/clear")
+    }
+
+    func testClearCompletedTasksGloballyTrashesOnlyEligibleTasksAndPreservesImageDraft() {
+        let inbox = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Inbox done",
+            isCompleted: true,
+            completedAt: .now
+        )
+        let folderID = UUID()
+        let folder = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Folder done",
+            folderID: folderID,
+            isCompleted: true,
+            completedAt: .now
+        )
+        let archived = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Archived done",
+            isCompleted: true,
+            completedAt: .now,
+            isArchived: true
+        )
+        let held = AppViewModel.LedgerItem(kind: .task, title: "Held completion")
+        let incomplete = AppViewModel.LedgerItem(kind: .task, title: "Still open")
+        let completedNote = AppViewModel.LedgerItem(
+            title: "Impossible legacy note",
+            isCompleted: true,
+            completedAt: .now
+        )
+        let alreadyTrashed = AppViewModel.LedgerItem(
+            kind: .task,
+            title: "Already trashed",
+            isCompleted: true,
+            completedAt: .now,
+            isTrashed: true
+        )
+        var clearCalls = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onClearCompletedTasks = { clearCalls += 1 }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [inbox, folder, archived, held, incomplete, completedNote, alreadyTrashed],
+            hooks: hooks
+        )
+        viewModel.toggleComplete(held)
+        viewModel.filter = .completed
+        viewModel.select(inbox)
+        let image = composerImage(name: "Draft.png", contents: "pixels")
+        viewModel.appendComposerImages([image])
+        viewModel.composerText = "/CLEAR"
+
+        XCTAssertEqual(viewModel.completedTaskCount, 4)
+        XCTAssertTrue(viewModel.completionHoldIDs.contains(held.id))
+
+        viewModel.clearCompletedTasks()
+
+        XCTAssertEqual(clearCalls, 1)
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertEqual(viewModel.composerImages, [image])
+        XCTAssertNil(viewModel.selectedItemID)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+        XCTAssertTrue(viewModel.completionHoldIDs.isEmpty)
+        XCTAssertEqual(
+            Set(viewModel.items.filter(\.isTrashed).map(\.id)),
+            Set([inbox.id, folder.id, archived.id, held.id, alreadyTrashed.id])
+        )
+        XCTAssertFalse(viewModel.items.first { $0.id == incomplete.id }!.isTrashed)
+        XCTAssertFalse(viewModel.items.first { $0.id == completedNote.id }!.isTrashed)
+        XCTAssertEqual(viewModel.completedTaskCount, 0)
+    }
+
+    func testClearCompletedTasksWithNoEligibleItemsShowsFeedbackWithoutPersisting() {
+        let image = composerImage(name: "Draft.png", contents: "pixels")
+        var clearCalls = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onClearCompletedTasks = { clearCalls += 1 }
+        let viewModel = AppViewModel(
+            items: [AppViewModel.LedgerItem(kind: .task, title: "Still open")],
+            hooks: hooks
+        )
+        viewModel.appendComposerImages([image])
+        viewModel.composerText = "/clear"
+
+        viewModel.clearCompletedTasks()
+
+        XCTAssertEqual(clearCalls, 0)
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertEqual(viewModel.composerImages, [image])
+        XCTAssertEqual(viewModel.errorMessage, "No completed tasks to clear.")
     }
 
     func testFolderCommandCreatesAndOpensFolderWithoutResettingTheImageDraft() throws {

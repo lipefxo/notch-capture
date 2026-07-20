@@ -13,12 +13,7 @@ struct ArtworkPlaybackControl: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var isFocused: Bool
     @State private var isHovered = false
-    @State private var accentColor = NSColor(
-        srgbRed: 0.23,
-        green: 0.78,
-        blue: 0.50,
-        alpha: 1
-    )
+    @State private var overlayColor = NSColor.white
 
     private var showsTransportGlyph: Bool { isHovered || isFocused || forcesPreviewHover }
 
@@ -28,7 +23,7 @@ struct ArtworkPlaybackControl: View {
                 if showsTransportGlyph {
                     ArtworkPlaybackCanvas(
                         artwork: artwork,
-                        accentColor: accentColor,
+                        overlayColor: overlayColor,
                         availableSize: size,
                         overlay: .transport(isPlaying: isPlaying)
                     )
@@ -42,7 +37,7 @@ struct ArtworkPlaybackControl: View {
                     ) { timeline in
                         ArtworkPlaybackCanvas(
                             artwork: artwork,
-                            accentColor: accentColor,
+                            overlayColor: overlayColor,
                             availableSize: size,
                             overlay: .waveform(time: timeline.date.timeIntervalSinceReferenceDate)
                         )
@@ -51,7 +46,7 @@ struct ArtworkPlaybackControl: View {
                 } else {
                     ArtworkPlaybackCanvas(
                         artwork: artwork,
-                        accentColor: accentColor,
+                        overlayColor: overlayColor,
                         availableSize: size,
                         overlay: .clean
                     )
@@ -68,12 +63,7 @@ struct ArtworkPlaybackControl: View {
         .focused($isFocused)
         .onHover { isHovered = $0 }
         .task(id: artworkIdentity) {
-            accentColor = ArtworkAccentColor.color(from: artwork) ?? NSColor(
-                srgbRed: 0.23,
-                green: 0.78,
-                blue: 0.50,
-                alpha: 1
-            )
+            overlayColor = ArtworkOverlayColor.color(from: artwork)
         }
         .help(isPlaying ? "Pause \(title)" : "Play \(title)")
         .accessibilityLabel(isPlaying ? "Pause \(title)" : "Play \(title)")
@@ -125,7 +115,7 @@ private enum ArtworkCanvasOverlay {
 
 private struct ArtworkPlaybackCanvas: View {
     let artwork: NSImage?
-    let accentColor: NSColor
+    let overlayColor: NSColor
     let availableSize: CGFloat
     let overlay: ArtworkCanvasOverlay
 
@@ -133,7 +123,6 @@ private struct ArtworkPlaybackCanvas: View {
         ZStack {
             artworkLayer
             overlayLayer
-                .blendMode(artwork == nil ? .normal : .difference)
         }
         .frame(width: availableSize, height: availableSize)
         .accessibilityHidden(true)
@@ -151,7 +140,7 @@ private struct ArtworkPlaybackCanvas: View {
                 Color.white.opacity(0.07)
                 Image(systemName: "music.note")
                     .font(.system(size: availableSize * 0.42, weight: .bold))
-                    .foregroundStyle(Color(nsColor: accentColor))
+                    .foregroundStyle(Color(nsColor: overlayColor))
             }
         }
     }
@@ -182,13 +171,13 @@ private struct ArtworkPlaybackCanvas: View {
                             )
                         }
                     },
-                    with: .color(Color(nsColor: accentColor))
+                    with: .color(Color(nsColor: overlayColor))
                 )
             }
         case let .transport(isPlaying):
             Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                 .font(.system(size: max(8, availableSize * 0.36), weight: .bold))
-                .foregroundStyle(Color(nsColor: accentColor))
+                .foregroundStyle(Color(nsColor: overlayColor))
                 .offset(x: isPlaying ? 0 : availableSize * 0.025)
         }
     }
@@ -201,7 +190,7 @@ private struct ArtworkPlaybackCanvas: View {
     }
 }
 
-enum ArtworkAccentColor {
+enum ArtworkOverlayColor {
     struct Sample {
         let red: Double
         let green: Double
@@ -209,44 +198,22 @@ enum ArtworkAccentColor {
         let alpha: Double
     }
 
-    static func color(from image: NSImage?) -> NSColor? {
-        guard let image, let resolved = resolvedColor(from: samples(from: image)) else {
-            return nil
-        }
-        return resolved
+    static func color(from image: NSImage?) -> NSColor {
+        guard let image else { return .white }
+        return resolvedColor(from: samples(from: image)) ?? .white
     }
 
     static func resolvedColor(from samples: [Sample]) -> NSColor? {
-        let visible = samples.filter { $0.alpha >= 0.5 }
-        guard !visible.isEmpty else { return nil }
+        let weightedSamples = samples.filter { $0.alpha > 0 }
+        guard !weightedSamples.isEmpty else { return nil }
 
-        let binCount = 24
-        var bins = Array(repeating: HueBin(), count: binCount)
-        var chromaticWeight = 0.0
+        let totalAlpha = weightedSamples.reduce(0) { $0 + $1.alpha }
+        let luminance = weightedSamples.reduce(0) { result, sample in
+            result + (relativeLuminance(of: sample) * sample.alpha)
+        } / totalAlpha
 
-        for sample in visible {
-            let hsv = hsv(red: sample.red, green: sample.green, blue: sample.blue)
-            guard hsv.saturation >= 0.12 else { continue }
-
-            let usableBrightness = max(0.18, 1 - abs(hsv.brightness - 0.58) * 1.25)
-            let weight = hsv.saturation * usableBrightness * sample.alpha
-            let index = min(binCount - 1, Int(hsv.hue * Double(binCount)))
-            bins[index].weight += weight
-            bins[index].saturation += hsv.saturation * weight
-            chromaticWeight += weight
-        }
-
-        let chromaticThreshold = Double(visible.count) * 0.055
-        guard chromaticWeight >= chromaticThreshold,
-              let dominantIndex = bins.indices.max(by: { bins[$0].weight < bins[$1].weight }),
-              bins[dominantIndex].weight > 0 else {
-            return NSColor(srgbRed: 0.96, green: 0.96, blue: 0.96, alpha: 1)
-        }
-
-        let dominant = bins[dominantIndex]
-        let hue = (Double(dominantIndex) + 0.5) / Double(binCount)
-        let saturation = min(0.88, max(0.52, dominant.saturation / dominant.weight))
-        return NSColor(calibratedHue: hue, saturation: saturation, brightness: 0.94, alpha: 1)
+        // At this point the contrast ratios for black and white are equal.
+        return luminance <= 0.179 ? .white : .black
     }
 
     private static func samples(from image: NSImage) -> [Sample] {
@@ -274,7 +241,9 @@ enum ArtworkAccentColor {
                 return false
             }
             context.interpolationQuality = .medium
-            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            let crop = centeredFootprint(in: cgImage)
+            guard let footprintImage = cgImage.cropping(to: crop) else { return false }
+            context.draw(footprintImage, in: CGRect(x: 0, y: 0, width: width, height: height))
             return true
         }
         guard didDraw else { return [] }
@@ -293,32 +262,31 @@ enum ArtworkAccentColor {
         }
     }
 
-    private static func hsv(red: Double, green: Double, blue: Double) -> (
-        hue: Double,
-        saturation: Double,
-        brightness: Double
-    ) {
-        let maximum = max(red, green, blue)
-        let minimum = min(red, green, blue)
-        let delta = maximum - minimum
-        let saturation = maximum == 0 ? 0 : delta / maximum
-        guard delta > 0 else { return (0, saturation, maximum) }
-
-        let rawHue: Double
-        if maximum == red {
-            rawHue = ((green - blue) / delta).truncatingRemainder(dividingBy: 6)
-        } else if maximum == green {
-            rawHue = ((blue - red) / delta) + 2
-        } else {
-            rawHue = ((red - green) / delta) + 4
-        }
-        let hue = ((rawHue / 6).truncatingRemainder(dividingBy: 1) + 1)
-            .truncatingRemainder(dividingBy: 1)
-        return (hue, saturation, maximum)
+    private static func centeredFootprint(in image: CGImage) -> CGRect {
+        let fraction = 0.55
+        let width = CGFloat(image.width)
+        let height = CGFloat(image.height)
+        let footprintWidth = max(1, (width * fraction).rounded(.down))
+        let footprintHeight = max(1, (height * fraction).rounded(.down))
+        return CGRect(
+            x: ((width - footprintWidth) / 2).rounded(.down),
+            y: ((height - footprintHeight) / 2).rounded(.down),
+            width: footprintWidth,
+            height: footprintHeight
+        )
     }
 
-    private struct HueBin {
-        var weight = 0.0
-        var saturation = 0.0
+    private static func relativeLuminance(of sample: Sample) -> Double {
+        let red = linearizedSRGB(sample.red)
+        let green = linearizedSRGB(sample.green)
+        let blue = linearizedSRGB(sample.blue)
+        return (0.2126 * red) + (0.7152 * green) + (0.0722 * blue)
+    }
+
+    private static func linearizedSRGB(_ component: Double) -> Double {
+        let clamped = min(1, max(0, component))
+        return clamped <= 0.04045
+            ? clamped / 12.92
+            : pow((clamped + 0.055) / 1.055, 2.4)
     }
 }

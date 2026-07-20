@@ -79,6 +79,34 @@ final class NowPlayingModelTests: XCTestCase {
         XCTAssertEqual(MusicScrubGeometry.fraction(at: 120, width: 100), 1)
     }
 
+    func testScrubThumbCenterClampsToTrackEndpoints() {
+        XCTAssertEqual(
+            MusicScrubGeometry.thumbCenter(fraction: 0, width: 100, diameter: 9),
+            4.5
+        )
+        XCTAssertEqual(
+            MusicScrubGeometry.thumbCenter(fraction: 0.5, width: 100, diameter: 9),
+            50
+        )
+        XCTAssertEqual(
+            MusicScrubGeometry.thumbCenter(fraction: 1, width: 100, diameter: 9),
+            95.5
+        )
+    }
+
+    func testScrubThumbCenterUsesTrackMidpointWhenNarrowerThanThumb() {
+        for fraction in [0.0, 0.5, 1.0] {
+            XCTAssertEqual(
+                MusicScrubGeometry.thumbCenter(fraction: fraction, width: 4, diameter: 9),
+                2
+            )
+        }
+        XCTAssertEqual(
+            MusicScrubGeometry.thumbCenter(fraction: 0.5, width: 0, diameter: 9),
+            0
+        )
+    }
+
     func testOptimisticSeekingClampsAndReanchorsPosition() {
         let anchor = Date(timeIntervalSinceReferenceDate: 100)
         let update = Date(timeIntervalSinceReferenceDate: 150)
