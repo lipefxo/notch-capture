@@ -196,7 +196,13 @@ final class CaptureItem {
             .first(where: { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
             return firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return attachments.sorted(by: { $0.order < $1.order }).first?.originalFilename ?? "Untitled capture"
+        guard let attachment = attachments.sorted(by: { $0.order < $1.order }).first else {
+            return "Untitled capture"
+        }
+        if let pageTitle = attachment.displayPageTitle {
+            return pageTitle
+        }
+        return attachment.originalFilename
     }
 
     var isArchived: Bool { archivedAt != nil }
@@ -272,6 +278,8 @@ final class Attachment {
     var originalFilename: String
     var relativePath: String?
     var url: URL?
+    /// Cached page title for URL attachments. Optional for additive SwiftData migration.
+    var pageTitle: String?
     /// Cached site icon for URL attachments. Optional for additive SwiftData migration.
     var faviconRelativePath: String?
     var faviconTypeIdentifier: String?
@@ -286,6 +294,7 @@ final class Attachment {
         originalFilename: String,
         relativePath: String? = nil,
         url: URL? = nil,
+        pageTitle: String? = nil,
         faviconRelativePath: String? = nil,
         faviconTypeIdentifier: String? = nil,
         order: Int = 0,
@@ -298,6 +307,7 @@ final class Attachment {
         self.originalFilename = originalFilename
         self.relativePath = relativePath
         self.url = url
+        self.pageTitle = pageTitle
         self.faviconRelativePath = faviconRelativePath
         self.faviconTypeIdentifier = faviconTypeIdentifier
         self.order = order
@@ -311,4 +321,13 @@ final class Attachment {
     }
 
     var contentType: UTType? { UTType(typeIdentifier) }
+
+    var displayPageTitle: String? {
+        guard kind == .url,
+              let title = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !title.isEmpty else {
+            return nil
+        }
+        return title
+    }
 }

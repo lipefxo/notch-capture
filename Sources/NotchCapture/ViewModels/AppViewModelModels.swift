@@ -295,6 +295,18 @@ extension AppViewModel {
                 && !attachments.isEmpty
                 && !hasImageAttachments
         }
+
+        var linkSourceSubtitle: String? {
+            guard text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  attachments.count == 1,
+                  let attachment = attachments.first,
+                  attachment.kind == .link,
+                  let subtitle = attachment.subtitle,
+                  !subtitle.isEmpty else {
+                return nil
+            }
+            return subtitle
+        }
     }
 
     struct Confirmation: Equatable {

@@ -22,7 +22,7 @@ final class AppCoordinator {
     let repository: ItemRepository
     let attachmentStore: AttachmentStore
     let packageService: CapturePackageService
-    let faviconFetcher: any FaviconFetching
+    let linkMetadataFetcher: any LinkMetadataFetching
     private let loginItemService: LoginItemService
     private let updaterService: UpdaterService
     let displayLocator: DisplayLocator
@@ -77,7 +77,7 @@ final class AppCoordinator {
             modelContext: modelContainer.mainContext,
             attachmentStore: attachmentStore
         )
-        self.faviconFetcher = FaviconFetcher()
+        self.linkMetadataFetcher = LinkMetadataFetcher()
         self.loginItemService = LoginItemService()
         self.updaterService = UpdaterService(previewMode: previewMode)
         self.displayLocator = DisplayLocator()
@@ -361,6 +361,7 @@ final class AppCoordinator {
         case "confirmation": return .confirmation
         case "settings": return .settings
         case "onboarding": return .onboarding
+        case "drop": return .drop
         default: return .expanded
         }
     }
@@ -416,11 +417,13 @@ final class AppCoordinator {
         }
         if previewMode, let output = snapshotOutputURL() {
             Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .seconds(1.2))
                 do {
                     try self?.panelController.writeSnapshot(to: output)
+                    NSApp.terminate(nil)
                 } catch {
                     FileHandle.standardError.write(Data("Snapshot failed: \(error.localizedDescription)\n".utf8))
+                    NSApp.terminate(nil)
                 }
             }
         }

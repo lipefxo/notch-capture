@@ -870,6 +870,44 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.composerText, "studio")
     }
 
+    func testEnrichedLinkExposesItsSourceAndMatchesTitleDomainAndURL() throws {
+        let link = AppViewModel.LedgerItem(
+            title: "A video worth watching",
+            text: "",
+            attachments: [
+                .init(
+                    kind: .link,
+                    name: "A video worth watching",
+                    subtitle: "youtu.be",
+                    previewURL: try XCTUnwrap(URL(string: "https://youtu.be/abc123?t=42"))
+                )
+            ]
+        )
+        let viewModel = AppViewModel(surfaceState: .expanded, items: [link])
+
+        XCTAssertEqual(link.linkSourceSubtitle, "youtu.be")
+        for query in ["worth watching", "youtu.be", "abc123", "t=42"] {
+            viewModel.composerText = query
+            XCTAssertEqual(viewModel.visibleItems.map(\.id), [link.id], "Expected a match for \(query)")
+        }
+    }
+
+    func testUnenrichedLinkDoesNotRepeatItsDomainAsASubtitle() throws {
+        let link = AppViewModel.LedgerItem(
+            title: "example.com",
+            text: "",
+            attachments: [
+                .init(
+                    kind: .link,
+                    name: "example.com",
+                    previewURL: try XCTUnwrap(URL(string: "https://example.com"))
+                )
+            ]
+        )
+
+        XCTAssertNil(link.linkSourceSubtitle)
+    }
+
     func testCommandReturnCapturesEvenWhenItemsMatch() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()

@@ -456,6 +456,11 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(item.attachments.map(\.kind), [.url])
         XCTAssertEqual(item.attachments.first?.url?.absoluteString, "https://www.youtube.com")
         XCTAssertEqual(item.displayTitle, "www.youtube.com")
+
+        item.attachments.first?.pageTitle = "A video worth watching"
+        XCTAssertEqual(item.displayTitle, "A video worth watching")
+        item.text = "My own caption"
+        XCTAssertEqual(item.displayTitle, "My own caption")
     }
 
     func testNewItemsEnterAtBottomAndAssignmentsPersistAtomically() throws {
@@ -732,6 +737,7 @@ final class CaptureDataTests: XCTestCase {
             typeIdentifier: UTType.url.identifier,
             originalFilename: "example.com",
             url: try XCTUnwrap(URL(string: "https://example.com")),
+            pageTitle: "Example Domain",
             faviconRelativePath: favicon.relativePath,
             faviconTypeIdentifier: favicon.typeIdentifier
         )
@@ -746,7 +752,7 @@ final class CaptureDataTests: XCTestCase {
         let manifest = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: package.appendingPathComponent("manifest.json"))) as? [String: Any]
         )
-        XCTAssertEqual(manifest["schemaVersion"] as? Int, 3)
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 4)
 
         let targetContainer = try makeContainer()
         let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
@@ -756,8 +762,54 @@ final class CaptureDataTests: XCTestCase {
             targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first?.attachments.first
         )
         let importedFaviconPath = try XCTUnwrap(importedAttachment.faviconRelativePath)
+        XCTAssertEqual(importedAttachment.pageTitle, "Example Domain")
         XCTAssertEqual(importedAttachment.faviconTypeIdentifier, UTType.png.identifier)
         XCTAssertTrue(FileManager.default.fileExists(atPath: try targetStore.resolve(relativePath: importedFaviconPath).path))
+    }
+
+    func testPackageImportAcceptsVersionThreeAttachmentsWithoutPageTitles() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let sourceContainer = try makeContainer()
+        let sourceStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("source", isDirectory: true))
+        let url = try XCTUnwrap(URL(string: "https://example.com/article"))
+        _ = try ItemRepository(modelContext: sourceContainer.mainContext).createItem(
+            from: .url(url),
+            origin: .manual
+        )
+        let package = temporary.appendingPathComponent("Legacy.notchcapture", isDirectory: true)
+        try CapturePackageService(modelContext: sourceContainer.mainContext, attachmentStore: sourceStore)
+            .export(to: package)
+
+        let manifestURL = package.appendingPathComponent("manifest.json")
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        manifest["schemaVersion"] = 3
+        var items = try XCTUnwrap(manifest["items"] as? [[String: Any]])
+        for itemIndex in items.indices {
+            var attachments = try XCTUnwrap(items[itemIndex]["attachments"] as? [[String: Any]])
+            for attachmentIndex in attachments.indices {
+                attachments[attachmentIndex].removeValue(forKey: "pageTitle")
+            }
+            items[itemIndex]["attachments"] = attachments
+        }
+        manifest["items"] = items
+        try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            .write(to: manifestURL, options: .atomic)
+
+        let targetContainer = try makeContainer()
+        let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
+        _ = try CapturePackageService(modelContext: targetContainer.mainContext, attachmentStore: targetStore)
+            .importPackage(at: package)
+
+        let imported = try XCTUnwrap(
+            targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first?.attachments.first
+        )
+        XCTAssertNil(imported.pageTitle)
+        XCTAssertEqual(imported.originalFilename, "example.com")
     }
 
     func testPackageRoundTripIncludesSharedAndStandaloneTags() throws {
