@@ -428,6 +428,8 @@ extension AppViewModel {
         var onMusicNext: () -> Void = {}
         var onMusicPrevious: () -> Void = {}
         var onMusicSeek: (TimeInterval) -> Void = { _ in }
+        var onReconnectMedia: (NowPlayingSource) -> Void = { _ in }
+        var onOpenMediaAutomationSettings: () -> Void = {}
         var onPomodoroToggle: () -> Void = {}
         var onPomodoroReset: () -> Void = {}
         var onPomodoroSetDuration: (TimeInterval) -> Void = { _ in }

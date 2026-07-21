@@ -6,11 +6,12 @@ extension AppCoordinator {
     func configureMedia() {
         guard !previewMode else { return }
 
-        nowPlayingService.onSnapshotChange = { [weak self] snapshot in
+        nowPlayingService.onPresentationChange = { [weak self] presentation in
             guard let self else { return }
             let previousTrackKey = self.viewModel.nowPlaying?.trackKey
-            self.viewModel.nowPlaying = snapshot
-            if snapshot?.trackKey != previousTrackKey {
+            self.viewModel.nowPlayingPresentation = presentation
+            self.viewModel.nowPlaying = presentation?.snapshot
+            if presentation?.snapshot.trackKey != previousTrackKey {
                 self.viewModel.nowPlayingArtwork = nil
             }
             self.refreshIdleActivitySurface()
@@ -19,8 +20,8 @@ extension AppCoordinator {
             guard let self, self.viewModel.nowPlaying?.trackKey == trackKey else { return }
             self.viewModel.nowPlayingArtwork = artwork
         }
-        nowPlayingService.onAutomationDenied = { [weak self] source in
-            self?.viewModel.errorMessage = "Allow Notch Capture to control \(source.applicationName) in System Settings → Privacy & Security → Automation."
+        nowPlayingService.onSourceStatusChange = { [weak self] source, state in
+            self?.viewModel.mediaConnectionStates[source] = state
         }
 
         pomodoroService.onChange = { [weak self] state in
@@ -32,6 +33,9 @@ extension AppCoordinator {
             self?.handlePomodoroCompletion()
         }
         viewModel.pomodoro = pomodoroService.state
+        for source in NowPlayingSource.allCases {
+            viewModel.mediaConnectionStates[source] = nowPlayingService.connectionState(for: source)
+        }
     }
 
     func updateMediaActivityLevel(for state: AppViewModel.SurfaceState) {
@@ -42,6 +46,7 @@ extension AppCoordinator {
         case .dormant, .drop, .onboarding: .hidden
         }
         nowPlayingService.setActivityLevel(level)
+        if level != .hidden { nowPlayingService.refresh() }
     }
 
     func updateCollapsedActivityLayout() {

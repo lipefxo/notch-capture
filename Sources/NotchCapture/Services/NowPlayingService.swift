@@ -34,17 +34,20 @@ final class NowPlayingService {
     }
 
     var onSnapshotChange: (@MainActor (NowPlayingSnapshot?) -> Void)?
+    var onPresentationChange: (@MainActor (NowPlayingPresentation?) -> Void)?
+    var onSourceStatusChange: (@MainActor (NowPlayingSource, NowPlayingConnectionState) -> Void)?
     var onArtworkChange: (@MainActor (String, NSImage?) -> Void)?
-    var onAutomationDenied: (@MainActor (NowPlayingSource) -> Void)?
 
     private(set) var snapshot: NowPlayingSnapshot?
+    private(set) var presentation: NowPlayingPresentation?
     private let runner: any AppleScriptRunning
     private let artworkLoader: ArtworkLoader
     private let workspace: NSWorkspace
     private let sourceIsRunning: @MainActor (NowPlayingSource) -> Bool
     private let lifetime = NowPlayingObservationLifetime()
     private var activityLevel: ActivityLevel = .hidden
-    private var deniedSources: Set<NowPlayingSource> = []
+    private var connectionStates: [NowPlayingSource: NowPlayingConnectionState] = [:]
+    private var lastSuccessfulSnapshots: [NowPlayingSource: NowPlayingSnapshot] = [:]
     private var lastActivity: [NowPlayingSource: Date] = [:]
     private var refreshTask: Task<Void, Never>?
     private var refreshPending = false
@@ -102,6 +105,10 @@ final class NowPlayingService {
         }
     }
 
+    func connectionState(for source: NowPlayingSource) -> NowPlayingConnectionState {
+        connectionStates[source] ?? .notRunning
+    }
+
     func refresh(triggeredBy source: NowPlayingSource? = nil) {
         if let source { lastActivity[source] = .now }
         guard !isStopped, activityLevel != .hidden else { return }
@@ -110,6 +117,13 @@ final class NowPlayingService {
             return
         }
         startRefresh()
+    }
+
+    /// Clears an explicit Automation denial and joins the existing single-flight
+    /// refresh. This is intentionally the only path that retries a denied app.
+    func reconnect(_ source: NowPlayingSource) {
+        setConnectionState(.connecting, for: source)
+        refresh(triggeredBy: source)
     }
 
     private func startRefresh() {
@@ -133,10 +147,9 @@ final class NowPlayingService {
     func previousTrack() { runCommand("previous track") }
 
     func seek(to position: TimeInterval) {
-        guard let current = snapshot else { return }
+        guard let current = snapshot, presentation?.isRecovery != true else { return }
         let optimistic = current.seeking(to: position, at: .now)
-        snapshot = optimistic
-        onSnapshotChange?(optimistic)
+        publish(NowPlayingPresentation(source: current.source, state: .connected, snapshot: optimistic))
 
         let value = String(
             format: "%.3f",
@@ -233,37 +246,56 @@ final class NowPlayingService {
 
     private func performRefresh(generation: Int) async {
         var candidates: [NowPlayingSnapshot] = []
-        for source in NowPlayingSource.allCases where isRunning(source) && !deniedSources.contains(source) {
+        for source in NowPlayingSource.allCases {
+            guard isRunning(source) else {
+                lastSuccessfulSnapshots.removeValue(forKey: source)
+                setConnectionState(.notRunning, for: source)
+                continue
+            }
+            guard connectionState(for: source) != .permissionDenied else { continue }
+            setConnectionState(.connecting, for: source)
             do {
                 let result = try await runner.run(Self.statusScript(for: source))
                 guard refreshIsCurrent(generation) else { return }
                 guard case let .string(value) = result,
-                      let parsed = Self.parseStatus(value, source: source) else { continue }
+                      let parsed = Self.parseStatus(value, source: source) else {
+                    lastSuccessfulSnapshots.removeValue(forKey: source)
+                    setConnectionState(.idle, for: source)
+                    continue
+                }
+                lastSuccessfulSnapshots[source] = parsed
+                setConnectionState(.connected, for: source)
                 candidates.append(parsed)
             } catch AppleScriptRunnerError.automationDenied {
                 guard refreshIsCurrent(generation) else { return }
-                deniedSources.insert(source)
-                onAutomationDenied?(source)
+                setConnectionState(.permissionDenied, for: source)
+            } catch AppleScriptRunnerError.applicationNotRunning {
+                guard refreshIsCurrent(generation) else { return }
+                lastSuccessfulSnapshots.removeValue(forKey: source)
+                setConnectionState(.notRunning, for: source)
             } catch {
                 guard refreshIsCurrent(generation) else { return }
-                continue
+                setConnectionState(.disconnected, for: source)
             }
         }
 
         let selected = Self.chooseActive(
             candidates,
-            currentSource: snapshot?.source,
+            currentSource: presentation?.source,
             lastActivity: lastActivity
         )
         guard refreshIsCurrent(generation) else { return }
         let previous = snapshot
         let oldTrackKey = previous?.trackKey
-        snapshot = selected
-        if Self.shouldPublish(previous: previous, candidate: selected) {
-            onSnapshotChange?(selected)
+        let nextPresentation: NowPlayingPresentation?
+        if let selected {
+            nextPresentation = NowPlayingPresentation(source: selected.source, state: .connected, snapshot: selected)
+        } else {
+            nextPresentation = recoveryPresentation()
         }
+        publish(nextPresentation)
 
-        guard let selected else {
+        guard let selected, nextPresentation?.isRecovery != true else {
             if oldTrackKey != nil {
                 artworkLoadedForTrackKey = nil
                 onArtworkChange?(oldTrackKey ?? "", nil)
@@ -281,7 +313,7 @@ final class NowPlayingService {
 
         let artwork = await artworkLoader.artwork(for: selected)
         guard refreshIsCurrent(generation) else { return }
-        guard snapshot?.trackKey == selected.trackKey else { return }
+        guard snapshot?.trackKey == selected.trackKey, presentation?.isRecovery != true else { return }
         artworkLoadedForTrackKey = selected.trackKey
         onArtworkChange?(selected.trackKey, artwork)
     }
@@ -294,13 +326,16 @@ final class NowPlayingService {
     }
 
     private func runCommand(_ command: String, optimisticallyTogglingPlayback: Bool = false) {
-        guard let source = snapshot?.source, isRunning(source), !deniedSources.contains(source) else { return }
+        guard let source = snapshot?.source,
+              presentation?.isRecovery != true,
+              isRunning(source),
+              connectionState(for: source) != .permissionDenied else { return }
+        let confirmedSnapshot = lastSuccessfulSnapshots[source] ?? snapshot
         if optimisticallyTogglingPlayback, var optimistic = snapshot {
             optimistic.position = optimistic.position(at: .now)
             optimistic.positionAnchor = .now
             optimistic.isPlaying.toggle()
-            snapshot = optimistic
-            onSnapshotChange?(optimistic)
+            publish(NowPlayingPresentation(source: source, state: .connected, snapshot: optimistic))
         }
         lastActivity[source] = .now
         Task { @MainActor [weak self] in
@@ -308,11 +343,59 @@ final class NowPlayingService {
             do {
                 _ = try await runner.run("tell application \"\(source.applicationName)\" to \(command)")
             } catch AppleScriptRunnerError.automationDenied {
-                deniedSources.insert(source)
-                onAutomationDenied?(source)
-            } catch { }
+                transitionToRecovery(.permissionDenied, source: source, snapshot: confirmedSnapshot)
+            } catch AppleScriptRunnerError.applicationNotRunning {
+                lastSuccessfulSnapshots.removeValue(forKey: source)
+                setConnectionState(.notRunning, for: source)
+                publish(recoveryPresentation())
+            } catch {
+                transitionToRecovery(.disconnected, source: source, snapshot: confirmedSnapshot)
+            }
             refresh(triggeredBy: source)
         }
+    }
+
+    private func setConnectionState(_ state: NowPlayingConnectionState, for source: NowPlayingSource) {
+        guard connectionStates[source] != state else { return }
+        connectionStates[source] = state
+        onSourceStatusChange?(source, state)
+    }
+
+    private func transitionToRecovery(
+        _ state: NowPlayingConnectionState,
+        source: NowPlayingSource,
+        snapshot: NowPlayingSnapshot?
+    ) {
+        if let snapshot { lastSuccessfulSnapshots[source] = snapshot.frozen() }
+        setConnectionState(state, for: source)
+        publish(recoveryPresentation(preferredSource: source))
+    }
+
+    private func recoveryPresentation(preferredSource: NowPlayingSource? = nil) -> NowPlayingPresentation? {
+        let recoverable = NowPlayingSource.allCases.compactMap { source -> NowPlayingPresentation? in
+            let state = connectionState(for: source)
+            guard state.isRecoverable, let snapshot = lastSuccessfulSnapshots[source] else { return nil }
+            return NowPlayingPresentation(source: source, state: state, snapshot: snapshot.frozen())
+        }
+        if let preferredSource, let preferred = recoverable.first(where: { $0.source == preferredSource }) {
+            return preferred
+        }
+        if let current = presentation,
+           let sticky = recoverable.first(where: { $0.source == current.source }) {
+            return sticky
+        }
+        return recoverable.max {
+            (lastActivity[$0.source] ?? .distantPast) < (lastActivity[$1.source] ?? .distantPast)
+        }
+    }
+
+    private func publish(_ next: NowPlayingPresentation?) {
+        let previous = presentation
+        presentation = next
+        snapshot = next?.snapshot
+        guard previous != next else { return }
+        onPresentationChange?(next)
+        onSnapshotChange?(next?.snapshot)
     }
 
     private func isRunning(_ source: NowPlayingSource) -> Bool {
@@ -346,6 +429,27 @@ final class NowPlayingService {
             let bundleIdentifier = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
             guard let bundleIdentifier, let source = NowPlayingSource(rawValue: bundleIdentifier) else { return }
             Task { @MainActor in self?.refresh(triggeredBy: source) }
+        })
+        for name in [
+            NSWorkspace.didLaunchApplicationNotification,
+            NSWorkspace.didActivateApplicationNotification,
+        ] {
+            lifetime.workspaceTokens.append(workspace.notificationCenter.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] note in
+                let bundleIdentifier = (note.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier
+                guard let bundleIdentifier, let source = NowPlayingSource(rawValue: bundleIdentifier) else { return }
+                Task { @MainActor in self?.refresh(triggeredBy: source) }
+            })
+        }
+        lifetime.workspaceTokens.append(workspace.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.refresh() }
         })
     }
 

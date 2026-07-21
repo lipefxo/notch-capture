@@ -11,6 +11,7 @@ struct SettingsView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
                         generalSection
+                        mediaSection
                         shortcutsSection
                         privacyAndDataSection
                             .id("privacy-and-data")
@@ -123,6 +124,45 @@ struct SettingsView: View {
                 .accessibilityHint("Change this shortcut")
 
                 if index < viewModel.shortcuts.count - 1 {
+                    SettingsDivider(leadingInset: 44)
+                }
+            }
+        }
+    }
+
+    private var mediaSection: some View {
+        SettingsGroup(title: "Media", subtitle: "Playback connections") {
+            ForEach(Array(NowPlayingSource.allCases.enumerated()), id: \.element.rawValue) { index, source in
+                let state = viewModel.mediaConnectionState(for: source)
+                HStack(spacing: 8) {
+                    SettingsRowIcon(symbol: source == .appleMusic ? "music.note" : "waveform")
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(source.applicationName)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(NotchTheme.primaryText)
+                        Text(state.statusText)
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(state.isRecoverable ? NotchTheme.destructive : NotchTheme.secondaryText)
+                    }
+                    Spacer()
+                    if state != .notRunning {
+                        Button("Reconnect") { viewModel.reconnectMedia(source) }
+                            .buttonStyle(SettingsButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 46)
+
+                if state == .permissionDenied {
+                    HStack {
+                        Spacer()
+                        Button("Open System Settings", action: viewModel.openMediaAutomationSettings)
+                            .buttonStyle(SettingsButtonStyle())
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+                }
+                if index < NowPlayingSource.allCases.count - 1 {
                     SettingsDivider(leadingInset: 44)
                 }
             }

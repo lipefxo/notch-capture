@@ -3,6 +3,7 @@ import SwiftUI
 
 struct CollapsedActivityPillView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var isExtended: Bool { viewModel.compactPresentationSize == .extended }
 
@@ -22,6 +23,7 @@ struct CollapsedActivityPillView: View {
                 fallbackLayout
             }
         }
+        .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content, value: viewModel.isNowPlayingRecovering)
         .accessibilityElement(children: .contain)
     }
 
@@ -160,24 +162,29 @@ struct CollapsedActivityPillView: View {
         artworkSize: CGFloat
     ) -> some View {
         HStack(spacing: 6) {
-            ArtworkPlaybackControl(
-                artwork: viewModel.nowPlayingArtwork,
-                trackKey: snapshot.trackKey,
-                title: snapshot.title,
-                isPlaying: snapshot.isPlaying,
-                size: artworkSize,
-                cornerRadius: 5,
-                action: viewModel.musicPlayPause
-            )
-
-            Button { viewModel.openExpanded() } label: {
+            if viewModel.isNowPlayingRecovering {
                 trackText(snapshot)
                     .frame(maxWidth: .infinity, maxHeight: 34, alignment: .leading)
-                    .contentShape(Rectangle())
+            } else {
+                ArtworkPlaybackControl(
+                    artwork: viewModel.nowPlayingArtwork,
+                    trackKey: snapshot.trackKey,
+                    title: snapshot.title,
+                    isPlaying: snapshot.isPlaying,
+                    size: artworkSize,
+                    cornerRadius: 5,
+                    action: viewModel.musicPlayPause
+                )
+
+                Button { viewModel.openExpanded() } label: {
+                    trackText(snapshot)
+                        .frame(maxWidth: .infinity, maxHeight: 34, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
+                .help("Open \(snapshot.title) in Notch Capture")
+                .accessibilityLabel(musicAccessibilityLabel(snapshot))
             }
-            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
-            .help("Open \(snapshot.title) in Notch Capture")
-            .accessibilityLabel(musicAccessibilityLabel(snapshot))
         }
     }
 
@@ -195,8 +202,15 @@ struct CollapsedActivityPillView: View {
         .layoutPriority(1)
     }
 
+    @ViewBuilder
     private func extendedMusicInfoView(_ snapshot: NowPlayingSnapshot) -> some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
+        if viewModel.isNowPlayingRecovering {
+            HStack(spacing: 8) {
+                trackText(snapshot)
+                CollapsedRetryButton(viewModel: viewModel, source: snapshot.source)
+            }
+        } else {
+            TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: 8) {
                 ArtworkPlaybackControl(
                     artwork: viewModel.nowPlayingArtwork,
@@ -248,6 +262,7 @@ struct CollapsedActivityPillView: View {
                 .padding(.top, 4)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .layoutPriority(1)
+            }
             }
         }
     }
@@ -377,9 +392,13 @@ private struct ExtendedInlineTransportControls: View {
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        HStack(spacing: 14) {
-            control("backward.fill", label: "Previous track", action: viewModel.musicPrevious)
-            control("forward.fill", label: "Next track", action: viewModel.musicNext)
+        if viewModel.isNowPlayingRecovering, let source = viewModel.nowPlaying?.source {
+            CollapsedRetryButton(viewModel: viewModel, source: source)
+        } else {
+            HStack(spacing: 14) {
+                control("backward.fill", label: "Previous track", action: viewModel.musicPrevious)
+                control("forward.fill", label: "Next track", action: viewModel.musicNext)
+            }
         }
     }
 
@@ -401,16 +420,20 @@ private struct CollapsedTransportControls: View {
     let snapshot: NowPlayingSnapshot
 
     var body: some View {
-        HStack(spacing: 2) {
-            control("backward.fill", label: "Previous track") {
-                viewModel.musicPrevious()
+        if viewModel.isNowPlayingRecovering {
+            CollapsedRetryButton(viewModel: viewModel, source: snapshot.source)
+        } else {
+            HStack(spacing: 2) {
+                control("backward.fill", label: "Previous track") {
+                    viewModel.musicPrevious()
+                }
+                control("forward.fill", label: "Next track") {
+                    viewModel.musicNext()
+                }
             }
-            control("forward.fill", label: "Next track") {
-                viewModel.musicNext()
-            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 28)
         }
-        .frame(maxWidth: .infinity)
-        .frame(height: 28)
     }
 
     private func control(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
@@ -422,6 +445,23 @@ private struct CollapsedTransportControls: View {
         .buttonStyle(CollapsedTransportButtonStyle())
         .help(label)
         .accessibilityLabel(label)
+    }
+}
+
+private struct CollapsedRetryButton: View {
+    @ObservedObject var viewModel: AppViewModel
+    let source: NowPlayingSource
+
+    var body: some View {
+        Button { viewModel.reconnectMedia(source) } label: {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 10.5, weight: .semibold))
+                .frame(width: 22, height: 25)
+        }
+        .buttonStyle(PressableIconButtonStyle(width: 25))
+        .notchHitTarget(Circle())
+        .help("Retry \(source.applicationName) connection")
+        .accessibilityLabel("Retry \(source.applicationName) connection")
     }
 }
 
