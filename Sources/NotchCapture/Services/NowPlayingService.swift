@@ -122,6 +122,14 @@ final class NowPlayingService {
     /// Clears an explicit Automation denial and joins the existing single-flight
     /// refresh. This is intentionally the only path that retries a denied app.
     func reconnect(_ source: NowPlayingSource) {
+        guard runner.hostExecutableIsCurrent else {
+            transitionToRecovery(
+                .restartRequired,
+                source: source,
+                snapshot: lastSuccessfulSnapshots[source] ?? snapshotForSource(source)
+            )
+            return
+        }
         setConnectionState(.connecting, for: source)
         refresh(triggeredBy: source)
     }
@@ -269,6 +277,13 @@ final class NowPlayingService {
             } catch AppleScriptRunnerError.automationDenied {
                 guard refreshIsCurrent(generation) else { return }
                 setConnectionState(.permissionDenied, for: source)
+            } catch AppleScriptRunnerError.hostApplicationInvalidated {
+                guard refreshIsCurrent(generation) else { return }
+                transitionToRecovery(
+                    .restartRequired,
+                    source: source,
+                    snapshot: lastSuccessfulSnapshots[source] ?? snapshotForSource(source)
+                )
             } catch AppleScriptRunnerError.applicationNotRunning {
                 guard refreshIsCurrent(generation) else { return }
                 lastSuccessfulSnapshots.removeValue(forKey: source)
@@ -344,6 +359,8 @@ final class NowPlayingService {
                 _ = try await runner.run("tell application \"\(source.applicationName)\" to \(command)")
             } catch AppleScriptRunnerError.automationDenied {
                 transitionToRecovery(.permissionDenied, source: source, snapshot: confirmedSnapshot)
+            } catch AppleScriptRunnerError.hostApplicationInvalidated {
+                transitionToRecovery(.restartRequired, source: source, snapshot: confirmedSnapshot)
             } catch AppleScriptRunnerError.applicationNotRunning {
                 lastSuccessfulSnapshots.removeValue(forKey: source)
                 setConnectionState(.notRunning, for: source)
@@ -369,6 +386,11 @@ final class NowPlayingService {
         if let snapshot { lastSuccessfulSnapshots[source] = snapshot.frozen() }
         setConnectionState(state, for: source)
         publish(recoveryPresentation(preferredSource: source))
+    }
+
+    private func snapshotForSource(_ source: NowPlayingSource) -> NowPlayingSnapshot? {
+        guard snapshot?.source == source else { return nil }
+        return snapshot
     }
 
     private func recoveryPresentation(preferredSource: NowPlayingSource? = nil) -> NowPlayingPresentation? {

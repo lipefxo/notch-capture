@@ -2,6 +2,27 @@ import XCTest
 @testable import NotchCapture
 
 final class NowPlayingModelTests: XCTestCase {
+    func testConnectionActionsMatchRecoveryState() {
+        let reconnectable: Set<NowPlayingConnectionState> = [.disconnected, .permissionDenied]
+
+        for state in [
+            NowPlayingConnectionState.notRunning,
+            .idle,
+            .connecting,
+            .connected,
+            .disconnected,
+            .permissionDenied,
+            .restartRequired,
+        ] {
+            XCTAssertEqual(state.canReconnect, reconnectable.contains(state), "Unexpected reconnect action for \(state)")
+        }
+
+        XCTAssertTrue(NowPlayingConnectionState.permissionDenied.requiresSystemSettings)
+        XCTAssertTrue(NowPlayingConnectionState.restartRequired.requiresAppRestart)
+        XCTAssertTrue(NowPlayingConnectionState.restartRequired.isRecoverable)
+        XCTAssertEqual(NowPlayingConnectionState.restartRequired.statusText, "Restart Notch Capture")
+    }
+
     func testMusicTimeFormatterUsesCompactTrackFormats() {
         XCTAssertEqual(MusicTimeFormatter.string(from: 0), "0:00")
         XCTAssertEqual(MusicTimeFormatter.string(from: 214), "3:34")
@@ -270,16 +291,21 @@ private actor ScriptedAppleScriptRunner: AppleScriptRunning {
         case result(AppleScriptResult)
         case denied
         case notRunning
+        case invalidated
         case failed
     }
 
+    nonisolated let hostExecutableIsCurrent: Bool
     private var responses: [Response]
+    private var runCount = 0
 
-    init(responses: [Response]) {
+    init(responses: [Response], hostExecutableIsCurrent: Bool = true) {
         self.responses = responses
+        self.hostExecutableIsCurrent = hostExecutableIsCurrent
     }
 
     func run(_: String) async throws -> AppleScriptResult {
+        runCount += 1
         guard !responses.isEmpty else {
             throw AppleScriptRunnerError.executionFailed(number: 1, message: "Unexpected script")
         }
@@ -287,9 +313,12 @@ private actor ScriptedAppleScriptRunner: AppleScriptRunning {
         case let .result(result): return result
         case .denied: throw AppleScriptRunnerError.automationDenied
         case .notRunning: throw AppleScriptRunnerError.applicationNotRunning
+        case .invalidated: throw AppleScriptRunnerError.hostApplicationInvalidated
         case .failed: throw AppleScriptRunnerError.executionFailed(number: 1, message: "Temporary failure")
         }
     }
+
+    func count() -> Int { runCount }
 }
 
 @MainActor
@@ -388,6 +417,40 @@ final class NowPlayingServiceRefreshTests: XCTestCase {
         await waitUntil { service.presentation?.state == .connected }
 
         XCTAssertEqual(service.connectionState(for: .spotify), .connected)
+        service.stop()
+    }
+
+    func testReconnectWithInvalidHostRequiresRestartWithoutRunningAnotherScript() async {
+        let runner = ScriptedAppleScriptRunner(
+            responses: [.result(.string(Self.spotifyStatus(position: 10)))],
+            hostExecutableIsCurrent: false
+        )
+        let service = NowPlayingService(runner: runner, sourceIsRunning: { $0 == .spotify })
+
+        service.reconnect(.spotify)
+
+        let runCount = await runner.count()
+        XCTAssertEqual(service.connectionState(for: .spotify), .restartRequired)
+        XCTAssertEqual(runCount, 0)
+        service.stop()
+    }
+
+    func testInvalidatedHostFailureRetainsAFrozenRestartPresentation() async throws {
+        let runner = ScriptedAppleScriptRunner(responses: [
+            .result(.string(Self.spotifyStatus(position: 10))),
+            .invalidated,
+        ])
+        let service = NowPlayingService(runner: runner, sourceIsRunning: { $0 == .spotify })
+
+        service.setActivityLevel(.compact)
+        await waitUntil { service.presentation?.state == .connected }
+        service.refresh()
+        await waitUntil { service.presentation?.state == .restartRequired }
+
+        let presentation = try XCTUnwrap(service.presentation)
+        XCTAssertEqual(presentation.source, .spotify)
+        XCTAssertTrue(presentation.snapshot.isFrozen)
+        XCTAssertEqual(service.connectionState(for: .spotify), .restartRequired)
         service.stop()
     }
 

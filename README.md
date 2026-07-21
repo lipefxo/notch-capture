@@ -36,9 +36,10 @@ While idle, active music or a running timer shows in a compact activity pill in 
 Requirements: Apple Silicon Mac, macOS 14 or newer, and Xcode with the macOS 14 SDK.
 
 ```sh
-Scripts/build-app.sh debug
-open ".build/Notch Capture.app"
+Scripts/run-app.sh
 ```
+
+The development runner stops the copy previously launched from this worktree before rebuilding and keeps the app attached to the shell so stopping or archiving a Conductor workspace cannot leave an orphaned process behind. Use `Scripts/run-app.sh --stop` to stop only this worktree's app.
 
 Open `Package.swift` in Xcode for development. Run tests with:
 

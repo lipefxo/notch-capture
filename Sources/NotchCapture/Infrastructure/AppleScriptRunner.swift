@@ -4,6 +4,7 @@ import Foundation
 enum AppleScriptRunnerError: LocalizedError, Equatable {
     case automationDenied
     case applicationNotRunning
+    case hostApplicationInvalidated
     case executionFailed(number: Int, message: String)
 
     var errorDescription: String? {
@@ -12,6 +13,8 @@ enum AppleScriptRunnerError: LocalizedError, Equatable {
             "Automation access was denied. Allow Notch Capture in System Settings → Privacy & Security → Automation."
         case .applicationNotRunning:
             "The media application is not running."
+        case .hostApplicationInvalidated:
+            "Notch Capture was rebuilt or removed while it was running. Quit and reopen the app."
         case let .executionFailed(_, message):
             message
         }
@@ -25,16 +28,37 @@ enum AppleScriptResult: Sendable, Equatable {
 }
 
 protocol AppleScriptRunning: Sendable {
+    var hostExecutableIsCurrent: Bool { get }
     func run(_ source: String) async throws -> AppleScriptResult
+}
+
+extension AppleScriptRunning {
+    var hostExecutableIsCurrent: Bool { true }
 }
 
 final class AppleScriptRunner: AppleScriptRunning, @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.lipe.notchcapture.applescript")
+    private let hostExecutableURL: URL?
+    private let initialHostExecutableIdentity: ExecutableFileIdentity?
     private var scripts: [String: NSAppleScript] = [:]
+
+    init(hostExecutableURL: URL? = Bundle.main.executableURL) {
+        self.hostExecutableURL = hostExecutableURL
+        initialHostExecutableIdentity = ExecutableFileIdentity.read(from: hostExecutableURL)
+    }
+
+    var hostExecutableIsCurrent: Bool {
+        guard initialHostExecutableIdentity != nil else { return true }
+        return ExecutableFileIdentity.read(from: hostExecutableURL) == initialHostExecutableIdentity
+    }
 
     func run(_ source: String) async throws -> AppleScriptResult {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [self] in
+                guard hostExecutableIsCurrent else {
+                    continuation.resume(throwing: AppleScriptRunnerError.hostApplicationInvalidated)
+                    return
+                }
                 var errorInfo: NSDictionary?
                 let script: NSAppleScript
                 if let cached = scripts[source] {
@@ -52,11 +76,11 @@ final class AppleScriptRunner: AppleScriptRunning, @unchecked Sendable {
                 if let errorInfo {
                     let number = (errorInfo[NSAppleScript.errorNumber] as? NSNumber)?.intValue ?? 0
                     let message = errorInfo[NSAppleScript.errorMessage] as? String ?? "AppleScript failed."
-                    switch number {
-                    case -1743: continuation.resume(throwing: AppleScriptRunnerError.automationDenied)
-                    case -600, -609: continuation.resume(throwing: AppleScriptRunnerError.applicationNotRunning)
-                    default: continuation.resume(throwing: AppleScriptRunnerError.executionFailed(number: number, message: message))
-                    }
+                    continuation.resume(throwing: Self.classifyExecutionError(
+                        number: number,
+                        message: message,
+                        hostExecutableIsCurrent: hostExecutableIsCurrent
+                    ))
                     return
                 }
 
@@ -76,5 +100,33 @@ final class AppleScriptRunner: AppleScriptRunning, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    nonisolated static func classifyExecutionError(
+        number: Int,
+        message: String,
+        hostExecutableIsCurrent: Bool
+    ) -> AppleScriptRunnerError {
+        switch number {
+        case -1743:
+            hostExecutableIsCurrent ? .automationDenied : .hostApplicationInvalidated
+        case -600, -609:
+            .applicationNotRunning
+        default:
+            .executionFailed(number: number, message: message)
+        }
+    }
+}
+
+private struct ExecutableFileIdentity: Equatable, Sendable {
+    let device: UInt64
+    let inode: UInt64
+
+    static func read(from url: URL?) -> Self? {
+        guard let url else { return nil }
+        guard let attributes = try? FileManager.default.attributesOfItem(atPath: url.path),
+              let device = attributes[.systemNumber] as? NSNumber,
+              let inode = attributes[.systemFileNumber] as? NSNumber else { return nil }
+        return Self(device: device.uint64Value, inode: inode.uint64Value)
     }
 }
