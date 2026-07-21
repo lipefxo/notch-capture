@@ -4,6 +4,45 @@ import SwiftUI
 import XCTest
 @testable import NotchCapture
 
+final class AppleScriptRunnerTests: XCTestCase {
+    func testAutomationDenialClassificationDistinguishesAnInvalidatedHost() {
+        XCTAssertEqual(
+            AppleScriptRunner.classifyExecutionError(
+                number: -1743,
+                message: "Not authorized",
+                hostExecutableIsCurrent: true
+            ),
+            .automationDenied
+        )
+        XCTAssertEqual(
+            AppleScriptRunner.classifyExecutionError(
+                number: -1743,
+                message: "Not authorized",
+                hostExecutableIsCurrent: false
+            ),
+            .hostApplicationInvalidated
+        )
+    }
+
+    func testRunnerDetectsRemovedOrReplacedHostExecutable() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let executable = directory.appendingPathComponent("NotchCapture")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        XCTAssertTrue(FileManager.default.createFile(atPath: executable.path, contents: Data("first".utf8)))
+
+        let runner = AppleScriptRunner(hostExecutableURL: executable)
+        XCTAssertTrue(runner.hostExecutableIsCurrent)
+
+        try FileManager.default.removeItem(at: executable)
+        XCTAssertFalse(runner.hostExecutableIsCurrent)
+
+        XCTAssertTrue(FileManager.default.createFile(atPath: executable.path, contents: Data("second".utf8)))
+        XCTAssertFalse(runner.hostExecutableIsCurrent)
+    }
+}
+
 final class PanelStateTests: XCTestCase {
     func testVisibilityMatchesWindowOwnership() {
         XCTAssertFalse(PanelState.dormant.isVisible)

@@ -1,0 +1,11 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+archive = "Scripts/run-app.sh --stop"
+run_mode = "nonconcurrent"
+
+[scripts.run.app]
+available_in = [ "local" ]
+command = "Scripts/run-app.sh"
+default = true
+icon = "play"

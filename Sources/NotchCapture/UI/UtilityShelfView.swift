@@ -104,22 +104,31 @@ private struct MusicPlayerBand: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if presentation.state == .permissionDenied {
+            if presentation.state.requiresSystemSettings {
                 Button("System Settings", action: viewModel.openMediaAutomationSettings)
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(NotchTheme.primaryAccent)
                     .buttonStyle(.plain)
             }
-            Button {
-                viewModel.reconnectMedia(presentation.source)
-            } label: {
-                Image(systemName: "arrow.clockwise")
-                    .font(.system(size: 10.5, weight: .semibold))
+            if presentation.state.requiresAppRestart {
+                Button("Quit", action: viewModel.hooks.onQuit)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(NotchTheme.primaryAccent)
+                    .buttonStyle(.plain)
+                    .help("Quit and reopen Notch Capture")
+                    .accessibilityLabel("Quit and reopen Notch Capture")
+            } else if presentation.state.canReconnect {
+                Button {
+                    viewModel.reconnectMedia(presentation.source)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 10.5, weight: .semibold))
+                }
+                .buttonStyle(PressableIconButtonStyle(width: 28))
+                .notchHitTarget(Circle())
+                .help("Retry \(presentation.source.applicationName) connection")
+                .accessibilityLabel("Retry \(presentation.source.applicationName) connection")
             }
-            .buttonStyle(PressableIconButtonStyle(width: 28))
-            .notchHitTarget(Circle())
-            .help("Retry \(presentation.source.applicationName) connection")
-            .accessibilityLabel("Retry \(presentation.source.applicationName) connection")
         }
     }
 

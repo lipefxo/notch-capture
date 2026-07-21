@@ -145,15 +145,18 @@ struct SettingsView: View {
                             .foregroundStyle(state.isRecoverable ? NotchTheme.destructive : NotchTheme.secondaryText)
                     }
                     Spacer()
-                    if state != .notRunning {
+                    if state.canReconnect {
                         Button("Reconnect") { viewModel.reconnectMedia(source) }
+                            .buttonStyle(SettingsButtonStyle())
+                    } else if state.requiresAppRestart {
+                        Button("Quit App", action: viewModel.hooks.onQuit)
                             .buttonStyle(SettingsButtonStyle())
                     }
                 }
                 .padding(.horizontal, 10)
                 .frame(height: 46)
 
-                if state == .permissionDenied {
+                if state.requiresSystemSettings {
                     HStack {
                         Spacer()
                         Button("Open System Settings", action: viewModel.openMediaAutomationSettings)

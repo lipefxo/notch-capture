@@ -19,6 +19,7 @@ enum NowPlayingConnectionState: Equatable, Sendable {
     case connected
     case disconnected
     case permissionDenied
+    case restartRequired
 
     var statusText: String {
         switch self {
@@ -28,12 +29,17 @@ enum NowPlayingConnectionState: Equatable, Sendable {
         case .connected: "Connected"
         case .disconnected: "Connection lost"
         case .permissionDenied: "Permission required"
+        case .restartRequired: "Restart Notch Capture"
         }
     }
 
     var isRecoverable: Bool {
-        self == .disconnected || self == .permissionDenied
+        self == .disconnected || self == .permissionDenied || self == .restartRequired
     }
+
+    var canReconnect: Bool { self == .disconnected || self == .permissionDenied }
+    var requiresSystemSettings: Bool { self == .permissionDenied }
+    var requiresAppRestart: Bool { self == .restartRequired }
 }
 
 struct NowPlayingPresentation: Equatable, Sendable {
