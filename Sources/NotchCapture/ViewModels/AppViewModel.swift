@@ -1340,7 +1340,11 @@ final class AppViewModel: ObservableObject {
     private func matchesQuery(_ item: LedgerItem, query: ParsedTagText) -> Bool {
         let textMatches = query.text.isEmpty ||
             item.searchableText.localizedCaseInsensitiveContains(query.text) ||
-            item.attachments.contains { $0.name.localizedCaseInsensitiveContains(query.text) }
+            item.attachments.contains {
+                $0.name.localizedCaseInsensitiveContains(query.text) ||
+                    ($0.subtitle?.localizedCaseInsensitiveContains(query.text) ?? false) ||
+                    ($0.previewURL?.absoluteString.localizedCaseInsensitiveContains(query.text) ?? false)
+            }
         guard textMatches else { return false }
         guard !query.tagNames.isEmpty else { return true }
         let requested = Set(query.tagNames.map(CaptureTagParser.normalize))

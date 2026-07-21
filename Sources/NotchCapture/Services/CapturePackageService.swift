@@ -3,7 +3,7 @@ import SwiftData
 import UniformTypeIdentifiers
 
 struct CapturePackageManifest: Codable, Sendable {
-    static let currentVersion = 3
+    static let currentVersion = 4
 
     let schemaVersion: Int
     let exportedAt: Date
@@ -54,6 +54,7 @@ struct CapturePackageManifest: Codable, Sendable {
         let originalFilename: String
         let packagePath: String?
         let url: URL?
+        let pageTitle: String?
         let faviconPackagePath: String?
         let faviconTypeIdentifier: String?
         let order: Int
@@ -157,6 +158,7 @@ final class CapturePackageService {
                     originalFilename: attachment.originalFilename,
                     packagePath: packagePath,
                     url: attachment.url,
+                    pageTitle: attachment.pageTitle,
                     faviconPackagePath: faviconPackagePath,
                     faviconTypeIdentifier: attachment.faviconTypeIdentifier,
                     order: attachment.order,
@@ -359,6 +361,7 @@ final class CapturePackageService {
                             originalFilename: attachmentRecord.originalFilename,
                             relativePath: storedPath,
                             url: attachmentRecord.url,
+                            pageTitle: attachmentRecord.pageTitle,
                             faviconRelativePath: storedFaviconPath,
                             faviconTypeIdentifier: attachmentRecord.faviconTypeIdentifier
                                 ?? storedFaviconTypeIdentifier,
@@ -419,6 +422,7 @@ final class CapturePackageService {
                     imported.typeIdentifier == existing.typeIdentifier &&
                     imported.originalFilename == existing.originalFilename &&
                     imported.url == existing.url &&
+                    (imported.pageTitle == nil || imported.pageTitle == existing.pageTitle) &&
                     (imported.faviconPackagePath != nil) == (existing.faviconRelativePath != nil) &&
                     (imported.faviconTypeIdentifier == nil || imported.faviconTypeIdentifier == existing.faviconTypeIdentifier) &&
                     imported.order == existing.order

@@ -974,6 +974,9 @@ struct LedgerRowView: View, Equatable {
         if showsSearchLocation {
             return item.folderName.map { "Folder · \($0)" } ?? "Inbox"
         }
+        if let linkSourceSubtitle = item.linkSourceSubtitle {
+            return linkSourceSubtitle
+        }
         if !item.detail.isEmpty { return item.detail }
         if let dueDate = item.dueDate {
             if Calendar.current.isDateInToday(dueDate) { return "Today" }

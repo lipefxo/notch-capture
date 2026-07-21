@@ -8,45 +8,79 @@ struct FaviconData: Sendable, Equatable {
     let filename: String
 }
 
-protocol FaviconFetching: Sendable {
-    func fetchFavicon(for pageURL: URL) async -> FaviconData?
+struct LinkMetadata: Sendable, Equatable {
+    let title: String?
+    let favicon: FaviconData?
 }
 
-/// A deliberately small, direct favicon resolver. It has no shared cache or
-/// cookies: each captured URL gets one bounded, best-effort lookup.
-struct FaviconFetcher: FaviconFetching {
-    private static let maximumHTMLBytes = 512 * 1_024
+protocol LinkMetadataFetching: Sendable {
+    func fetchMetadata(for pageURL: URL) async -> LinkMetadata?
+}
+
+/// A deliberately small, direct page metadata resolver. It has no shared cache
+/// or cookies: each newly captured URL gets one bounded, best-effort lookup.
+struct LinkMetadataFetcher: LinkMetadataFetching {
+    // YouTube watch pages currently place Open Graph/title metadata after the
+    // first 600 KB of HTML, so keep a bounded allowance large enough for them.
+    private static let maximumHTMLBytes = 2 * 1_024 * 1_024
     private static let maximumImageBytes = 1 * 1_024 * 1_024
     private static let maximumCandidates = 12
+    private static let maximumTitleCharacters = 512
+    private static let commonHTMLEntities = [
+        "nbsp": " ",
+        "ndash": "–",
+        "mdash": "—",
+        "hellip": "…",
+        "lsquo": "‘",
+        "rsquo": "’",
+        "ldquo": "“",
+        "rdquo": "”",
+        "copy": "©",
+        "reg": "®",
+        "trade": "™",
+    ]
 
     private let session: URLSession
 
-    init(session: URLSession = FaviconFetcher.makeEphemeralSession()) {
+    init(session: URLSession = LinkMetadataFetcher.makeEphemeralSession()) {
         self.session = session
     }
 
-    func fetchFavicon(for pageURL: URL) async -> FaviconData? {
+    func fetchMetadata(for pageURL: URL) async -> LinkMetadata? {
         guard Self.isHTTPURL(pageURL),
-              let (htmlData, response) = await request(pageURL, maximumBytes: Self.maximumHTMLBytes),
+              let (htmlData, response) = await request(
+                pageURL,
+                maximumBytes: Self.maximumHTMLBytes,
+                accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.1"
+              ),
               let resolvedPageURL = response.url else {
             return nil
         }
         let html = String(decoding: htmlData, as: UTF8.self)
+        let title = Self.pageTitle(in: html)
 
         let candidates = Self.iconCandidates(in: html, baseURL: resolvedPageURL)
         for candidate in candidates.prefix(Self.maximumCandidates) {
-            guard let (data, response) = await request(candidate.url, maximumBytes: Self.maximumImageBytes),
+            guard let (data, response) = await request(
+                candidate.url,
+                maximumBytes: Self.maximumImageBytes,
+                accept: "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+            ),
                   let image = Self.validatedImage(data: data, response: response, sourceURL: candidate.url) else {
                 continue
             }
-            return image
+            return LinkMetadata(title: title, favicon: image)
         }
-        return nil
+        return LinkMetadata(title: title, favicon: nil)
     }
 
-    private func request(_ url: URL, maximumBytes: Int) async -> (Data, HTTPURLResponse)? {
+    private func request(
+        _ url: URL,
+        maximumBytes: Int,
+        accept: String
+    ) async -> (Data, HTTPURLResponse)? {
         var request = URLRequest(url: url)
-        request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await session.data(for: request)
             guard data.count <= maximumBytes,
@@ -58,6 +92,60 @@ struct FaviconFetcher: FaviconFetching {
         } catch {
             return nil
         }
+    }
+
+    private static func pageTitle(in html: String) -> String? {
+        let meta = elementAttributes(named: "meta", in: html)
+        for key in ["og:title", "twitter:title"] {
+            for attributes in meta {
+                let identifiers = [attributes["property"], attributes["name"]]
+                    .compactMap { $0?.lowercased() }
+                guard identifiers.contains(key),
+                      let content = attributes["content"],
+                      let title = normalizedTitle(content) else {
+                    continue
+                }
+                return title
+            }
+        }
+
+        guard let expression = try? NSRegularExpression(
+            pattern: #"<title\b[^>]*>(.*?)</title\s*>"#,
+            options: [.caseInsensitive, .dotMatchesLineSeparators]
+        ) else {
+            return nil
+        }
+        let range = NSRange(html.startIndex..., in: html)
+        guard let match = expression.firstMatch(in: html, range: range),
+              let titleRange = Range(match.range(at: 1), in: html) else {
+            return nil
+        }
+        return normalizedTitle(String(html[titleRange]))
+    }
+
+    private static func normalizedTitle(_ rawTitle: String) -> String? {
+        let withoutMarkup = rawTitle.replacingOccurrences(
+            of: #"<[^>]+>"#,
+            with: " ",
+            options: [.regularExpression, .caseInsensitive]
+        )
+        let withCommonEntitiesDecoded = commonHTMLEntities.reduce(withoutMarkup) { partial, entity in
+            partial.replacingOccurrences(
+                of: "&\(entity.key);",
+                with: entity.value,
+                options: .caseInsensitive
+            )
+        }
+        let decoded = CFXMLCreateStringByUnescapingEntities(
+            nil,
+            withCommonEntitiesDecoded as CFString,
+            nil
+        ) as String? ?? withCommonEntitiesDecoded
+        let normalized = decoded
+            .split(whereSeparator: \Character.isWhitespace)
+            .joined(separator: " ")
+        guard !normalized.isEmpty else { return nil }
+        return String(normalized.prefix(maximumTitleCharacters))
     }
 
     private static func validatedImage(
@@ -98,7 +186,7 @@ struct FaviconFetcher: FaviconFetching {
         var seenURLs = Set<URL>()
         var sourceOrder = 0
 
-        for attributes in linkAttributes(in: html) {
+        for attributes in elementAttributes(named: "link", in: html) {
             defer { sourceOrder += 1 }
             guard let rel = attributes["rel"]?.lowercased(),
                   let href = attributes["href"],
@@ -143,9 +231,9 @@ struct FaviconFetcher: FaviconFetching {
         }
     }
 
-    private static func linkAttributes(in html: String) -> [[String: String]] {
-        guard let linkExpression = try? NSRegularExpression(
-            pattern: #"<link\b([^>]*)>"#,
+    private static func elementAttributes(named elementName: String, in html: String) -> [[String: String]] {
+        guard let elementExpression = try? NSRegularExpression(
+            pattern: #"<"# + NSRegularExpression.escapedPattern(for: elementName) + #"\b([^>]*)>"#,
             options: [.caseInsensitive]
         ), let attributeExpression = try? NSRegularExpression(
             pattern: #"([A-Za-z_:][A-Za-z0-9_:\-.]*)\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))"#,
@@ -155,8 +243,8 @@ struct FaviconFetcher: FaviconFetching {
         }
 
         let range = NSRange(html.startIndex..., in: html)
-        return linkExpression.matches(in: html, range: range).map { linkMatch in
-            let attributesRange = linkMatch.range(at: 1)
+        return elementExpression.matches(in: html, range: range).map { elementMatch in
+            let attributesRange = elementMatch.range(at: 1)
             var attributes: [String: String] = [:]
             for match in attributeExpression.matches(in: html, range: attributesRange) {
                 guard let nameRange = Range(match.range(at: 1), in: html) else { continue }

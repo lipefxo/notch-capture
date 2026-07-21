@@ -1,6 +1,6 @@
 # Notch Capture
 
-Notch Capture is a private, local-first macOS capture inbox that lives in the notch. It is a Swift 6 agent app with no Dock icon, menu-bar item, ordinary app window, or analytics. The app makes no network requests except three narrow ones: fetching Spotify album artwork for the now-playing display, directly retrieving a favicon when a new web link is captured, and checking the project's own [appcast](https://lipefxo.github.io/notch-capture/appcast.xml) for updates via the bundled Sparkle framework.
+Notch Capture is a private, local-first macOS capture inbox that lives in the notch. It is a Swift 6 agent app with no Dock icon, menu-bar item, ordinary app window, or analytics. The app makes no network requests except three narrow ones: fetching Spotify album artwork for the now-playing display, directly retrieving a page title and favicon when a new web link is captured, and checking the project's own [appcast](https://lipefxo.github.io/notch-capture/appcast.xml) for updates via the bundled Sparkle framework.
 
 ## Default shortcut
 
@@ -12,7 +12,7 @@ The shortcut can be changed from the notch-hosted Settings surface.
 
 The composer bar is a single field for both search and capture: typing filters the ledger live, and pressing Return (or `⌘Return` when matches exist) captures the text as a new item. Beyond plain text, the composer accepts:
 
-- **Links** — a lone URL is captured as a link, and a favicon is fetched for it once at capture time.
+- **Links** — a lone URL is captured as a link, and its page title and favicon are fetched once at capture time.
 - **Images** — paste images directly into the composer.
 - **Drops** — files, images, URLs, and text dragged onto the surface become captures with attachments.
 - **`@` tags** — write `@tag` anywhere in a capture; tags autocomplete while typing and get their own color.

@@ -13,7 +13,7 @@ extension AppCoordinator {
         feedback: AppViewModel.CaptureFeedback
     ) {
         reloadFromStore()
-        scheduleFaviconFetches(for: item)
+        scheduleLinkMetadataFetches(for: item)
         guard let ledger = viewModel.items.first(where: { $0.id == item.id }) else { return }
         let refreshesVisibleConfirmation = feedback == .transientConfirmation
             && viewModel.surfaceState == .confirmation
@@ -23,24 +23,49 @@ extension AppCoordinator {
         }
     }
 
-    /// Favicon retrieval is intentionally detached from capture confirmation:
+    /// Metadata retrieval is intentionally detached from capture confirmation:
     /// a link is already durable and visible before any request begins.
-    private func scheduleFaviconFetches(for item: CaptureItem) {
+    private func scheduleLinkMetadataFetches(for item: CaptureItem) {
         let requests = item.attachments.compactMap { attachment -> (UUID, URL)? in
             guard attachment.kind == .url,
-                  attachment.faviconRelativePath == nil,
+                  attachment.pageTitle == nil || attachment.faviconRelativePath == nil,
                   let url = attachment.url else {
                 return nil
             }
             return (attachment.id, url)
         }
         for (attachmentID, pageURL) in requests {
-            let fetcher = faviconFetcher
+            let fetcher = linkMetadataFetcher
             Task { [weak self] in
-                guard let favicon = await fetcher.fetchFavicon(for: pageURL) else { return }
+                guard let metadata = await fetcher.fetchMetadata(for: pageURL) else { return }
                 guard let self else { return }
-                self.persist(favicon: favicon, forAttachmentID: attachmentID)
+                if let title = metadata.title {
+                    self.persist(pageTitle: title, forAttachmentID: attachmentID)
+                }
+                if let favicon = metadata.favicon {
+                    self.persist(favicon: favicon, forAttachmentID: attachmentID)
+                }
             }
+        }
+    }
+
+    private func persist(pageTitle: String, forAttachmentID attachmentID: UUID) {
+        var descriptor = FetchDescriptor<Attachment>(predicate: #Predicate { $0.id == attachmentID })
+        descriptor.fetchLimit = 1
+        guard let attachment = try? modelContainer.mainContext.fetch(descriptor).first,
+              attachment.kind == .url,
+              attachment.pageTitle == nil else {
+            return
+        }
+
+        do {
+            attachment.pageTitle = pageTitle
+            try modelContainer.mainContext.save()
+            if let itemID = attachment.item?.id {
+                reloadItem(itemID)
+            }
+        } catch {
+            modelContainer.mainContext.rollback()
         }
     }
 
@@ -322,6 +347,7 @@ extension AppCoordinator {
             .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         let detail = lines.dropFirst().joined(separator: "\n")
         let attachments = item.attachments.sorted { $0.order < $1.order }.map { attachment in
+            let pageTitle = attachment.displayPageTitle
             let previewURL: URL?
             if let relativePath = attachment.relativePath {
                 previewURL = try? attachmentStore.resolve(relativePath: relativePath)
@@ -334,8 +360,10 @@ extension AppCoordinator {
             return AppViewModel.LedgerAttachment(
                 id: attachment.id,
                 kind: uiAttachmentKind(attachment.kind),
-                name: attachment.originalFilename,
-                subtitle: attachment.contentType?.localizedDescription,
+                name: pageTitle ?? attachment.originalFilename,
+                subtitle: attachment.kind == .url
+                    ? pageTitle.map { _ in attachment.originalFilename }
+                    : attachment.contentType?.localizedDescription,
                 previewURL: previewURL,
                 faviconURL: faviconURL
             )
