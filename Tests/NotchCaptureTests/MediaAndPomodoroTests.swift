@@ -45,6 +45,15 @@ final class NowPlayingModelTests: XCTestCase {
         XCTAssertEqual(snapshot.progress(at: anchor.addingTimeInterval(30)), 0.42)
     }
 
+    func testFrozenSnapshotDoesNotAdvanceProgress() {
+        let anchor = Date(timeIntervalSinceReferenceDate: 100)
+        let snapshot = makeSnapshot(source: .spotify, isPlaying: true, anchor: anchor)
+            .frozen(at: anchor.addingTimeInterval(10))
+
+        XCTAssertTrue(snapshot.isFrozen)
+        XCTAssertEqual(snapshot.position(at: anchor.addingTimeInterval(40)), 20)
+    }
+
     func testScrubPreviewOverridesTimestampPositionAndClampsFraction() {
         let anchor = Date(timeIntervalSinceReferenceDate: 100)
         let snapshot = makeSnapshot(source: .spotify, isPlaying: true, anchor: anchor)
@@ -256,6 +265,33 @@ private actor BlockingAppleScriptRunner: AppleScriptRunning {
     }
 }
 
+private actor ScriptedAppleScriptRunner: AppleScriptRunning {
+    enum Response {
+        case result(AppleScriptResult)
+        case denied
+        case notRunning
+        case failed
+    }
+
+    private var responses: [Response]
+
+    init(responses: [Response]) {
+        self.responses = responses
+    }
+
+    func run(_: String) async throws -> AppleScriptResult {
+        guard !responses.isEmpty else {
+            throw AppleScriptRunnerError.executionFailed(number: 1, message: "Unexpected script")
+        }
+        switch responses.removeFirst() {
+        case let .result(result): return result
+        case .denied: throw AppleScriptRunnerError.automationDenied
+        case .notRunning: throw AppleScriptRunnerError.applicationNotRunning
+        case .failed: throw AppleScriptRunnerError.executionFailed(number: 1, message: "Temporary failure")
+        }
+    }
+}
+
 @MainActor
 final class NowPlayingServiceRefreshTests: XCTestCase {
     func testRefreshesAreSingleFlightAndPendingTriggersCoalesce() async throws {
@@ -301,6 +337,76 @@ final class NowPlayingServiceRefreshTests: XCTestCase {
 
         XCTAssertTrue(publishedSnapshots.isEmpty)
         XCTAssertNil(service.snapshot)
+        service.stop()
+    }
+
+    func testTransientFailureRetainsAFrozenRecoveryPresentation() async throws {
+        let runner = ScriptedAppleScriptRunner(responses: [
+            .result(.string(Self.spotifyStatus(position: 10))),
+            .failed,
+        ])
+        let service = NowPlayingService(runner: runner, sourceIsRunning: { $0 == .spotify })
+
+        service.setActivityLevel(.compact)
+        await waitUntil { service.presentation?.state == .connected }
+        service.refresh()
+        await waitUntil { service.presentation?.state == .disconnected }
+
+        let presentation = try XCTUnwrap(service.presentation)
+        XCTAssertEqual(presentation.source, .spotify)
+        XCTAssertTrue(presentation.snapshot.isFrozen)
+        XCTAssertEqual(service.connectionState(for: .spotify), .disconnected)
+        service.stop()
+    }
+
+    func testIdleAndTerminatedPlayersDoNotRetainRecoveryPresentation() async throws {
+        let idleRunner = ScriptedAppleScriptRunner(responses: [.result(.string(""))])
+        let idleService = NowPlayingService(runner: idleRunner, sourceIsRunning: { $0 == .spotify })
+        idleService.setActivityLevel(.compact)
+        await waitUntil { idleService.connectionState(for: .spotify) == .idle }
+        XCTAssertNil(idleService.presentation)
+        idleService.stop()
+
+        let stoppedRunner = ScriptedAppleScriptRunner(responses: [.notRunning])
+        let stoppedService = NowPlayingService(runner: stoppedRunner, sourceIsRunning: { $0 == .spotify })
+        stoppedService.setActivityLevel(.compact)
+        await waitUntil { stoppedService.connectionState(for: .spotify) == .notRunning }
+        XCTAssertNil(stoppedService.presentation)
+        stoppedService.stop()
+    }
+
+    func testReconnectClearsCachedDenialAndUsesTheExistingRefreshPath() async throws {
+        let runner = ScriptedAppleScriptRunner(responses: [
+            .denied,
+            .result(.string(Self.spotifyStatus(position: 10))),
+        ])
+        let service = NowPlayingService(runner: runner, sourceIsRunning: { $0 == .spotify })
+
+        service.setActivityLevel(.compact)
+        await waitUntil { service.connectionState(for: .spotify) == .permissionDenied }
+        service.reconnect(.spotify)
+        await waitUntil { service.presentation?.state == .connected }
+
+        XCTAssertEqual(service.connectionState(for: .spotify), .connected)
+        service.stop()
+    }
+
+    func testFailedOptimisticCommandRestoresConfirmedPlaybackAndRecovers() async throws {
+        let runner = ScriptedAppleScriptRunner(responses: [
+            .result(.string(Self.spotifyStatus(position: 10))),
+            .failed,
+            .failed,
+        ])
+        let service = NowPlayingService(runner: runner, sourceIsRunning: { $0 == .spotify })
+
+        service.setActivityLevel(.compact)
+        await waitUntil { service.presentation?.state == .connected }
+        XCTAssertTrue(service.snapshot?.isPlaying == true)
+        service.playPause()
+        await waitUntil { service.presentation?.state == .disconnected }
+
+        XCTAssertTrue(service.snapshot?.isPlaying == true)
+        XCTAssertTrue(service.snapshot?.isFrozen == true)
         service.stop()
     }
 

@@ -12,6 +12,38 @@ enum NowPlayingSource: String, CaseIterable, Sendable {
     }
 }
 
+enum NowPlayingConnectionState: Equatable, Sendable {
+    case notRunning
+    case idle
+    case connecting
+    case connected
+    case disconnected
+    case permissionDenied
+
+    var statusText: String {
+        switch self {
+        case .notRunning: "Not running"
+        case .idle: "No active track"
+        case .connecting: "Connecting…"
+        case .connected: "Connected"
+        case .disconnected: "Connection lost"
+        case .permissionDenied: "Permission required"
+        }
+    }
+
+    var isRecoverable: Bool {
+        self == .disconnected || self == .permissionDenied
+    }
+}
+
+struct NowPlayingPresentation: Equatable, Sendable {
+    let source: NowPlayingSource
+    let state: NowPlayingConnectionState
+    let snapshot: NowPlayingSnapshot
+
+    var isRecovery: Bool { state.isRecoverable }
+}
+
 struct NowPlayingSnapshot: Equatable, Sendable {
     var source: NowPlayingSource
     var trackKey: String
@@ -23,9 +55,12 @@ struct NowPlayingSnapshot: Equatable, Sendable {
     var position: TimeInterval
     var positionAnchor: Date
     var artworkURL: URL?
+    /// A recoverable connection failure keeps the last confirmed snapshot only
+    /// as context. Its clock must never continue to imply live playback.
+    var isFrozen = false
 
     func position(at date: Date) -> TimeInterval {
-        let elapsed = isPlaying ? date.timeIntervalSince(positionAnchor) : 0
+        let elapsed = isPlaying && !isFrozen ? date.timeIntervalSince(positionAnchor) : 0
         return min(max(0, position + elapsed), max(0, duration))
     }
 
@@ -43,6 +78,14 @@ struct NowPlayingSnapshot: Equatable, Sendable {
         var copy = self
         copy.position = min(max(0, requestedPosition), max(0, duration))
         copy.positionAnchor = date
+        return copy
+    }
+
+    func frozen(at date: Date = .now) -> Self {
+        var copy = self
+        copy.position = position(at: date)
+        copy.positionAnchor = date
+        copy.isFrozen = true
         return copy
     }
 }

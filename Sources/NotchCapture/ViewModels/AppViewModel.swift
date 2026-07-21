@@ -89,6 +89,8 @@ final class AppViewModel: ObservableObject {
     /// False when Sparkle is inert (bare `swift run`, design previews).
     @Published var updatesEnabled = false
     @Published var nowPlaying: NowPlayingSnapshot?
+    @Published var nowPlayingPresentation: NowPlayingPresentation?
+    @Published var mediaConnectionStates: [NowPlayingSource: NowPlayingConnectionState] = [:]
     @Published var nowPlayingArtwork: NSImage?
     @Published var pomodoro: PomodoroState
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
@@ -139,6 +141,7 @@ final class AppViewModel: ObservableObject {
         timeFormat: TimeFormat = .twelveHour,
         compactPresentationSize: CompactPresentationSize = .minimal,
         nowPlaying: NowPlayingSnapshot? = nil,
+        nowPlayingPresentation: NowPlayingPresentation? = nil,
         nowPlayingArtwork: NSImage? = nil,
         pomodoro: PomodoroState = PomodoroState(),
         shortcuts: [Shortcut] = [
@@ -158,6 +161,7 @@ final class AppViewModel: ObservableObject {
         self.timeFormat = timeFormat
         self.compactPresentationSize = compactPresentationSize
         self.nowPlaying = nowPlaying
+        self.nowPlayingPresentation = nowPlayingPresentation
         self.nowPlayingArtwork = nowPlayingArtwork
         self.pomodoro = pomodoro
         self.expandedUtilityFocus = nil
@@ -1305,10 +1309,18 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    var isNowPlayingRecovering: Bool { nowPlayingPresentation?.isRecovery == true }
+
+    func mediaConnectionState(for source: NowPlayingSource) -> NowPlayingConnectionState {
+        mediaConnectionStates[source] ?? .notRunning
+    }
+
     func musicPlayPause() { hooks.onMusicPlayPause() }
     func musicNext() { hooks.onMusicNext() }
     func musicPrevious() { hooks.onMusicPrevious() }
     func musicSeek(to position: TimeInterval) { hooks.onMusicSeek(position) }
+    func reconnectMedia(_ source: NowPlayingSource) { hooks.onReconnectMedia(source) }
+    func openMediaAutomationSettings() { hooks.onOpenMediaAutomationSettings() }
 
     func togglePomodoro() {
         isPomodoroCardVisible = true

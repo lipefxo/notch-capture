@@ -550,6 +550,11 @@ final class AppCoordinator {
         hooks.onMusicNext = { [weak self] in self?.nowPlayingService.nextTrack() }
         hooks.onMusicPrevious = { [weak self] in self?.nowPlayingService.previousTrack() }
         hooks.onMusicSeek = { [weak self] position in self?.nowPlayingService.seek(to: position) }
+        hooks.onReconnectMedia = { [weak self] source in self?.nowPlayingService.reconnect(source) }
+        hooks.onOpenMediaAutomationSettings = {
+            guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
+            NSWorkspace.shared.open(url)
+        }
         hooks.onPomodoroToggle = { [weak self] in self?.pomodoroService.toggle() }
         hooks.onPomodoroReset = { [weak self] in self?.pomodoroService.reset() }
         hooks.onPomodoroSetDuration = { [weak self] duration in self?.pomodoroService.setDuration(duration) }

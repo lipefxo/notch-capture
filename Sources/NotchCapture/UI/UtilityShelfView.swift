@@ -2,21 +2,45 @@ import SwiftUI
 
 struct UtilityShelfView: View {
     @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        if let snapshot = viewModel.nowPlaying {
-            MusicPlayerBand(viewModel: viewModel, snapshot: snapshot)
-                .transition(.opacity.combined(with: .offset(y: -4)))
+        if let presentation = viewModel.nowPlayingPresentation {
+            MusicPlayerBand(viewModel: viewModel, presentation: presentation)
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -4)))
+                .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content, value: presentation.state)
         }
     }
 }
 
 private struct MusicPlayerBand: View {
     @ObservedObject var viewModel: AppViewModel
-    let snapshot: NowPlayingSnapshot
+    let presentation: NowPlayingPresentation
+
+    private var snapshot: NowPlayingSnapshot { presentation.snapshot }
 
     var body: some View {
         HStack(spacing: 11) {
+            if presentation.isRecovery {
+                recoveryContent
+            } else {
+                liveContent
+            }
+        }
+        // Match the header, folder rows, and ledger rows so the player does
+        // not hang outside the shared expanded-surface content column.
+        .padding(.horizontal, 20)
+        .frame(height: 62)
+        .background(NotchTheme.ink)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(NotchTheme.hairline).frame(height: 1)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(playerAccessibilityLabel)
+    }
+
+    private var liveContent: some View {
+        Group {
             ArtworkPlaybackControl(
                 artwork: viewModel.nowPlayingArtwork,
                 trackKey: snapshot.trackKey,
@@ -57,16 +81,46 @@ private struct MusicPlayerBand: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // Match the header, folder rows, and ledger rows so the player does
-        // not hang outside the shared expanded-surface content column.
-        .padding(.horizontal, 20)
-        .frame(height: 62)
-        .background(NotchTheme.ink)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(NotchTheme.hairline).frame(height: 1)
+    }
+
+    private var recoveryContent: some View {
+        Group {
+            Image(systemName: presentation.state == .permissionDenied ? "lock.fill" : "exclamationmark.triangle.fill")
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(presentation.state == .permissionDenied ? NotchTheme.secondaryText : NotchTheme.destructive)
+                .frame(width: 40, height: 40)
+                .background(Color.white.opacity(0.04))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(snapshot.title)
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(NotchTheme.primaryText)
+                    .lineLimit(1)
+                Text("\(presentation.state.statusText) · \(snapshot.artist)")
+                    .font(.system(size: 10, weight: .regular))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if presentation.state == .permissionDenied {
+                Button("System Settings", action: viewModel.openMediaAutomationSettings)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(NotchTheme.primaryAccent)
+                    .buttonStyle(.plain)
+            }
+            Button {
+                viewModel.reconnectMedia(presentation.source)
+            } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 10.5, weight: .semibold))
+            }
+            .buttonStyle(PressableIconButtonStyle(width: 28))
+            .notchHitTarget(Circle())
+            .help("Retry \(presentation.source.applicationName) connection")
+            .accessibilityLabel("Retry \(presentation.source.applicationName) connection")
         }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(playerAccessibilityLabel)
     }
 
     private func transportButton(
@@ -87,7 +141,9 @@ private struct MusicPlayerBand: View {
     }
 
     private var playerAccessibilityLabel: String {
-        let base = "Now playing \(snapshot.title) by \(snapshot.artist)"
+        let base = presentation.isRecovery
+            ? "\(presentation.state.statusText), \(snapshot.title) by \(snapshot.artist)"
+            : "Now playing \(snapshot.title) by \(snapshot.artist)"
         guard let duration = MusicTimeFormatter.durationString(from: snapshot.duration) else {
             return base
         }
