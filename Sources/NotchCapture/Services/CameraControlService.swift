@@ -1,6 +1,41 @@
 import CoreMediaIO
 import Foundation
 
+enum CameraPanTiltRestorePolicy {
+    /// The Link quantises pan/tilt to whole degrees. If its native register still
+    /// contains the saved target after Privacy Mode physically parked the
+    /// gimbal, writing that same target again is ignored. Move the register one
+    /// degree first so the real restore is a fresh command.
+    static let primingStep: Double = 3600
+
+    static func primingAim(
+        current: CameraAim,
+        target: CameraAim,
+        panRange: ClosedRange<Double>,
+        tiltRange: ClosedRange<Double>
+    ) -> CameraAim? {
+        guard current == target else { return nil }
+
+        if let alternatePan = alternateValue(for: target.pan, in: panRange) {
+            return CameraAim(pan: alternatePan, tilt: target.tilt)
+        }
+        if let alternateTilt = alternateValue(for: target.tilt, in: tiltRange) {
+            return CameraAim(pan: target.pan, tilt: alternateTilt)
+        }
+        return nil
+    }
+
+    private static func alternateValue(
+        for value: Double,
+        in range: ClosedRange<Double>
+    ) -> Double? {
+        let upward = min(value + primingStep, range.upperBound)
+        if upward != value { return upward }
+        let downward = max(value - primingStep, range.lowerBound)
+        return downward != value ? downward : nil
+    }
+}
+
 /// Zoom and framing for cameras that publish UVC controls.
 ///
 /// AVFoundation exposes none of this on macOS — an external camera reports a
@@ -83,6 +118,28 @@ final class CameraControlService {
         var payload = withUnsafeBytes(of: Int32(clampedPan.rounded())) { Array($0) }
         payload.append(contentsOf: withUnsafeBytes(of: Int32(clampedTilt.rounded())) { Array($0) })
         Self.write(panTiltControl, bytes: payload)
+    }
+
+    /// Primes a parked gimbal only when its native register already equals the
+    /// desired target. Returns true when the caller should briefly wait before
+    /// issuing the real restore command.
+    @discardableResult
+    func primePanTiltRestore(pan: Double, tilt: Double) -> Bool {
+        guard let current = panTilt,
+              let panRange = capabilities.panRange,
+              let tiltRange = capabilities.tiltRange else { return false }
+        let target = CameraAim(
+            pan: min(max(pan.rounded(), panRange.lowerBound), panRange.upperBound),
+            tilt: min(max(tilt.rounded(), tiltRange.lowerBound), tiltRange.upperBound)
+        )
+        guard let primingAim = CameraPanTiltRestorePolicy.primingAim(
+            current: CameraAim(pan: current.pan, tilt: current.tilt),
+            target: target,
+            panRange: panRange,
+            tiltRange: tiltRange
+        ) else { return false }
+        setPanTilt(pan: primingAim.pan, tilt: primingAim.tilt)
+        return true
     }
 
     /// Returns the gimbal to dead centre.

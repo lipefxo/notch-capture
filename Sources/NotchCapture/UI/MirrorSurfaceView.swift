@@ -2,16 +2,59 @@ import AVFoundation
 import AppKit
 import SwiftUI
 
+struct CameraPresetButtonState: Equatable {
+    let slot: CameraPresetSlot
+    let status: String
+    let isEnabled: Bool
+    let isSelected: Bool
+}
+
+enum CameraPresetControlContent {
+    static func isAvailable(
+        for capabilities: CameraControlService.Capabilities
+    ) -> Bool {
+        capabilities.canMove
+    }
+
+    static func buttonStates(
+        presets: [CameraPresetSlot: CameraPreset],
+        selectedSlot: CameraPresetSlot?
+    ) -> [CameraPresetButtonState] {
+        CameraPresetSlot.allCases.map { slot in
+            let isFilled = presets[slot] != nil
+            return CameraPresetButtonState(
+                slot: slot,
+                status: isFilled
+                    ? (selectedSlot == slot ? "Selected" : "Position")
+                    : "Empty",
+                isEnabled: isFilled,
+                isSelected: isFilled && selectedSlot == slot
+            )
+        }
+    }
+
+    static func saveTitle(
+        for slot: CameraPresetSlot,
+        presets: [CameraPresetSlot: CameraPreset]
+    ) -> String {
+        presets[slot] == nil
+            ? "Save to \(slot.title)"
+            : "Replace \(slot.title)"
+    }
+}
+
 /// The webcam mirror. Unlike the inbox surfaces this one is meant to stay open
 /// while the user works elsewhere, so it never takes focus and never dismisses
 /// itself — the header close button and the pill toggle are the only exits.
 struct MirrorSurfaceView: View {
+    @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @ObservedObject var viewModel: AppViewModel
 
     /// Where the gimbal was aiming when the current drag began, so the whole
     /// drag is one absolute move rather than an accumulation of deltas that
     /// would drift as the motor lags behind.
     @State private var dragOrigin: CGPoint?
+    @State private var presetMenuAnchor: CGRect = .zero
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,6 +74,9 @@ struct MirrorSurfaceView: View {
                 .gesture(moveGesture)
                 .help(viewModel.cameraControls.canMove ? "Drag to move the camera" : "")
                 .padding(.top, 14)
+            presetControls
+                .padding(.horizontal, 20)
+                .padding(.top, 12)
                 .padding(.bottom, 16)
         }
         .frame(width: NotchTheme.width, height: NotchTheme.mirrorHeight)
@@ -130,7 +176,6 @@ struct MirrorSurfaceView: View {
                         .foregroundStyle(NotchTheme.tertiaryText)
                         .frame(width: 34)
                         .accessibilityLabel("Zoom \(String(format: "%.1f", viewModel.cameraZoomFactor)) times")
-                        .accessibilityLabel("Zoom \(String(format: "%.1f", viewModel.cameraZoomFactor)) times")
 
                     controlButton(
                         "plus.magnifyingglass",
@@ -148,6 +193,89 @@ struct MirrorSurfaceView: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var presetControls: some View {
+        if CameraPresetControlContent.isAvailable(for: viewModel.cameraControls) {
+            HStack(spacing: 8) {
+                ForEach(
+                    CameraPresetControlContent.buttonStates(
+                        presets: viewModel.cameraPresets,
+                        selectedSlot: viewModel.selectedCameraPresetSlot
+                    ),
+                    id: \.slot
+                ) { state in
+                    Button {
+                        viewModel.recallCameraPreset(in: state.slot)
+                    } label: {
+                        VStack(spacing: 1) {
+                            Text(String(state.slot.rawValue))
+                                .font(.system(size: 20, weight: .semibold, design: .rounded))
+                            Text(state.status.uppercased())
+                                .font(.system(size: 7.5, weight: .semibold))
+                                .tracking(0.6)
+                        }
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                    .buttonStyle(
+                        CameraPresetSlotButtonStyle(
+                            isSelected: state.isSelected,
+                            isEnabled: state.isEnabled
+                        )
+                    )
+                    .disabled(!state.isEnabled)
+                    .help(
+                        state.isEnabled
+                            ? "Move camera to \(state.slot.title)"
+                            : "\(state.slot.title) is empty"
+                    )
+                    .accessibilityLabel(state.slot.title)
+                    .accessibilityValue(state.status)
+                }
+
+                Button(action: presentSavePresetMenu) {
+                    VStack(spacing: 3) {
+                        Image(systemName: "square.and.arrow.down")
+                            .font(.system(size: 13, weight: .medium))
+                        Text("SAVE")
+                            .font(.system(size: 7.5, weight: .semibold))
+                            .tracking(0.6)
+                    }
+                    .frame(width: 60, height: NotchTheme.mirrorPresetControlsHeight)
+                }
+                .buttonStyle(CameraPresetSaveButtonStyle())
+                .menuAnchor($presetMenuAnchor)
+                .help("Save current camera position")
+                .accessibilityLabel("Save current camera position")
+            }
+            .frame(height: NotchTheme.mirrorPresetControlsHeight)
+        } else {
+            Color.clear
+                .frame(height: NotchTheme.mirrorPresetControlsHeight)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private func presentSavePresetMenu() {
+        let items = CameraPresetSlot.allCases.map { slot in
+            NotchMenuItem(
+                title: CameraPresetControlContent.saveTitle(
+                    for: slot,
+                    presets: viewModel.cameraPresets
+                ),
+                icon: slot.icon
+            ) {
+                viewModel.saveCameraPreset(in: slot)
+            }
+        }
+        presentation.present(
+            NotchMenu(
+                title: "Save current position",
+                anchor: presetMenuAnchor,
+                items: items
+            )
+        )
     }
 
     private func controlButton(
@@ -226,6 +354,63 @@ struct MirrorSurfaceView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct CameraPresetSlotButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let isSelected: Bool
+    let isEnabled: Bool
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(
+                isEnabled
+                    ? NotchTheme.primaryText
+                    : NotchTheme.tertiaryText.opacity(0.55)
+            )
+            .background(
+                isSelected
+                    ? NotchTheme.selectedControl
+                    : NotchTheme.control
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(
+                        isSelected
+                            ? NotchTheme.primaryText.opacity(0.28)
+                            : NotchTheme.controlStroke
+                    )
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(
+                reduceMotion ? nil : NotchMotion.controlPress,
+                value: configuration.isPressed
+            )
+    }
+}
+
+private struct CameraPresetSaveButtonStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .foregroundStyle(NotchTheme.secondaryText)
+            .background(configuration.isPressed ? NotchTheme.selectedControl : NotchTheme.control)
+            .overlay {
+                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                    .stroke(NotchTheme.controlStroke)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 11, style: .continuous))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.97 : 1)
+            .animation(
+                reduceMotion ? nil : NotchMotion.controlPress,
+                value: configuration.isPressed
+            )
     }
 }
 

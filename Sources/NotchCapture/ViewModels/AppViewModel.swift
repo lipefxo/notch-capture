@@ -118,6 +118,8 @@ final class AppViewModel: ObservableObject {
     /// `tiltRange`.
     @Published var cameraPan: Double = 0
     @Published var cameraTilt: Double = 0
+    @Published private(set) var cameraPresets: [CameraPresetSlot: CameraPreset] = [:]
+    @Published private(set) var selectedCameraPresetSlot: CameraPresetSlot?
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
     @Published var isPomodoroCardVisible = false
     @Published var expandedUtilityFocus: UtilityFocus?
@@ -507,6 +509,55 @@ final class AppViewModel: ObservableObject {
         cameraPan = steppedPan
         cameraTilt = steppedTilt
         hooks.onMoveCamera(steppedPan, steppedTilt)
+    }
+
+    /// Re-applies persisted framing even when it matches the last value held by
+    /// the view model: the physical camera may have moved while the app was not
+    /// running. Persisted values still pass through current device travel.
+    func restoreCameraAim(toPan pan: Double, tilt: Double) {
+        guard let panRange = cameraControls.panRange,
+              let tiltRange = cameraControls.tiltRange else { return }
+        let steppedPan = Self.quantized(pan, to: panRange)
+        let steppedTilt = Self.quantized(tilt, to: tiltRange)
+        cameraPan = steppedPan
+        cameraTilt = steppedTilt
+        hooks.onMoveCamera(steppedPan, steppedTilt)
+    }
+
+    func configureCameraPresets(_ state: CameraPresetState) {
+        cameraPresets = state.presetsBySlot
+        selectedCameraPresetSlot = state.selectedSlot
+    }
+
+    func saveCameraPreset(in slot: CameraPresetSlot) {
+        guard cameraControls.canMove else { return }
+        let preset = CameraPreset(
+            pan: cameraPan,
+            tilt: cameraTilt,
+            zoom: cameraControls.zoomRange == nil ? nil : cameraZoom
+        )
+        cameraPresets[slot] = preset
+        selectedCameraPresetSlot = slot
+        hooks.onSaveCameraPreset(slot, preset)
+    }
+
+    func recallCameraPreset(in slot: CameraPresetSlot) {
+        guard let preset = cameraPresets[slot] else { return }
+        applyCameraPreset(preset)
+        selectedCameraPresetSlot = slot
+        hooks.onSelectCameraPreset(slot)
+    }
+
+    /// Used both for a live recall and for the concealed startup restore.
+    /// Unsupported axes are ignored and every supported value is clamped to
+    /// the capabilities reported by the currently attached camera.
+    func applyCameraPreset(_ preset: CameraPreset) {
+        restoreCameraAim(toPan: preset.pan, tilt: preset.tilt)
+        guard let zoom = preset.zoom,
+              let range = cameraControls.zoomRange else { return }
+        let clampedZoom = min(max(zoom, range.lowerBound), range.upperBound)
+        cameraZoom = clampedZoom
+        hooks.onSetCameraZoom(clampedZoom)
     }
 
     private static func quantized(_ value: Double, to range: ClosedRange<Double>) -> Double {
