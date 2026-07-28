@@ -12,6 +12,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         generalSection
                         mediaSection
+                        studioLightSection
                         shortcutsSection
                         privacyAndDataSection
                             .id("privacy-and-data")
@@ -35,7 +36,10 @@ struct SettingsView: View {
             guard let request else { return }
             presentShortcutRecorder(request)
         }
-        .onDisappear { viewModel.hooks.onCancelShortcutRecording() }
+        .onDisappear {
+            viewModel.hooks.onCancelShortcutRecording()
+            viewModel.cancelStudioLightPairing()
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Notch Capture settings")
     }
@@ -169,6 +173,110 @@ struct SettingsView: View {
                     SettingsDivider(leadingInset: 44)
                 }
             }
+        }
+    }
+
+    private var studioLightSection: some View {
+        SettingsGroup(title: "Studio Light", subtitle: "Experimental MOLUS G60 control") {
+            HStack(spacing: 8) {
+                SettingsRowIcon(symbol: "laser.burst")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(
+                        viewModel.studioLightState.configuredDevice?.name
+                            ?? "MOLUS G60"
+                    )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(NotchTheme.primaryText)
+                    Text(viewModel.studioLightState.connection.statusText)
+                        .font(.system(size: 9.5))
+                        .foregroundStyle(studioLightStatusColor)
+                        .lineLimit(1)
+                }
+                Spacer()
+                studioLightActions
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 46)
+
+            if !viewModel.studioLightState.discoveredDevices.isEmpty,
+               !viewModel.studioLightState.isConfigured {
+                ForEach(viewModel.studioLightState.discoveredDevices) { device in
+                    SettingsDivider(leadingInset: 44)
+                    HStack(spacing: 8) {
+                        SettingsRowIcon(symbol: "dot.radiowaves.left.and.right")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(device.name)
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(NotchTheme.primaryText)
+                            if let rssi = device.rssi {
+                                Text("Signal \(rssi) dBm")
+                                    .font(.system(size: 9))
+                                    .foregroundStyle(NotchTheme.tertiaryText)
+                            }
+                        }
+                        Spacer()
+                        Button("Pair") {
+                            viewModel.pairStudioLight(device)
+                        }
+                        .buttonStyle(SettingsButtonStyle())
+                    }
+                    .padding(.horizontal, 10)
+                    .frame(height: 44)
+                }
+            }
+
+            SettingsDivider()
+            Text(
+                "Keep the fixture powered and disconnect it from ZY Vega before connecting here."
+            )
+            .font(.system(size: 9))
+            .foregroundStyle(NotchTheme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+        }
+    }
+
+    @ViewBuilder
+    private var studioLightActions: some View {
+        let state = viewModel.studioLightState
+        if state.connection == .permissionDenied {
+            Button("System Settings", action: viewModel.openBluetoothSettings)
+                .buttonStyle(SettingsButtonStyle())
+        } else if state.isConfigured {
+            if state.connection.canRetry && !state.connection.isConnected {
+                Button("Retry", action: viewModel.retryStudioLight)
+                    .buttonStyle(SettingsButtonStyle())
+            } else if state.connection.isBusy {
+                ProgressView()
+                    .controlSize(.small)
+                    .frame(width: 27, height: 27)
+            }
+            Button("Forget", action: viewModel.forgetStudioLight)
+                .buttonStyle(SettingsButtonStyle())
+        } else if state.connection == .scanning {
+            Button("Stop", action: viewModel.cancelStudioLightPairing)
+                .buttonStyle(SettingsButtonStyle())
+        } else if state.connection == .connecting {
+            ProgressView()
+                .controlSize(.small)
+                .frame(width: 27, height: 27)
+        } else {
+            Button("Pair…", action: viewModel.startStudioLightPairing)
+                .buttonStyle(SettingsButtonStyle())
+        }
+    }
+
+    private var studioLightStatusColor: Color {
+        switch viewModel.studioLightState.connection {
+        case .connected:
+            NotchTheme.secondaryText
+        case .connecting, .scanning:
+            NotchTheme.primaryAccent
+        case .notConfigured:
+            NotchTheme.secondaryText
+        default:
+            NotchTheme.destructive.opacity(0.88)
         }
     }
 

@@ -14,9 +14,9 @@ struct MirrorToggleButton: View {
 
     var body: some View {
         Button(action: viewModel.toggleMirror) {
-            // No `.fill` variant exists for this symbol, so the open state is
-            // carried by colour and the selected trait rather than by weight.
-            Image(systemName: "camera.aperture")
+            // Open state is carried by colour and the selected trait rather
+            // than by switching to a `.fill` weight.
+            Image(systemName: "record.circle")
                 .font(.system(size: glyphSize, weight: .regular))
         }
         .buttonStyle(PressableIconButtonStyle(

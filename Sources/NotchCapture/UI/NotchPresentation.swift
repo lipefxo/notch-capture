@@ -6,20 +6,32 @@ import SwiftUI
 final class NotchPresentationCoordinator: ObservableObject {
     @Published private(set) var modal: NotchModal?
     @Published private(set) var menu: NotchMenu?
+    @Published private(set) var studioLightPopover: StudioLightPopover?
 
-    var hasActivePresentation: Bool { modal != nil || menu != nil }
+    var hasActivePresentation: Bool {
+        modal != nil || menu != nil || studioLightPopover != nil
+    }
     var hasModal: Bool { modal != nil }
 
     func present(_ modal: NotchModal) {
         PanelDiagnostics.log("presentation: modal '\(modal.title)'")
         menu = nil
+        studioLightPopover = nil
         self.modal = modal
     }
 
     func present(_ menu: NotchMenu) {
         guard modal == nil else { return }
         PanelDiagnostics.log("presentation: menu '\(menu.title ?? "-")'")
+        studioLightPopover = nil
         self.menu = menu
+    }
+
+    func present(_ popover: StudioLightPopover) {
+        guard modal == nil else { return }
+        PanelDiagnostics.log("presentation: studio light")
+        menu = nil
+        studioLightPopover = popover
     }
 
     func dismissMenu() {
@@ -32,15 +44,28 @@ final class NotchPresentationCoordinator: ObservableObject {
         modal = nil
     }
 
+    func dismissStudioLightPopover() {
+        if studioLightPopover != nil {
+            PanelDiagnostics.log("presentation: dismiss studio light")
+        }
+        studioLightPopover = nil
+    }
+
     func updateModalValidation(_ message: String?) { modal?.validationMessage = message }
-    func dismissAll() { menu = nil; modal = nil }
+    func dismissAll() {
+        menu = nil
+        modal = nil
+        studioLightPopover = nil
+    }
 
     /// Dismisses everything while honoring the modal's cancel contract — a
     /// modal torn down by a surface change (e.g. shortcut recording) must run
     /// its cleanup exactly as if the user had pressed Cancel.
     func cancelActivePresentation() {
-        if modal != nil || menu != nil {
-            PanelDiagnostics.log("presentation: cancel active (modal=\(modal != nil) menu=\(menu != nil))")
+        if hasActivePresentation {
+            PanelDiagnostics.log(
+                "presentation: cancel active (modal=\(modal != nil) menu=\(menu != nil) light=\(studioLightPopover != nil))"
+            )
         }
         if let modal { modal.onCancel() }
         dismissAll()
@@ -94,6 +119,11 @@ struct NotchMenu {
     let anchor: CGRect
     let items: [NotchMenuItem]
     var style: Style = .standard
+}
+
+struct StudioLightPopover {
+    let id = UUID()
+    let anchor: CGRect
 }
 
 extension View {
@@ -151,6 +181,7 @@ struct NotchPresentationLayer: View {
     @EnvironmentObject private var coordinator: NotchPresentationCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var focusedModal: Bool
+    @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
         ZStack {
@@ -178,6 +209,23 @@ struct NotchPresentationLayer: View {
                     .allowsHitTesting(coordinator.menu?.id == menu.id)
                     .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
             }
+            if let popover = coordinator.studioLightPopover {
+                Color.clear
+                    .contentShape(Rectangle())
+                    .onTapGesture { coordinator.dismissStudioLightPopover() }
+                    .allowsHitTesting(coordinator.studioLightPopover?.id == popover.id)
+                StudioLightPopoverCard(
+                    viewModel: viewModel,
+                    popover: popover
+                )
+                .id(popover.id)
+                .allowsHitTesting(coordinator.studioLightPopover?.id == popover.id)
+                .transition(
+                    reduceMotion
+                        ? .opacity
+                        : .opacity.combined(with: .scale(scale: 0.98))
+                )
+            }
             if let modal = coordinator.modal {
                 NotchModalCard(modal: modal)
                     .focused($focusedModal)
@@ -195,6 +243,8 @@ struct NotchPresentationLayer: View {
             if let modal = coordinator.modal {
                 modal.onCancel()
                 coordinator.dismissModal()
+            } else if coordinator.studioLightPopover != nil {
+                coordinator.dismissStudioLightPopover()
             } else {
                 coordinator.dismissMenu()
             }

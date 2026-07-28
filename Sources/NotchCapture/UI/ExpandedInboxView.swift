@@ -124,6 +124,7 @@ struct ExpandedInboxView: View {
     @State private var ledgerScrollTask: Task<Void, Never>?
     @State private var folderHeaderMenuAnchor: CGRect = .zero
     @State private var pomodoroMenuAnchor: CGRect = .zero
+    @State private var studioLightPopoverAnchor: CGRect = .zero
     @State private var snippetCategoryPickerAnchor: CGRect = .zero
 
     // The composer shares the same 20-point content column as the header,
@@ -248,6 +249,15 @@ struct ExpandedInboxView: View {
         }
         .onAppear {
             handleAppearanceRequest(morphCoordinator.request)
+            guard CommandLine.arguments.contains(
+                "--preview-studio-light-popover"
+            ) else { return }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(250))
+                presentation.present(
+                    StudioLightPopover(anchor: studioLightPopoverAnchor)
+                )
+            }
         }
         .onDisappear {
             appearanceTask?.cancel()
@@ -409,6 +419,10 @@ struct ExpandedInboxView: View {
 
                     pomodoroControl
 
+                    if viewModel.studioLightState.isConfigured {
+                        studioLightControl
+                    }
+
                     MirrorToggleButton(viewModel: viewModel)
 
                     Button {
@@ -527,6 +541,36 @@ struct ExpandedInboxView: View {
         .menuAnchor($pomodoroMenuAnchor)
         .help(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
         .accessibilityLabel(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
+    }
+
+    private var studioLightControl: some View {
+        Button {
+            viewModel.refreshStudioLight()
+            presentation.present(
+                StudioLightPopover(anchor: studioLightPopoverAnchor)
+            )
+        } label: {
+            Image(systemName: "laser.burst")
+                .font(.system(size: 13, weight: .regular))
+        }
+        .buttonStyle(PressableIconButtonStyle(
+            idleForeground: studioLightButtonColor
+        ))
+        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .menuAnchor($studioLightPopoverAnchor)
+        .help("Studio light")
+        .accessibilityLabel("Control studio light")
+        .accessibilityValue(viewModel.studioLightState.connection.statusText)
+    }
+
+    private var studioLightButtonColor: Color {
+        let state = viewModel.studioLightState
+        if !state.connection.isConnected {
+            return NotchTheme.destructive.opacity(0.8)
+        }
+        return state.snapshot.isOn
+            ? NotchTheme.primaryAccent
+            : NotchTheme.secondaryText
     }
 
     private func presentPomodoroMenu() {

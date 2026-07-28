@@ -27,6 +27,7 @@ final class AppCoordinator {
     private let updaterService: UpdaterService
     let displayLocator: DisplayLocator
     let nowPlayingService: NowPlayingService
+    let studioLightService: any StudioLightControlling
     let pomodoroService: PomodoroService
     let cameraService: CameraService
     let cameraControlService: CameraControlService
@@ -44,7 +45,10 @@ final class AppCoordinator {
     var pendingShortcutDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition]?
     var displayEnvironmentObservers: [NSObjectProtocol] = []
 
-    init(defaults: UserDefaults = .standard) throws {
+    init(
+        defaults: UserDefaults = .standard,
+        studioLightService injectedStudioLightService: (any StudioLightControlling)? = nil
+    ) throws {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
 
@@ -98,6 +102,15 @@ final class AppCoordinator {
             persistDuration: { duration in defaults.set(duration, forKey: DefaultsKey.pomodoroDuration) }
         )
         self.nowPlayingService = NowPlayingService()
+        self.studioLightService = injectedStudioLightService
+            ?? StudioLightService(
+                defaults: defaults,
+                onAccessPrompt: {
+                    // The notch panel is non-key, so bring the Bluetooth privacy
+                    // prompt in front when Pair is explicitly requested.
+                    NSApp.activate(ignoringOtherApps: true)
+                }
+            )
         self.cameraService = CameraService(onAccessPrompt: {
             // An agent app with a non-key panel can otherwise leave the camera
             // TCC prompt stranded behind the user's frontmost window.
@@ -150,6 +163,22 @@ final class AppCoordinator {
                 )
                 preview.configureCameraPresets(presetState)
             }
+            if CommandLine.arguments.contains("--preview-studio-light")
+                || CommandLine.arguments.contains("--preview-studio-light-popover") {
+                preview.studioLightState = StudioLightViewState(
+                    connection: .connected,
+                    configuredDevice: StudioLightDevice(
+                        id: UUID(),
+                        name: "MOLUS G60_STUDIO"
+                    ),
+                    discoveredDevices: [],
+                    snapshot: StudioLightSnapshot(
+                        isOn: true,
+                        brightness: 54,
+                        colorTemperature: 4_300
+                    )
+                )
+            }
             self.viewModel = preview
         } else {
             self.viewModel = AppViewModel(
@@ -157,7 +186,8 @@ final class AppCoordinator {
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
                 launchAtLogin: loginItemService.isEnabled,
                 timeFormat: timeFormat,
-                compactPresentationSize: compactPresentationSize
+                compactPresentationSize: compactPresentationSize,
+                studioLightState: studioLightService.state
             )
         }
         if let storeRecoveryBackupURL {
@@ -184,6 +214,7 @@ final class AppCoordinator {
 
         configureHooks()
         configureMedia()
+        configureStudioLight()
         configureCamera()
         configureStateSynchronization()
     }
@@ -422,6 +453,7 @@ final class AppCoordinator {
     func start() {
         if !previewMode {
             nowPlayingService.setActivityLevel(.compact)
+            studioLightService.start()
             do {
                 let manager = try GlobalHotKeyManager { [weak self] action in
                     self?.handleHotKey(action)
@@ -472,6 +504,7 @@ final class AppCoordinator {
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
         nowPlayingService.stop()
+        studioLightService.stop()
         cameraService.stop()
         cameraControlService.detach()
         cameraPresentationTask?.cancel()
@@ -613,6 +646,39 @@ final class AppCoordinator {
         hooks.onReconnectMedia = { [weak self] source in self?.nowPlayingService.reconnect(source) }
         hooks.onOpenMediaAutomationSettings = {
             guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
+            NSWorkspace.shared.open(url)
+        }
+        hooks.onStartStudioLightPairing = { [weak self] in
+            self?.studioLightService.startPairing()
+        }
+        hooks.onCancelStudioLightPairing = { [weak self] in
+            self?.studioLightService.cancelPairing()
+        }
+        hooks.onPairStudioLight = { [weak self] deviceID in
+            self?.studioLightService.pair(deviceID: deviceID)
+        }
+        hooks.onRetryStudioLight = { [weak self] in
+            self?.studioLightService.retry()
+        }
+        hooks.onForgetStudioLight = { [weak self] in
+            self?.studioLightService.forget()
+        }
+        hooks.onRefreshStudioLight = { [weak self] in
+            self?.studioLightService.refresh()
+        }
+        hooks.onSetStudioLightPower = { [weak self] isOn in
+            self?.studioLightService.setPower(isOn)
+        }
+        hooks.onSetStudioLightBrightness = { [weak self] brightness, final in
+            self?.studioLightService.setBrightness(brightness, final: final)
+        }
+        hooks.onSetStudioLightColorTemperature = { [weak self] temperature, final in
+            self?.studioLightService.setColorTemperature(temperature, final: final)
+        }
+        hooks.onOpenBluetoothSettings = {
+            guard let url = URL(
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Bluetooth"
+            ) else { return }
             NSWorkspace.shared.open(url)
         }
         hooks.onOpenCameraSettings = {

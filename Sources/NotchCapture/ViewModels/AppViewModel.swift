@@ -108,6 +108,7 @@ final class AppViewModel: ObservableObject {
     @Published var nowPlayingPresentation: NowPlayingPresentation?
     @Published var mediaConnectionStates: [NowPlayingSource: NowPlayingConnectionState] = [:]
     @Published var nowPlayingArtwork: NSImage?
+    @Published var studioLightState: StudioLightViewState
     @Published var pomodoro: PomodoroState
     @Published var cameraPreview: CameraService.PreviewState = .idle
     @Published var cameraControls: CameraControlService.Capabilities = .none
@@ -121,7 +122,6 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var cameraPresets: [CameraPresetSlot: CameraPreset] = [:]
     @Published private(set) var selectedCameraPresetSlot: CameraPresetSlot?
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
-    @Published var isPomodoroCardVisible = false
     @Published var expandedUtilityFocus: UtilityFocus?
     @Published var onboardingStep: OnboardingStep = .capture
 
@@ -174,6 +174,7 @@ final class AppViewModel: ObservableObject {
         nowPlaying: NowPlayingSnapshot? = nil,
         nowPlayingPresentation: NowPlayingPresentation? = nil,
         nowPlayingArtwork: NSImage? = nil,
+        studioLightState: StudioLightViewState = .empty,
         pomodoro: PomodoroState = PomodoroState(),
         shortcuts: [Shortcut] = [
             Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N")
@@ -198,6 +199,7 @@ final class AppViewModel: ObservableObject {
         self.nowPlaying = nowPlaying
         self.nowPlayingPresentation = nowPlayingPresentation
         self.nowPlayingArtwork = nowPlayingArtwork
+        self.studioLightState = studioLightState
         self.pomodoro = pomodoro
         self.expandedUtilityFocus = nil
         self.shortcuts = shortcuts
@@ -1749,13 +1751,35 @@ final class AppViewModel: ObservableObject {
     func reconnectMedia(_ source: NowPlayingSource) { hooks.onReconnectMedia(source) }
     func openMediaAutomationSettings() { hooks.onOpenMediaAutomationSettings() }
 
+    func startStudioLightPairing() { hooks.onStartStudioLightPairing() }
+    func cancelStudioLightPairing() { hooks.onCancelStudioLightPairing() }
+    func pairStudioLight(_ device: StudioLightDevice) {
+        hooks.onPairStudioLight(device.id)
+    }
+    func retryStudioLight() { hooks.onRetryStudioLight() }
+    func forgetStudioLight() { hooks.onForgetStudioLight() }
+    func refreshStudioLight() { hooks.onRefreshStudioLight() }
+    func setStudioLightPower(_ isOn: Bool) {
+        hooks.onSetStudioLightPower(isOn)
+    }
+    func setStudioLightBrightness(_ brightness: Double, final: Bool) {
+        hooks.onSetStudioLightBrightness(brightness, final)
+    }
+    func setStudioLightColorTemperature(_ colorTemperature: Int, final: Bool) {
+        hooks.onSetStudioLightColorTemperature(colorTemperature, final)
+    }
+    func openBluetoothSettings() { hooks.onOpenBluetoothSettings() }
+
     func togglePomodoro() {
-        isPomodoroCardVisible = true
         hooks.onPomodoroToggle()
     }
 
     func resetPomodoro() { hooks.onPomodoroReset() }
     func setPomodoroDuration(_ duration: TimeInterval) { hooks.onPomodoroSetDuration(duration) }
+
+    func presentPomodoroCompletion() {
+        surfaceState = .pomodoroComplete
+    }
 
     func acknowledgePomodoro() {
         hooks.onPomodoroAcknowledge()

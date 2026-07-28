@@ -1,6 +1,5 @@
 import AppKit
 import Combine
-@preconcurrency import UserNotifications
 
 enum CameraStartupFramingPolicy {
     static func target(
@@ -176,29 +175,6 @@ extension AppCoordinator {
     }
 
     private func handlePomodoroCompletion() {
-        if Bundle.main.bundleIdentifier != nil {
-            let content = UNMutableNotificationContent()
-            content.title = "Focus session complete"
-            content.sound = .default
-            let center = UNUserNotificationCenter.current()
-            center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-                guard granted else { return }
-                center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
-            }
-        }
-
-        switch viewModel.surfaceState {
-        case .collapsed, .collapsedActivity, .dormant:
-            viewModel.surfaceState = .pomodoroComplete
-        case .confirmation:
-            // Preserve Capture's Undo window; the finished timer remains visible
-            // the next time the user opens the expanded surface.
-            break
-        // The mirror is deliberately left alone: the user opened it to look at
-        // something, and the finished timer is waiting when they next open the
-        // inbox.
-        case .expanded, .drop, .settings, .onboarding, .pomodoroComplete, .mirror:
-            viewModel.isPomodoroCardVisible = true
-        }
+        viewModel.presentPomodoroCompletion()
     }
 }

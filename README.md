@@ -37,9 +37,19 @@ A camera glyph in the notch — present on both compact pills and in the expande
 
 Cameras that publish UVC controls also get zoom and a recenter button in the mirror's header, and gimbal cameras can be aimed by dragging the preview — the scene follows the pointer, and the throw scales with the zoom level so a magnified view still moves precisely. Three large, numbered controls below the mirror recall per-camera position presets containing pan, tilt, and zoom; the adjacent save control captures the current framing into a slot. The selected preset is restored whenever the mirror opens, while ordinary framing adjustments remain temporary until explicitly saved. AVFoundation exposes none of these controls on macOS, so they are read and written through CoreMediaIO, whose control objects hang off the capture device. Cameras without them (the built-in FaceTime camera) simply show no extra chrome. Gimbal webcams get two more accommodations: the mirror keeps its starting placeholder visible until the landscape rotation and saved framing have physically settled, preventing a portrait flash, and it restores each physical camera's last pan/tilt position after the camera wakes from Privacy Mode or the app restarts.
 
+## Studio light (experimental)
+
+Notch Capture can pair with one ZHIYUN MOLUS G60 over Bluetooth Low Energy. Pairing and troubleshooting live in Settings; after pairing, the lightbulb control in the expanded header provides standby on/off, 0–100% brightness, and 2700–6500 K color-temperature controls. The saved light reconnects automatically when the app launches or the connection temporarily drops.
+
+This integration uses an unofficial, reverse-engineered G60 protocol, independently implemented in Swift from the behavior documented by the [`zhiyun-cli` project](https://github.com/robinebers/zhiyun-cli), and may be affected by fixture firmware changes. The fixture must remain physically powered: “off” is the light's Bluetooth standby state, not a way to switch disconnected mains power. Disconnect the G60 from the ZY Vega phone app before connecting from Notch Capture because the light may accept only one controller at a time.
+
+Pairing reads the fixture's assigned control address instead of assuming a fixed address. A freshly Bluetooth-reset G60 reports that it is unregistered; Notch Capture registers the single supported light directly before reading its state. If discovery or synchronization stalls, close ZY Vega, disable Bluetooth on the phone, triple-press the G60 Bluetooth reset control, and pair again from Settings.
+
+The integration is implemented directly with Apple's CoreBluetooth framework. It does not install a background agent or require a third-party Bluetooth runtime. Only the light's macOS Bluetooth identifier and display name are stored locally in `UserDefaults`; Forget removes both. No Bluetooth mesh keys, scenes, or Zhiyun account data are stored.
+
 ## Build and run
 
-Requirements: Apple Silicon Mac, macOS 14 or newer, and Xcode with the macOS 14 SDK.
+Requirements: Apple Silicon Mac, macOS 14 or newer, and Xcode with the macOS 14 SDK. MOLUS G60 control additionally requires Bluetooth access.
 
 ```sh
 Scripts/run-app.sh
@@ -61,7 +71,7 @@ Notch Capture keeps a compact pill available in the notch while idle. Its size i
 
 ## Settings
 
-The Settings surface (opened from the expanded inbox) covers launch at login, the external-display pill behavior, pill size, 12/24-hour timestamps, the composer shortcut, library import/export, update checks, and quitting the app.
+The Settings surface (opened from the expanded inbox) covers launch at login, the external-display pill behavior, pill size, 12/24-hour timestamps, MOLUS G60 Bluetooth pairing, the composer shortcut, library import/export, update checks, and quitting the app.
 
 ## Updating
 
