@@ -243,6 +243,94 @@ final class ItemRepository {
     }
 
     @discardableResult
+    func createSnippetCategory(
+        name proposedName: String,
+        now: Date = .now
+    ) throws -> SnippetCategory {
+        let name = SnippetCategoryName.displayName(proposedName)
+        let normalized = SnippetCategoryName.normalized(name)
+        guard !name.isEmpty else { throw ItemRepositoryError.emptySnippetCategoryName }
+        let categories = try modelContext.fetch(FetchDescriptor<SnippetCategory>())
+        guard !categories.contains(where: { $0.normalizedName == normalized }) else {
+            throw ItemRepositoryError.duplicateSnippetCategoryName
+        }
+        let nextOrder = (categories.map(\.sortOrder).max() ?? -1) + 1
+        let category = SnippetCategory(
+            name: name,
+            normalizedName: normalized,
+            sortOrder: nextOrder,
+            createdAt: now,
+            updatedAt: now
+        )
+        modelContext.insert(category)
+        try modelContext.save()
+        return category
+    }
+
+    func renameSnippetCategory(
+        _ category: SnippetCategory,
+        to proposedName: String,
+        now: Date = .now
+    ) throws {
+        let name = SnippetCategoryName.displayName(proposedName)
+        let normalized = SnippetCategoryName.normalized(name)
+        guard !name.isEmpty else { throw ItemRepositoryError.emptySnippetCategoryName }
+        let categories = try modelContext.fetch(FetchDescriptor<SnippetCategory>())
+        guard !categories.contains(where: {
+            $0.id != category.id && $0.normalizedName == normalized
+        }) else {
+            throw ItemRepositoryError.duplicateSnippetCategoryName
+        }
+        category.name = name
+        category.normalizedName = normalized
+        category.updatedAt = now
+        try modelContext.save()
+    }
+
+    /// Removing a category never removes its captures. They remain reusable
+    /// and immediately fall back to the always-available All tab.
+    func deleteSnippetCategory(_ category: SnippetCategory, now: Date = .now) throws {
+        do {
+            for item in category.items {
+                item.snippetCategory = nil
+                item.touch(at: now)
+            }
+            modelContext.delete(category)
+            try modelContext.save()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
+
+    func setQuickSnippet(
+        _ enabled: Bool,
+        for item: CaptureItem,
+        category: SnippetCategory? = nil,
+        now: Date = .now
+    ) throws {
+        guard !enabled || item.isQuickSnippetEligible else {
+            throw ItemRepositoryError.ineligibleQuickSnippet
+        }
+        if enabled {
+            item.reusableAt = item.reusableAt ?? now
+            item.snippetCategory = category
+        } else {
+            item.reusableAt = nil
+            item.lastCopiedAt = nil
+            item.snippetCategory = nil
+        }
+        item.touch(at: now)
+        try modelContext.save()
+    }
+
+    func markQuickSnippetCopied(_ item: CaptureItem, at date: Date = .now) throws {
+        guard item.isQuickSnippet else { throw ItemRepositoryError.notAQuickSnippet }
+        item.lastCopiedAt = date
+        try modelContext.save()
+    }
+
+    @discardableResult
     func createList(name: String) throws -> ItemList {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ItemRepositoryError.emptyListName }
@@ -644,11 +732,16 @@ enum ItemRepositoryError: LocalizedError {
     case emptyCapture
     case emptyListName
     case duplicateListName
+    case emptySnippetCategoryName
+    case duplicateSnippetCategoryName
+    case ineligibleQuickSnippet
+    case notAQuickSnippet
     case notATask
     case attachmentStoreRequired
     case itemNotFound(UUID)
     case listNotFound(UUID)
     case tagNotFound(UUID)
+    case snippetCategoryNotFound(UUID)
     case invalidTagName
 
     var errorDescription: String? {
@@ -656,11 +749,16 @@ enum ItemRepositoryError: LocalizedError {
         case .emptyCapture: "A capture must contain text or an attachment."
         case .emptyListName: "A folder name cannot be empty."
         case .duplicateListName: "A folder with that name already exists."
+        case .emptySnippetCategoryName: "A snippet category name cannot be empty."
+        case .duplicateSnippetCategoryName: "A snippet category with that name already exists."
+        case .ineligibleQuickSnippet: "Quick snippets support text and links only."
+        case .notAQuickSnippet: "This capture is not in Quick snippets."
         case .notATask: "Only tasks can be completed."
         case .attachmentStoreRequired: "An attachment store is required for file and image captures."
         case let .itemNotFound(id): "The item \(id.uuidString) no longer exists."
         case let .listNotFound(id): "The folder \(id.uuidString) no longer exists."
         case let .tagNotFound(id): "The tag \(id.uuidString) no longer exists."
+        case let .snippetCategoryNotFound(id): "The snippet category \(id.uuidString) no longer exists."
         case .invalidTagName: "Tag names can contain letters, numbers, hyphens, and underscores."
         }
     }

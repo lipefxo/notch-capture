@@ -3,12 +3,13 @@ import SwiftData
 import UniformTypeIdentifiers
 
 struct CapturePackageManifest: Codable, Sendable {
-    static let currentVersion = 4
+    static let currentVersion = 5
 
     let schemaVersion: Int
     let exportedAt: Date
     let lists: [ListRecord]
     let tags: [TagRecord]?
+    let snippetCategories: [SnippetCategoryRecord]?
     let items: [ItemRecord]
 
     struct ListRecord: Codable, Sendable {
@@ -23,6 +24,14 @@ struct CapturePackageManifest: Codable, Sendable {
         let id: UUID
         let name: String
         let colorSeed: Double?
+        let createdAt: Date
+        let updatedAt: Date
+    }
+
+    struct SnippetCategoryRecord: Codable, Sendable {
+        let id: UUID
+        let name: String
+        let sortOrder: Int
         let createdAt: Date
         let updatedAt: Date
     }
@@ -44,6 +53,9 @@ struct CapturePackageManifest: Codable, Sendable {
         let source: CaptureSource
         let listID: UUID?
         let tagIDs: [UUID]?
+        let reusableAt: Date?
+        let lastCopiedAt: Date?
+        let snippetCategoryID: UUID?
         let attachments: [AttachmentRecord]
     }
 
@@ -96,6 +108,7 @@ final class CapturePackageService {
         let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
         let tags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
+        let snippetCategories = try modelContext.fetch(FetchDescriptor<SnippetCategory>())
         let parent = destination.deletingLastPathComponent()
         let temporary = parent.appendingPathComponent(".\(UUID().uuidString).notchcapture", isDirectory: true)
         let attachmentsDirectory = temporary.appendingPathComponent("attachments", isDirectory: true)
@@ -118,6 +131,16 @@ final class CapturePackageService {
                 id: $0.id,
                 name: $0.name,
                 colorSeed: $0.colorSeed,
+                createdAt: $0.createdAt,
+                updatedAt: $0.updatedAt
+            )
+        }
+
+        let snippetCategoryRecords = snippetCategories.map {
+            CapturePackageManifest.SnippetCategoryRecord(
+                id: $0.id,
+                name: $0.name,
+                sortOrder: $0.sortOrder,
                 createdAt: $0.createdAt,
                 updatedAt: $0.updatedAt
             )
@@ -182,6 +205,9 @@ final class CapturePackageService {
                 source: item.source,
                 listID: item.list?.id,
                 tagIDs: item.tags.map(\.id).sorted { $0.uuidString < $1.uuidString },
+                reusableAt: item.reusableAt,
+                lastCopiedAt: item.lastCopiedAt,
+                snippetCategoryID: item.snippetCategory?.id,
                 attachments: attachmentRecords
             )
         }
@@ -191,6 +217,7 @@ final class CapturePackageService {
             exportedAt: .now,
             lists: listRecords,
             tags: tagRecords,
+            snippetCategories: snippetCategoryRecords,
             items: itemRecords
         )
         let encoder = JSONEncoder()
@@ -225,14 +252,22 @@ final class CapturePackageService {
         let existingItems = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let existingLists = try modelContext.fetch(FetchDescriptor<ItemList>())
         let existingTags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
+        let existingSnippetCategories = try modelContext.fetch(FetchDescriptor<SnippetCategory>())
         let existingAttachments = try modelContext.fetch(FetchDescriptor<Attachment>())
         var itemsByID = Dictionary(uniqueKeysWithValues: existingItems.map { ($0.id, $0) })
         var listsByID = Dictionary(uniqueKeysWithValues: existingLists.map { ($0.id, $0) })
         var tagsByID = Dictionary(uniqueKeysWithValues: existingTags.map { ($0.id, $0) })
         var tagsByName = Dictionary(uniqueKeysWithValues: existingTags.map { ($0.normalizedName, $0) })
+        var snippetCategoriesByID = Dictionary(
+            uniqueKeysWithValues: existingSnippetCategories.map { ($0.id, $0) }
+        )
+        var snippetCategoriesByName = Dictionary(
+            uniqueKeysWithValues: existingSnippetCategories.map { ($0.normalizedName, $0) }
+        )
         var attachmentIDs = Set(existingAttachments.map(\.id))
         var listMapping: [UUID: ItemList] = [:]
         var tagMapping: [UUID: CaptureTag] = [:]
+        var snippetCategoryMapping: [UUID: SnippetCategory] = [:]
         var storedRelativePaths: [String] = []
         var importedCount = 0
         var duplicateCount = 0
@@ -295,12 +330,55 @@ final class CapturePackageService {
                 tagMapping[record.id] = tag
             }
 
+            for record in manifest.snippetCategories ?? [] {
+                let displayName = SnippetCategoryName.displayName(record.name)
+                let normalizedName = SnippetCategoryName.normalized(displayName)
+                guard !displayName.isEmpty else {
+                    throw CapturePackageError.invalidSnippetCategoryName(record.name)
+                }
+                if let existing = snippetCategoriesByName[normalizedName] {
+                    snippetCategoryMapping[record.id] = existing
+                    continue
+                }
+                let chosenID: UUID
+                if snippetCategoriesByID[record.id] == nil {
+                    chosenID = record.id
+                } else {
+                    chosenID = UUID()
+                    reassignedCount += 1
+                }
+                let category = SnippetCategory(
+                    id: chosenID,
+                    name: displayName,
+                    normalizedName: normalizedName,
+                    sortOrder: record.sortOrder,
+                    createdAt: record.createdAt,
+                    updatedAt: record.updatedAt
+                )
+                modelContext.insert(category)
+                snippetCategoriesByID[chosenID] = category
+                snippetCategoriesByName[normalizedName] = category
+                snippetCategoryMapping[record.id] = category
+            }
+
             for record in manifest.items {
                 let mappedTags = try (record.tagIDs ?? []).map { tagID in
                     guard let tag = tagMapping[tagID] else { throw CapturePackageError.missingTag(tagID) }
                     return tag
                 }
-                if let existing = itemsByID[record.id], isExactDuplicate(record, mappedTags: mappedTags, of: existing) {
+                let mappedSnippetCategory = try record.snippetCategoryID.map { categoryID in
+                    guard let category = snippetCategoryMapping[categoryID] else {
+                        throw CapturePackageError.missingSnippetCategory(categoryID)
+                    }
+                    return category
+                }
+                if let existing = itemsByID[record.id],
+                   isExactDuplicate(
+                       record,
+                       mappedTags: mappedTags,
+                       mappedSnippetCategory: mappedSnippetCategory,
+                       of: existing
+                   ) {
                     duplicateCount += 1
                     continue
                 }
@@ -385,6 +463,9 @@ final class CapturePackageService {
                     origin: record.origin,
                     source: record.source,
                     list: record.listID.flatMap { listMapping[$0] },
+                    reusableAt: record.reusableAt,
+                    lastCopiedAt: record.lastCopiedAt,
+                    snippetCategory: mappedSnippetCategory,
                     tags: mappedTags,
                     attachments: attachments,
                     createdAt: record.createdAt,
@@ -411,6 +492,7 @@ final class CapturePackageService {
     private func isExactDuplicate(
         _ record: CapturePackageManifest.ItemRecord,
         mappedTags: [CaptureTag],
+        mappedSnippetCategory: SnippetCategory?,
         of item: CaptureItem
     ) -> Bool {
         let existingAttachments = item.attachments.sorted(by: { $0.order < $1.order })
@@ -438,6 +520,9 @@ final class CapturePackageService {
             record.origin == item.origin &&
             record.source == item.source &&
             record.listID == item.list?.id &&
+            record.reusableAt == item.reusableAt &&
+            record.lastCopiedAt == item.lastCopiedAt &&
+            mappedSnippetCategory?.id == item.snippetCategory?.id &&
             Set(mappedTags.map(\.id)) == Set(item.tags.map(\.id)) &&
             attachmentsMatch
     }
@@ -468,7 +553,9 @@ enum CapturePackageError: LocalizedError {
     case unsafePath(String)
     case missingAttachment(String)
     case missingTag(UUID)
+    case missingSnippetCategory(UUID)
     case invalidTagName(String)
+    case invalidSnippetCategoryName(String)
 
     var errorDescription: String? {
         switch self {
@@ -479,7 +566,9 @@ enum CapturePackageError: LocalizedError {
         case let .unsafePath(path): "The package contains an unsafe path: \(path)"
         case let .missingAttachment(path): "The package attachment is missing: \(path)"
         case let .missingTag(id): "The package references a missing tag: \(id.uuidString)"
+        case let .missingSnippetCategory(id): "The package references a missing snippet category: \(id.uuidString)"
         case let .invalidTagName(name): "The package contains an invalid tag name: \(name)"
+        case let .invalidSnippetCategoryName(name): "The package contains an invalid snippet category name: \(name)"
         }
     }
 }

@@ -124,6 +124,7 @@ struct ExpandedInboxView: View {
     @State private var ledgerScrollTask: Task<Void, Never>?
     @State private var folderHeaderMenuAnchor: CGRect = .zero
     @State private var pomodoroMenuAnchor: CGRect = .zero
+    @State private var snippetCategoryPickerAnchor: CGRect = .zero
 
     // The composer shares the same 20-point content column as the header,
     // playback shelf, and ledger. Keeping the bottom inset in step also
@@ -137,11 +138,12 @@ struct ExpandedInboxView: View {
     }
 
     private var floatingComposerHeight: CGFloat {
-        composerTextRowHeight + composerAttachmentExpansion
+        composerTextRowHeight + composerAttachmentExpansion +
+            (viewModel.isSnippetDraftMode ? 32 : 0)
     }
 
     private var floatingGlassHeight: CGFloat {
-        134 + composerAttachmentExpansion
+        134 + composerAttachmentExpansion + (viewModel.isSnippetDraftMode ? 32 : 0)
     }
 
     private var ledgerBottomClearance: CGFloat {
@@ -383,24 +385,44 @@ struct ExpandedInboxView: View {
 
     private var header: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 12) {
-                routeHeaderLeading
-
-                routeHeaderTrailingAction
-
-                pomodoroControl
-
-                Button {
-                    guard viewModel.saveEditing() else { return }
-                    viewModel.surfaceState = .settings
-                } label: {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 13, weight: .regular))
+            ZStack {
+                if viewModel.surfaceState == .expanded {
+                    Button(action: viewModel.collapseExpanded) {
+                        Rectangle()
+                            .fill(Color.black.opacity(0.001))
+                            .frame(
+                                width: max(0, viewModel.collapsedActivityLayout.notchWidth),
+                                height: 54
+                            )
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .focusable(false)
+                    .accessibilityLabel("Collapse Notch Capture")
+                    .accessibilityHint("Returns to the compact surface")
                 }
-                .buttonStyle(PressableIconButtonStyle())
-                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .help("Settings")
-                .accessibilityLabel("Open settings")
+
+                HStack(spacing: 12) {
+                    routeHeaderLeading
+
+                    routeHeaderTrailingAction
+
+                    pomodoroControl
+
+                    MirrorToggleButton(viewModel: viewModel)
+
+                    Button {
+                        guard viewModel.saveEditing() else { return }
+                        viewModel.surfaceState = .settings
+                    } label: {
+                        Image(systemName: "gearshape")
+                            .font(.system(size: 13, weight: .regular))
+                    }
+                    .buttonStyle(PressableIconButtonStyle())
+                    .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .help("Settings")
+                    .accessibilityLabel("Open settings")
+                }
             }
             .frame(height: 54)
         }
@@ -640,6 +662,11 @@ struct ExpandedInboxView: View {
                     )
             }
 
+            if viewModel.isSnippetDraftMode {
+                snippetDraftHeader
+                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .bottom)))
+            }
+
             captureTextRow
         }
         .frame(height: floatingComposerHeight)
@@ -647,15 +674,25 @@ struct ExpandedInboxView: View {
 
     private var captureTextRow: some View {
         HStack(spacing: 13) {
-            if focusedField != .unifiedInput {
-                Image(systemName: "magnifyingglass")
+            if viewModel.isSnippetDraftMode || focusedField != .unifiedInput {
+                Image(systemName: viewModel.isSnippetDraftMode ? "bolt.fill" : "magnifyingglass")
                     .font(.system(size: 15, weight: .light))
-                    .foregroundStyle(NotchTheme.secondaryText)
+                    .foregroundStyle(
+                        viewModel.isSnippetDraftMode
+                            ? NotchTheme.primaryAccent
+                            : NotchTheme.secondaryText
+                    )
                     .frame(width: 24, height: 24)
                     .transition(.opacity)
             }
 
-            TextField("Search, add an item, or / to see actions", text: $viewModel.composerText, axis: .vertical)
+            TextField(
+                viewModel.isSnippetDraftMode
+                    ? "Type reusable text or paste a link"
+                    : "Search, add an item, or / to see actions",
+                text: $viewModel.composerText,
+                axis: .vertical
+            )
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, weight: .regular))
                 .foregroundStyle(NotchTheme.primaryText)
@@ -699,7 +736,11 @@ struct ExpandedInboxView: View {
                     // Enter the ledger with the keyboard from the composer.
                     return viewModel.moveLedgerSelection(by: 1) ? .handled : .ignored
                 }
-                .accessibilityLabel("Search, add an item, or / to see actions")
+                .accessibilityLabel(
+                    viewModel.isSnippetDraftMode
+                        ? "Quick snippet text"
+                        : "Search, add an item, or / to see actions"
+                )
                 .accessibilityHint(unifiedInputHint)
 
             if viewModel.canSubmitComposer {
@@ -726,7 +767,9 @@ struct ExpandedInboxView: View {
                 .buttonStyle(NotchPressButtonStyle())
                 .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
                 .help(
-                    viewModel.isFolderCommandActive
+                    viewModel.isSnippetDraftMode || viewModel.isSnippetCommandActive
+                        ? "Save this reusable snippet"
+                        : viewModel.isFolderCommandActive
                         ? "Create a folder"
                         : viewModel.isClearCommandActive
                             ? "Move all completed tasks to Trash"
@@ -735,7 +778,9 @@ struct ExpandedInboxView: View {
                             : "Add this thought to \(viewModel.captureDestinationName)"
                 )
                 .accessibilityLabel(
-                    viewModel.isFolderCommandActive
+                    viewModel.isSnippetDraftMode || viewModel.isSnippetCommandActive
+                        ? "Save quick snippet"
+                        : viewModel.isFolderCommandActive
                         ? "Create folder"
                         : viewModel.isClearCommandActive
                             ? "Clear completed tasks"
@@ -754,6 +799,87 @@ struct ExpandedInboxView: View {
         .padding(.horizontal, 16)
         .frame(height: composerTextRowHeight)
         .animation(composerFocusAnimation, value: focusedField)
+    }
+
+    private var snippetDraftHeader: some View {
+        HStack(spacing: 8) {
+            Text("Quick snippet")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(NotchTheme.primaryAccent)
+
+            Spacer()
+
+            Button {
+                presentSnippetDraftCategoryMenu()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "square.grid.2x2")
+                        .font(.system(size: 9.5, weight: .medium))
+                    Text(viewModel.snippetDraftCategoryName)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold))
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(NotchTheme.secondaryText)
+                .padding(.horizontal, 8)
+                .frame(height: 24)
+                .background(NotchTheme.control)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(NotchPressButtonStyle())
+            .menuAnchor($snippetCategoryPickerAnchor)
+            .help("Choose an optional snippet category")
+            .accessibilityLabel("Snippet category, \(viewModel.snippetDraftCategoryName)")
+
+            Button {
+                viewModel.exitSnippetDraftMode(retainingText: true)
+                focusComposer()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(NotchPressButtonStyle())
+            .help("Return to normal capture")
+            .accessibilityLabel("Exit quick snippet mode")
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 12)
+        .frame(height: 32)
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchTheme.controlStroke.opacity(0.65))
+                .frame(height: 1)
+                .padding(.horizontal, 14)
+        }
+    }
+
+    private func presentSnippetDraftCategoryMenu() {
+        var items = [
+            NotchMenuItem(
+                title: "No category",
+                icon: "circle.dashed",
+                isChecked: viewModel.snippetDraftCategoryID == nil
+            ) {
+                viewModel.setSnippetDraftCategory(nil)
+            }
+        ]
+        items.append(contentsOf: viewModel.orderedSnippetCategories.map { category in
+            NotchMenuItem(
+                title: category.name,
+                icon: "square.grid.2x2",
+                isChecked: viewModel.snippetDraftCategoryID == category.id
+            ) {
+                viewModel.setSnippetDraftCategory(category.id)
+            }
+        })
+        presentation.present(NotchMenu(
+            title: "Snippet category",
+            anchor: snippetCategoryPickerAnchor,
+            items: items
+        ))
     }
 
     private var composerImageStrip: some View {
@@ -1018,6 +1144,9 @@ struct ExpandedInboxView: View {
     }
 
     private var unifiedInputHint: String {
+        if viewModel.isSnippetDraftMode {
+            return "Press Return to save a reusable text or link snippet. Press Escape to keep the text as a normal capture draft."
+        }
         if viewModel.composerHasImages {
             let count = viewModel.composerImages.count
             return "\(count) \(count == 1 ? "image is" : "images are") attached. Press Return to add this capture to \(viewModel.captureDestinationName)."
@@ -1156,28 +1285,46 @@ struct ExpandedInboxView: View {
     }
 
     private var ledgerBody: some View {
-        Group {
-            if let error = viewModel.errorMessage {
-                VStack(spacing: 0) {
-                    InlineErrorView(message: error) {
-                        viewModel.errorMessage = nil
-                        focusedField = .unifiedInput
-                    }
-                    .padding(12)
-                    itemFeed
-                }
-            } else if !viewModel.hasVisibleContent {
-                EmptyInboxView(
-                    filter: viewModel.filter,
-                    query: viewModel.composerText,
-                    folderName: viewModel.currentFolder?.name
-                )
-                .padding(.bottom, ledgerBottomClearance)
-                .transition(.identity)
-            } else {
-                itemFeed
+        VStack(spacing: 0) {
+            if viewModel.showsQuickSnippetShelf {
+                QuickSnippetsShelfView(viewModel: viewModel)
                     .transition(.identity)
+                Text("Recent captures")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 20)
+                    .frame(height: 38)
+                    .background(NotchTheme.graphite)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(NotchTheme.hairline).frame(height: 1)
+                    }
             }
+
+            Group {
+                if let error = viewModel.errorMessage {
+                    VStack(spacing: 0) {
+                        InlineErrorView(message: error) {
+                            viewModel.errorMessage = nil
+                            focusedField = .unifiedInput
+                        }
+                        .padding(12)
+                        itemFeed
+                    }
+                } else if !viewModel.hasVisibleRecentContent {
+                    EmptyInboxView(
+                        filter: viewModel.filter,
+                        query: viewModel.composerText,
+                        folderName: viewModel.currentFolder?.name
+                    )
+                    .padding(.bottom, ledgerBottomClearance)
+                    .transition(.identity)
+                } else {
+                    itemFeed
+                        .transition(.identity)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NotchTheme.graphite)

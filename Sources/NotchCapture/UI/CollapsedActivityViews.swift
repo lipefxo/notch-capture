@@ -29,12 +29,27 @@ struct CollapsedActivityPillView: View {
 
     private var notchedLayout: some View {
         HStack(spacing: 0) {
-            leadingWing
-                .frame(width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth, alignment: .leading)
+            ZStack {
+                Color.clear
+                    .allowsHitTesting(false)
+                notchedMusicWing
+            }
+                .frame(
+                    width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth,
+                    height: compactMetrics.contentSize.height
+                )
             Color.clear
                 .frame(width: max(0, viewModel.collapsedActivityLayout.notchWidth))
-            trailingWing
-                .frame(width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth, alignment: .trailing)
+                .allowsHitTesting(false)
+            ZStack {
+                Color.clear
+                    .allowsHitTesting(false)
+                notchedPomodoroWing
+            }
+                .frame(
+                    width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth,
+                    height: compactMetrics.contentSize.height
+                )
         }
         .frame(height: compactMetrics.contentSize.height, alignment: .top)
     }
@@ -57,12 +72,18 @@ struct CollapsedActivityPillView: View {
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 52)
+                compactMirrorToggle
             }
             .padding(.horizontal, 12)
-            .frame(width: 280, height: 34)
+            .frame(width: compactMetrics.contentSize.width, height: 34)
         case let .pomodoroOnly(state):
-            CompactPomodoroButton(viewModel: viewModel, state: state)
-                .frame(width: 280, height: 34)
+            HStack(spacing: 6) {
+                CompactPomodoroButton(viewModel: viewModel, state: state)
+                    .frame(maxWidth: .infinity)
+                compactMirrorToggle
+            }
+            .padding(.horizontal, 12)
+            .frame(width: compactMetrics.contentSize.width, height: 34)
         case let .both(snapshot, state):
             HStack(spacing: 6) {
                 musicInfoView(snapshot, artworkSize: 22)
@@ -71,24 +92,42 @@ struct CollapsedActivityPillView: View {
                     .frame(width: 42)
                 compactPomodoroButton(state)
                     .frame(width: 54)
+                compactMirrorToggle
             }
             .padding(.horizontal, 12)
-            .frame(width: 280, height: 34)
+            .frame(width: compactMetrics.contentSize.width, height: 34)
         case nil:
             EmptyView()
         }
+    }
+
+    private var compactMirrorToggle: some View {
+        MirrorToggleButton(
+            viewModel: viewModel,
+            glyphSize: 11,
+            width: CompactSurfaceMetrics.mirrorToggleSlot - 6
+        )
     }
 
     @ViewBuilder
     private var extendedFallbackLayout: some View {
         switch viewModel.collapsedActivityContent {
         case let .musicOnly(snapshot):
-            extendedMusicInfoView(snapshot)
+            HStack(spacing: 8) {
+                extendedMusicInfoView(snapshot)
+                    .frame(maxWidth: .infinity)
+                extendedMirrorToggle
+            }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
         case let .pomodoroOnly(state):
-            ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
-                .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
+            HStack(spacing: 8) {
+                ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
+                    .frame(maxWidth: .infinity)
+                extendedMirrorToggle
+            }
+            .padding(.horizontal, 12)
+            .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
         case let .both(snapshot, state):
             HStack(spacing: 8) {
                 extendedMusicInfoView(snapshot)
@@ -96,6 +135,8 @@ struct CollapsedActivityPillView: View {
                     .layoutPriority(1)
                 ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
                     .frame(width: 72, height: compactMetrics.contentSize.height)
+                    .layoutPriority(2)
+                extendedMirrorToggle
                     .layoutPriority(2)
             }
             .padding(.horizontal, 12)
@@ -106,51 +147,48 @@ struct CollapsedActivityPillView: View {
     }
 
     @ViewBuilder
-    private var leadingWing: some View {
+    private var notchedMusicWing: some View {
         if let snapshot = viewModel.nowPlaying {
-            Group {
-                if isExtended {
-                    extendedMusicInfoView(snapshot)
-                } else {
-                    musicInfoView(snapshot, artworkSize: 22)
-                }
+            HStack(spacing: 6) {
+                ArtworkPlaybackControl(
+                    artwork: viewModel.nowPlayingArtwork,
+                    trackKey: snapshot.trackKey,
+                    title: snapshot.title,
+                    isPlaying: snapshot.isPlaying,
+                    size: 22,
+                    cornerRadius: 5,
+                    action: viewModel.musicPlayPause
+                )
+                .allowsHitTesting(!viewModel.isNowPlayingRecovering)
+                .accessibilityHidden(viewModel.isNowPlayingRecovering)
+                .opacity(viewModel.isNowPlayingRecovering ? 0.55 : 1)
+
+                CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
+                    .frame(width: 52)
             }
-            .padding(.leading, 2)
-            .frame(maxHeight: compactMetrics.contentSize.height)
+            .frame(height: compactMetrics.contentSize.height)
         }
     }
 
-    @ViewBuilder
-    private var trailingWing: some View {
-        if let snapshot = viewModel.nowPlaying {
-            if isExtended {
-                if viewModel.pomodoro.isActive {
-                    ExtendedCompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
-                        .frame(width: 86)
-                }
-            } else {
-                HStack(spacing: viewModel.pomodoro.isActive ? 6 : 0) {
-                    CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
-                        .frame(width: viewModel.pomodoro.isActive ? 42 : nil)
-                    if viewModel.pomodoro.isActive {
-                        compactPomodoroButton(viewModel.pomodoro)
-                            .frame(width: 54)
-                    }
-                }
-                .padding(.horizontal, 2)
-                .frame(maxWidth: .infinity, maxHeight: compactMetrics.contentSize.height)
+    private var extendedMirrorToggle: some View {
+        MirrorToggleButton(
+            viewModel: viewModel,
+            glyphSize: 13,
+            width: CompactSurfaceMetrics.mirrorToggleSlot
+        )
+    }
+
+    /// The 104pt wing already had room for the 54pt timer plus a toggle, so the
+    /// hardware-notch layout keeps its symmetric geometry unchanged.
+    private var notchedPomodoroWing: some View {
+        HStack(spacing: 4) {
+            if viewModel.pomodoro.isActive {
+                compactPomodoroButton(viewModel.pomodoro)
+                    .frame(width: 54, height: compactMetrics.contentSize.height)
             }
-        } else if viewModel.pomodoro.isActive {
-            Group {
-                if isExtended {
-                    ExtendedCompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
-                } else {
-                    CompactPomodoroButton(viewModel: viewModel, state: viewModel.pomodoro)
-                }
-            }
-            .padding(.trailing, 2)
-            .frame(maxWidth: .infinity, maxHeight: compactMetrics.contentSize.height, alignment: .trailing)
+            compactMirrorToggle
         }
+        .frame(height: compactMetrics.contentSize.height)
     }
 
     private func compactPomodoroButton(_ state: PomodoroState) -> some View {

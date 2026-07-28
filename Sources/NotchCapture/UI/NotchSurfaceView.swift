@@ -30,7 +30,7 @@ struct SurfaceChromeMetrics: Equatable {
                 shadowRadius: 0,
                 shadowY: 0
             )
-        case .confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings:
+        case .confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings, .mirror:
             return Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: NotchTheme.surfaceBottomRadius,
@@ -104,6 +104,22 @@ struct NotchSurfaceView: View {
                         shadowY: metrics.shadowY
                     )
 
+                    if displayedState == .collapsedActivity,
+                       viewModel.collapsedActivityLayout.hasHardwareNotch {
+                        Button {
+                            guard viewModel.surfaceState == .collapsedActivity else { return }
+                            viewModel.openExpanded()
+                        } label: {
+                            Color.clear
+                                .contentShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
+                        }
+                        .buttonStyle(.plain)
+                        .frame(width: metrics.size.width, height: metrics.size.height)
+                        .disabled(presentation.hasModal)
+                        .help("Open Notch Capture")
+                        .accessibilityLabel("Open Notch Capture")
+                    }
+
                     ZStack {
                         surfaceContent(for: displayedState)
                             .id("\(contentIdentity(for: displayedState))#\(initialCommitRepaint)")
@@ -169,6 +185,8 @@ struct NotchSurfaceView: View {
             OnboardingView(viewModel: viewModel)
         case .settings:
             SettingsView(viewModel: viewModel)
+        case .mirror:
+            MirrorSurfaceView(viewModel: viewModel)
         }
     }
 
@@ -239,7 +257,7 @@ struct NotchSurfaceView: View {
             // blank text to be seen, and recreating a keyboard surface here
             // would risk resetting its focus.
             if initialCommitRepaint == 0,
-               [.collapsed, .collapsedActivity, .confirmation, .pomodoroComplete]
+               [.collapsed, .collapsedActivity, .confirmation, .pomodoroComplete, .mirror]
                    .contains(viewModel.surfaceState) {
                 withoutAnimation { initialCommitRepaint = 1 }
             }
@@ -448,6 +466,7 @@ struct NotchSurfaceView: View {
         case .pomodoroComplete: "pomodoroComplete"
         case .onboarding: "onboarding"
         case .settings: "settings"
+        case .mirror: "mirror"
         }
     }
 
@@ -496,7 +515,25 @@ struct CollapsedPillView: View {
 
     private var isExtended: Bool { viewModel.compactPresentationSize == .extended }
 
+    /// The pill was widened by exactly this slot when the mirror toggle was
+    /// added, so the capture cluster keeps the width it has always had.
+    private var captureWidth: CGFloat {
+        metrics.contentSize.width - CompactSurfaceMetrics.mirrorToggleSlot
+    }
+
     var body: some View {
+        HStack(spacing: 0) {
+            captureButton
+            MirrorToggleButton(
+                viewModel: viewModel,
+                glyphSize: isExtended ? 13 : 11,
+                width: CompactSurfaceMetrics.mirrorToggleSlot
+            )
+        }
+        .frame(width: metrics.contentSize.width, height: metrics.contentSize.height)
+    }
+
+    private var captureButton: some View {
         Button {
             viewModel.openExpanded()
         } label: {
@@ -511,7 +548,7 @@ struct CollapsedPillView: View {
                     .font(.system(size: isExtended ? 11 : 9, weight: .medium, design: .rounded))
                     .foregroundStyle(NotchTheme.tertiaryText)
             }
-            .frame(width: metrics.contentSize.width, height: metrics.contentSize.height)
+            .frame(width: captureWidth, height: metrics.contentSize.height)
             .overlay(alignment: .bottom) {
                 if !isExtended {
                     Capsule()

@@ -250,6 +250,75 @@ extension AppCoordinator {
         }
     }
 
+    func createSnippetCategory(named name: String) -> UUID? {
+        do {
+            let category = try repository.createSnippetCategory(name: name)
+            reloadFromStore()
+            return category.id
+        } catch {
+            show(error)
+            return nil
+        }
+    }
+
+    func renameSnippetCategory(id: UUID, to name: String) -> String? {
+        do {
+            try repository.renameSnippetCategory(try findSnippetCategory(id), to: name)
+            reloadFromStore()
+            return nil
+        } catch {
+            reloadFromStore()
+            return error.localizedDescription
+        }
+    }
+
+    func deleteSnippetCategory(id: UUID) {
+        do {
+            try repository.deleteSnippetCategory(try findSnippetCategory(id))
+            reloadFromStore()
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
+    }
+
+    func setQuickSnippet(id: UUID, enabled: Bool, categoryID: UUID?) -> String? {
+        guard let item = findItem(id) else {
+            return ItemRepositoryError.itemNotFound(id).localizedDescription
+        }
+        do {
+            let category = try categoryID.map(findSnippetCategory)
+            try repository.setQuickSnippet(enabled, for: item, category: category)
+            reloadItem(id)
+            return nil
+        } catch {
+            reloadFromStore()
+            return error.localizedDescription
+        }
+    }
+
+    func copyQuickSnippet(id: UUID) -> String? {
+        guard let item = findItem(id) else {
+            return ItemRepositoryError.itemNotFound(id).localizedDescription
+        }
+        guard let copyText = item.quickSnippetCopyText, !copyText.isEmpty else {
+            return ItemRepositoryError.ineligibleQuickSnippet.localizedDescription
+        }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        guard pasteboard.setString(copyText, forType: .string) else {
+            return "The snippet could not be copied."
+        }
+        do {
+            try repository.markQuickSnippetCopied(item)
+            reloadItem(id)
+            return nil
+        } catch {
+            reloadFromStore()
+            return error.localizedDescription
+        }
+    }
+
     func trash(id: UUID) {
         guard let item = findItem(id) else { return }
         do {
@@ -296,6 +365,14 @@ extension AppCoordinator {
         return tag
     }
 
+    private func findSnippetCategory(_ id: UUID) throws -> SnippetCategory {
+        let categories = try modelContainer.mainContext.fetch(FetchDescriptor<SnippetCategory>())
+        guard let category = categories.first(where: { $0.id == id }) else {
+            throw ItemRepositoryError.snippetCategoryNotFound(id)
+        }
+        return category
+    }
+
     /// Refreshes a single ledger row after a one-item mutation, avoiding the
     /// full-store fetch and whole-ledger rebuild of `reloadFromStore()`.
     private func reloadItem(_ id: UUID) {
@@ -323,6 +400,9 @@ extension AppCoordinator {
                 FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
             )
             let tags = try modelContainer.mainContext.fetch(FetchDescriptor<CaptureTag>())
+            let snippetCategories = try modelContainer.mainContext.fetch(
+                FetchDescriptor<SnippetCategory>(sortBy: [SortDescriptor(\SnippetCategory.sortOrder)])
+            )
             viewModel.items = items.map(makeLedgerItem)
             viewModel.folders = lists.map {
                 AppViewModel.FolderSummary(id: $0.id, name: $0.name, sortOrder: $0.sortOrder)
@@ -332,6 +412,13 @@ extension AppCoordinator {
                     id: $0.id,
                     name: $0.name,
                     colorSeed: $0.colorSeed ?? TagColorSeed.stable(for: $0.id)
+                )
+            }
+            viewModel.snippetCategories = snippetCategories.map {
+                AppViewModel.SnippetCategorySummary(
+                    id: $0.id,
+                    name: $0.name,
+                    sortOrder: $0.sortOrder
                 )
             }
             viewModel.reconcileBrowsingLocation()
@@ -389,6 +476,10 @@ extension AppCoordinator {
             isArchived: item.isArchived,
             isTrashed: item.isTrashed,
             sortOrder: item.sortOrder,
+            reusableAt: item.reusableAt,
+            lastCopiedAt: item.lastCopiedAt,
+            snippetCategoryID: item.snippetCategory?.id,
+            snippetCategoryName: item.snippetCategory?.name,
             tags: item.tags
                 .map {
                     AppViewModel.TagSummary(

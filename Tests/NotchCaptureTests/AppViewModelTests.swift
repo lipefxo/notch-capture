@@ -90,13 +90,152 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.composerText = "/"
 
-        XCTAssertEqual(viewModel.composerCommandSuggestions, [.folder, .clear])
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.snippet, .folder, .clear])
+        viewModel.moveComposerCommandSelection(by: 1)
         XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
         XCTAssertEqual(viewModel.composerText, "/folder ")
         XCTAssertTrue(viewModel.isFolderCommandActive)
 
         viewModel.composerText = "/unknown"
         XCTAssertTrue(viewModel.composerCommandSuggestions.isEmpty)
+    }
+
+    func testSnippetCommandUsesDedicatedDraftAndEscapeKeepsANormalDraft() {
+        let category = AppViewModel.SnippetCategorySummary(name: "Replies")
+        var capturedText: String?
+        var capturedCategoryID: UUID?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCaptureQuickSnippet = { text, categoryID in
+            capturedText = text
+            capturedCategoryID = categoryID
+            return nil
+        }
+        let viewModel = AppViewModel(
+            snippetCategories: [category],
+            hooks: hooks
+        )
+
+        viewModel.composerText = "/sn"
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.snippet])
+        XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
+        XCTAssertTrue(viewModel.isSnippetDraftMode)
+        XCTAssertEqual(viewModel.composerText, "")
+        XCTAssertFalse(viewModel.composerHasQuery)
+
+        viewModel.setSnippetDraftCategory(category.id)
+        viewModel.composerText = "Hello @Lipe\nSecond line"
+        viewModel.handleComposerReturn()
+
+        XCTAssertEqual(capturedText, "Hello @Lipe\nSecond line")
+        XCTAssertEqual(capturedCategoryID, category.id)
+        XCTAssertFalse(viewModel.isSnippetDraftMode)
+        XCTAssertEqual(viewModel.composerText, "")
+
+        viewModel.enterSnippetDraftMode()
+        viewModel.composerText = "Keep this as a normal draft"
+        viewModel.handleDismissalRequest(.escape)
+
+        XCTAssertFalse(viewModel.isSnippetDraftMode)
+        XCTAssertEqual(viewModel.composerText, "Keep this as a normal draft")
+        XCTAssertTrue(viewModel.composerHasQuery)
+    }
+
+    func testQuickSnippetShelfDeduplicatesRootAndHonorsCategorySearchAndLifecycle() {
+        let prompts = AppViewModel.SnippetCategorySummary(name: "Prompts")
+        let folder = AppViewModel.FolderSummary(name: "Work")
+        let reusable = AppViewModel.LedgerItem(
+            title: "Review checklist",
+            folderID: folder.id,
+            reusableAt: .now,
+            snippetCategoryID: prompts.id,
+            snippetCategoryName: prompts.name
+        )
+        let archived = AppViewModel.LedgerItem(
+            title: "Archived reply",
+            isArchived: true,
+            reusableAt: .now.addingTimeInterval(-10)
+        )
+        let trashed = AppViewModel.LedgerItem(
+            title: "Trashed reply",
+            isTrashed: true,
+            reusableAt: .now.addingTimeInterval(-20)
+        )
+        let ordinary = AppViewModel.LedgerItem(title: "Ordinary capture")
+        let viewModel = AppViewModel(
+            items: [reusable, archived, trashed, ordinary],
+            folders: [folder],
+            snippetCategories: [prompts]
+        )
+
+        XCTAssertTrue(viewModel.showsQuickSnippetShelf)
+        XCTAssertEqual(Set(viewModel.visibleQuickSnippets.map(\.id)), Set([reusable.id, archived.id]))
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [ordinary.id])
+
+        viewModel.selectSnippetCategory(prompts.id)
+        XCTAssertEqual(viewModel.visibleQuickSnippets.map(\.id), [reusable.id])
+        viewModel.composerText = "checklist"
+        XCTAssertEqual(viewModel.searchMatchCount, 1)
+        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+
+        viewModel.openFolder(folder)
+        XCTAssertFalse(viewModel.showsQuickSnippetShelf)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [reusable.id])
+
+        viewModel.openRoot()
+        viewModel.filter = .archive
+        XCTAssertFalse(viewModel.showsQuickSnippetShelf)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [archived.id])
+    }
+
+    func testCopyingSnippetShowsFeedbackAndMovesItToTheFront() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        let first = AppViewModel.LedgerItem(
+            title: "First",
+            reusableAt: now.addingTimeInterval(-300),
+            lastCopiedAt: now.addingTimeInterval(-100)
+        )
+        let second = AppViewModel.LedgerItem(
+            title: "Second",
+            reusableAt: now.addingTimeInterval(-200),
+            lastCopiedAt: now.addingTimeInterval(-50)
+        )
+        var copiedID: UUID?
+        var hooks = AppViewModel.Hooks()
+        hooks.onCopyQuickSnippet = {
+            copiedID = $0
+            return nil
+        }
+        let viewModel = AppViewModel(
+            items: [first, second],
+            hooks: hooks,
+            now: { now }
+        )
+
+        XCTAssertEqual(viewModel.visibleQuickSnippets.map(\.id), [second.id, first.id])
+        viewModel.copyQuickSnippet(first)
+
+        XCTAssertEqual(copiedID, first.id)
+        XCTAssertEqual(viewModel.copiedSnippetID, first.id)
+        XCTAssertEqual(viewModel.visibleQuickSnippets.map(\.id), [first.id, second.id])
+    }
+
+    func testQuickSnippetEligibilityAllowsOnlyTextAndLinks() {
+        XCTAssertTrue(AppViewModel.LedgerItem(title: "Text").isQuickSnippetEligible)
+        XCTAssertTrue(AppViewModel.LedgerItem(
+            title: "Link",
+            text: "",
+            attachments: [
+                .init(kind: .link, name: "example.com", previewURL: URL(string: "https://example.com"))
+            ]
+        ).isQuickSnippetEligible)
+        XCTAssertFalse(AppViewModel.LedgerItem(
+            title: "File",
+            attachments: [.init(kind: .file, name: "Report.pdf")]
+        ).isQuickSnippetEligible)
+        XCTAssertFalse(AppViewModel.LedgerItem(
+            title: "Caption with image",
+            attachments: [.init(kind: .image, name: "Image.png")]
+        ).isQuickSnippetEligible)
     }
 
     func testClearCommandParsingIsCaseInsensitiveExactAndArgumentFree() {
@@ -845,6 +984,66 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.surfaceState, .dormant)
     }
 
+    func testCollapseExpandedUsesTheContextualIdleSurfaceAndClearsDraft() {
+        let capture = AppViewModel(surfaceState: .expanded)
+        capture.composerText = "Discard this draft"
+        capture.collapseExpanded()
+        XCTAssertEqual(capture.surfaceState, .collapsed)
+        XCTAssertEqual(capture.composerText, "")
+
+        let activity = AppViewModel(
+            surfaceState: .expanded,
+            pomodoro: PomodoroState(
+                duration: 25 * 60,
+                phase: .paused(remaining: 12 * 60)
+            )
+        )
+        activity.collapseExpanded()
+        XCTAssertEqual(activity.surfaceState, .collapsedActivity)
+
+        let hidden = AppViewModel(surfaceState: .expanded)
+        hidden.setIdlePillHidden(true)
+        hidden.collapseExpanded()
+        XCTAssertEqual(hidden.surfaceState, .dormant)
+    }
+
+    func testCollapseExpandedSavesInlineEditingAndStaysOpenWhenSavingFails() {
+        let item = AppViewModel.LedgerItem(title: "Original")
+        var persistedTexts: [String] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onUpdateText = { _, text in
+            persistedTexts.append(text)
+            return nil
+        }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [item],
+            hooks: hooks
+        )
+
+        viewModel.beginEditing(item)
+        viewModel.updateEditingDraft("Saved from the header")
+        viewModel.collapseExpanded()
+
+        XCTAssertEqual(persistedTexts, ["Saved from the header"])
+        XCTAssertNil(viewModel.itemEditSession)
+        XCTAssertEqual(viewModel.surfaceState, .collapsed)
+
+        hooks.onUpdateText = { _, _ in "Could not save." }
+        let failingViewModel = AppViewModel(
+            surfaceState: .expanded,
+            items: [item],
+            hooks: hooks
+        )
+        failingViewModel.beginEditing(item)
+        failingViewModel.updateEditingDraft("Keep this edit")
+        failingViewModel.collapseExpanded()
+
+        XCTAssertEqual(failingViewModel.surfaceState, .expanded)
+        XCTAssertEqual(failingViewModel.itemEditSession?.draft, "Keep this edit")
+        XCTAssertEqual(failingViewModel.errorMessage, "Could not save.")
+    }
+
     func testUnifiedInputFiltersMatchingItemsInsteadOfCapturing() {
         var captured: [String] = []
         var hooks = AppViewModel.Hooks()
@@ -1191,7 +1390,7 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.openRoot()
         XCTAssertEqual(viewModel.browseLocation, .root)
-        XCTAssertEqual(viewModel.navigationTitle, "Capture")
+        XCTAssertEqual(viewModel.navigationTitle, "Inbox")
     }
 
     func testMoveUsesFolderIdentityAndDeleteReturnsContentsToInbox() {
@@ -2033,6 +2232,193 @@ final class AppViewModelTests: XCTestCase {
         let confirmation = try XCTUnwrap(viewModel.confirmation)
         XCTAssertEqual(confirmation.title, "Second capture")
         XCTAssertEqual(confirmation.remaining(at: currentDate), 5, accuracy: 0.001)
+    }
+
+    func testMirrorOpensFromTheIdlePillAndReturnsToIt() {
+        let viewModel = AppViewModel(surfaceState: .collapsed)
+
+        viewModel.toggleMirror()
+        XCTAssertEqual(viewModel.surfaceState, .mirror)
+
+        viewModel.toggleMirror()
+        XCTAssertEqual(viewModel.surfaceState, .collapsed)
+    }
+
+    func testMirrorOpensFromTheExpandedSurface() {
+        let viewModel = AppViewModel(surfaceState: .expanded)
+
+        viewModel.toggleMirror()
+
+        XCTAssertEqual(viewModel.surfaceState, .mirror)
+    }
+
+    func testClosingTheMirrorRestoresALiveActivityPill() {
+        let viewModel = AppViewModel(surfaceState: .collapsed)
+        viewModel.nowPlaying = NowPlayingSnapshot(
+            source: .appleMusic,
+            trackKey: "apple-music-track",
+            title: "Track",
+            artist: "Artist",
+            album: "Album",
+            duration: 100,
+            isPlaying: true,
+            position: 10,
+            positionAnchor: .now,
+            artworkURL: nil
+        )
+
+        viewModel.toggleMirror()
+        viewModel.toggleMirror()
+
+        XCTAssertEqual(viewModel.surfaceState, .collapsedActivity)
+    }
+
+    func testClosingTheMirrorGoesDormantWhenTheIdlePillIsHidden() {
+        let viewModel = AppViewModel(surfaceState: .collapsed)
+        viewModel.setIdlePillHidden(true)
+
+        viewModel.toggleMirror()
+        XCTAssertEqual(viewModel.surfaceState, .mirror)
+
+        viewModel.toggleMirror()
+        XCTAssertEqual(viewModel.surfaceState, .dormant)
+    }
+
+    func testCameraZoomStepsWithinTheDeviceRangeAndReportsAMultiplier() {
+        var applied: [Double] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onSetCameraZoom = { applied.append($0) }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.cameraControls = .init(zoomRange: 100...400, canRecenter: true)
+        viewModel.cameraZoom = 100
+
+        XCTAssertFalse(viewModel.canZoomOut)
+        XCTAssertTrue(viewModel.canZoomIn)
+        XCTAssertEqual(viewModel.cameraZoomFactor, 1, accuracy: 0.001)
+
+        viewModel.stepCameraZoom(by: 1)
+
+        XCTAssertEqual(viewModel.cameraZoom, 130, accuracy: 0.001)
+        XCTAssertEqual(viewModel.cameraZoomFactor, 1.3, accuracy: 0.001)
+        XCTAssertEqual(applied, [130])
+        XCTAssertTrue(viewModel.canZoomOut)
+    }
+
+    func testCameraZoomClampsToTheDeviceRangeAndStopsRepeatingAtTheEnd() {
+        var applied: [Double] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onSetCameraZoom = { applied.append($0) }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.cameraControls = .init(zoomRange: 100...400, canRecenter: false)
+        viewModel.cameraZoom = 100
+
+        viewModel.stepCameraZoom(by: 99)
+        XCTAssertEqual(viewModel.cameraZoom, 400, accuracy: 0.001)
+        XCTAssertFalse(viewModel.canZoomIn)
+
+        // Already at the ceiling: no redundant write to the device.
+        viewModel.stepCameraZoom(by: 1)
+        XCTAssertEqual(applied, [400])
+    }
+
+    func testCameraControlsAreInertWhenTheDeviceExposesNone() {
+        var applied: [Double] = []
+        var recentered = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onSetCameraZoom = { applied.append($0) }
+        hooks.onRecenterCamera = { recentered += 1 }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.cameraControls = .none
+
+        viewModel.stepCameraZoom(by: 1)
+        viewModel.recenterCamera()
+
+        XCTAssertTrue(viewModel.cameraControls.isEmpty)
+        XCTAssertFalse(viewModel.canZoomIn)
+        XCTAssertFalse(viewModel.canZoomOut)
+        XCTAssertEqual(applied, [])
+        XCTAssertEqual(recentered, 0)
+    }
+
+    func testCameraMoveQuantizesToWholeDegreesAndSkipsRedundantWrites() {
+        var moves: [(Double, Double)] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onMoveCamera = { moves.append(($0, $1)) }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.cameraControls = .init(
+            zoomRange: nil,
+            canRecenter: true,
+            panRange: -522000...522000,
+            tiltRange: -324000...360000
+        )
+
+        // Below one degree of travel the gimbal cannot act on the update, so it
+        // must not reach the device at all.
+        viewModel.moveCamera(toPan: 1000, tilt: 900)
+        XCTAssertEqual(moves.count, 0)
+        XCTAssertEqual(viewModel.cameraPan, 0)
+
+        viewModel.moveCamera(toPan: 7300, tilt: -3500)
+        XCTAssertEqual(viewModel.cameraPan, 7200, accuracy: 0.001)
+        XCTAssertEqual(viewModel.cameraTilt, -3600, accuracy: 0.001)
+        XCTAssertEqual(moves.count, 1)
+    }
+
+    func testCameraMoveClampsToTheGimbalTravel() {
+        var moves: [(Double, Double)] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onMoveCamera = { moves.append(($0, $1)) }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.cameraControls = .init(
+            zoomRange: nil,
+            canRecenter: true,
+            panRange: -522000...522000,
+            tiltRange: -324000...360000
+        )
+
+        viewModel.moveCamera(toPan: 9_000_000, tilt: -9_000_000)
+
+        XCTAssertEqual(viewModel.cameraPan, 522000, accuracy: 0.001)
+        XCTAssertEqual(viewModel.cameraTilt, -324000, accuracy: 0.001)
+        XCTAssertEqual(moves.count, 1)
+    }
+
+    func testCameraMoveIsInertWithoutTravelAndRecenterResetsAim() {
+        var moves: [(Double, Double)] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onMoveCamera = { moves.append(($0, $1)) }
+        let viewModel = AppViewModel(hooks: hooks)
+
+        // Zoom-only camera: no gimbal, so dragging must do nothing.
+        viewModel.cameraControls = .init(zoomRange: 100...400, canRecenter: false)
+        viewModel.moveCamera(toPan: 36000, tilt: 36000)
+        XCTAssertEqual(moves.count, 0)
+        XCTAssertFalse(viewModel.cameraControls.canMove)
+
+        viewModel.cameraControls = .init(
+            zoomRange: nil,
+            canRecenter: true,
+            panRange: -522000...522000,
+            tiltRange: -324000...360000
+        )
+        viewModel.moveCamera(toPan: 36000, tilt: 18000)
+        XCTAssertEqual(viewModel.cameraPan, 36000, accuracy: 0.001)
+
+        viewModel.recenterCamera()
+        XCTAssertEqual(viewModel.cameraPan, 0)
+        XCTAssertEqual(viewModel.cameraTilt, 0)
+    }
+
+    func testRecenterReachesTheDeviceOnlyWhenSupported() {
+        var recentered = 0
+        var hooks = AppViewModel.Hooks()
+        hooks.onRecenterCamera = { recentered += 1 }
+        let viewModel = AppViewModel(hooks: hooks)
+        viewModel.cameraControls = .init(zoomRange: nil, canRecenter: true)
+
+        viewModel.recenterCamera()
+
+        XCTAssertEqual(recentered, 1)
     }
 
     private func composerImage(

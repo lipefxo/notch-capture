@@ -46,13 +46,19 @@ enum NotchTheme {
         }
     }
 
-    static let width: CGFloat = 420
-    static let maxHeight: CGFloat = 560
+    static let width: CGFloat = 440
+    static let maxHeight: CGFloat = 640
     static let headerHeight: CGFloat = 62
+    /// The mirror keeps the shared 20pt content column, so its 16:9 preview is
+    /// 400 x 225. The surface is that plus the 54pt header row — which exists
+    /// so the hardware notch never eats into the video — and its two insets.
+    static let mirrorPreviewWidth: CGFloat = width - 40
+    static let mirrorPreviewHeight: CGFloat = (mirrorPreviewWidth * 9 / 16).rounded()
+    static let mirrorHeight: CGFloat = 54 + 14 + mirrorPreviewHeight + 16
     /// Width of the concave fillets that merge the surface into the top screen edge.
     static let topFlare: CGFloat = 10
     /// Equal content width on either side of a hardware notch while a live activity is visible.
-    static let collapsedActivityWingWidth: CGFloat = 116
+    static let collapsedActivityWingWidth: CGFloat = 104
     private static let primaryAccentComponents = PomodoroTimerColor(
         red: 1,
         green: 1,

@@ -31,6 +31,12 @@ The expanded surface includes a utility shelf:
 
 While idle, active music or a running timer shows in a compact activity pill in the notch.
 
+## Mirror
+
+A camera glyph in the notch — present on both compact pills and in the expanded header — opens a live webcam preview. It is a mirror only: nothing is recorded, captured, or sent anywhere. Unlike the inbox surfaces it never takes keyboard focus and does not close when you click elsewhere, so it stays put while you get ready for a call; the same glyph, the header's close button, or a click on the notch itself puts it away and turns the camera off. The first use asks for camera access (macOS ties that grant to the build's signature, so development builds re-prompt).
+
+Cameras that publish UVC controls also get zoom and a recenter button in the mirror's header, and gimbal cameras can be aimed by dragging the preview — the scene follows the pointer, and the throw scales with the zoom level so a magnified view still moves precisely. AVFoundation exposes none of these on macOS, so they are read and written through CoreMediaIO, whose control objects hang off the capture device. Cameras without them (the built-in FaceTime camera) simply show no extra chrome. Gimbal webcams get one more accommodation: they park in whatever orientation they were last left in and override the requested format when the stream opens, so the mirror re-asserts a landscape format once frames are flowing — a camera already in landscape is never touched.
+
 ## Build and run
 
 Requirements: Apple Silicon Mac, macOS 14 or newer, and Xcode with the macOS 14 SDK.
@@ -51,7 +57,7 @@ The first launch shows a four-step tour of the main features (capture, organizin
 
 ## Idle behavior
 
-Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
+Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. Both pills carry the mirror toggle. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
 
 ## Settings
 

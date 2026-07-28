@@ -28,16 +28,20 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
     case dropTarget
     case onboarding
     case settings
+    case mirror
 
     public var isVisible: Bool {
         self != .dormant
     }
 
+    /// The mirror is deliberately excluded: a webcam preview that vanishes the
+    /// moment you click into another app cannot do its job, so it opts out of
+    /// the Escape/outside-click dismissal monitors and closes only on request.
     public var isExplicitSession: Bool {
         switch self {
         case .confirmation, .expanded, .dropTarget, .onboarding, .settings:
             return true
-        case .dormant, .collapsed, .collapsedActivity:
+        case .dormant, .collapsed, .collapsedActivity, .mirror:
             return false
         }
     }
@@ -46,7 +50,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .expanded, .dropTarget, .onboarding, .settings:
             return true
-        case .dormant, .collapsed, .collapsedActivity, .confirmation:
+        case .dormant, .collapsed, .collapsedActivity, .confirmation, .mirror:
             return false
         }
     }
@@ -68,9 +72,20 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         case .confirmation:
             CGSize(width: 300, height: 56)
         case .expanded, .dropTarget, .settings:
-            CGSize(width: 440, height: 560)
+            CGSize(
+                width: NotchTheme.width + (NotchTheme.topFlare * 2),
+                height: NotchTheme.maxHeight
+            )
         case .onboarding:
-            CGSize(width: 440, height: 500)
+            CGSize(
+                width: NotchTheme.width + (NotchTheme.topFlare * 2),
+                height: 500
+            )
+        case .mirror:
+            CGSize(
+                width: NotchTheme.width + (NotchTheme.topFlare * 2),
+                height: NotchTheme.mirrorHeight
+            )
         case .dormant:
             .zero
         }
@@ -86,36 +101,39 @@ struct CompactSurfaceMetrics: Equatable {
     let bottomRadius: CGFloat
     let wingWidth: CGFloat?
 
+    /// The compact widths carry a trailing `mirrorToggleSlot` beyond the
+    /// content they used to hold, so adding the mirror toggle did not squeeze
+    /// the capture cluster or the transport controls.
+    static let mirrorToggleSlot: CGFloat = 28
+
     static func capture(for presentationSize: CompactPresentationSize) -> Self {
         switch presentationSize {
         case .minimal:
-            Self(shellSize: CGSize(width: 198, height: 34), contentSize: CGSize(width: 178, height: 34), bottomRadius: 16, wingWidth: nil)
+            Self(shellSize: CGSize(width: 226, height: 34), contentSize: CGSize(width: 206, height: 34), bottomRadius: 16, wingWidth: nil)
         case .extended:
-            Self(shellSize: CGSize(width: 300, height: 50), contentSize: CGSize(width: 280, height: 50), bottomRadius: 22, wingWidth: nil)
+            Self(shellSize: CGSize(width: 332, height: 50), contentSize: CGSize(width: 312, height: 50), bottomRadius: 22, wingWidth: nil)
         }
     }
 
     static func externalActivity(for presentationSize: CompactPresentationSize) -> Self {
         switch presentationSize {
         case .minimal:
-            Self(shellSize: CGSize(width: 300, height: 34), contentSize: CGSize(width: 280, height: 34), bottomRadius: 16, wingWidth: nil)
+            Self(shellSize: CGSize(width: 328, height: 34), contentSize: CGSize(width: 308, height: 34), bottomRadius: 16, wingWidth: nil)
         case .extended:
-            Self(shellSize: CGSize(width: 440, height: 56), contentSize: CGSize(width: 420, height: 56), bottomRadius: 22, wingWidth: nil)
+            Self(shellSize: CGSize(width: 472, height: 56), contentSize: CGSize(width: 452, height: 56), bottomRadius: 22, wingWidth: nil)
         }
     }
 
     static func hardwareActivity(
-        for presentationSize: CompactPresentationSize,
         notchWidth: CGFloat,
         notchBandHeight: CGFloat
     ) -> Self {
-        let wingWidth: CGFloat = presentationSize == .extended ? 176 : NotchTheme.collapsedActivityWingWidth
-        let baseHeight: CGFloat = presentationSize == .extended ? 56 : 34
-        let height = max(baseHeight, notchBandHeight + 4)
+        let wingWidth = NotchTheme.collapsedActivityWingWidth
+        let height = max(34, notchBandHeight + 4)
         return Self(
             shellSize: CGSize(width: notchWidth + (wingWidth * 2) + (NotchTheme.topFlare * 2), height: height),
             contentSize: CGSize(width: notchWidth + (wingWidth * 2), height: height),
-            bottomRadius: presentationSize == .extended ? 22 : 16,
+            bottomRadius: 16,
             wingWidth: wingWidth
         )
     }
@@ -131,7 +149,6 @@ struct CompactSurfaceMetrics: Equatable {
         case .collapsedActivity:
             if let activityLayout, activityLayout.hasHardwareNotch {
                 hardwareActivity(
-                    for: presentationSize,
                     notchWidth: activityLayout.notchWidth,
                     notchBandHeight: activityLayout.notchBandHeight
                 )

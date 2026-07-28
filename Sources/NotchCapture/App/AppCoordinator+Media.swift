@@ -38,11 +38,57 @@ extension AppCoordinator {
         }
     }
 
+    func configureCamera() {
+        guard !previewMode else { return }
+        cameraService.onStateChange = { [weak self] state in
+            guard let self else { return }
+            self.viewModel.cameraPreview = state
+            // Controls are only discoverable once a device has been resolved,
+            // so capabilities are read off the back of the running state rather
+            // than guessed up front.
+            if case .running = state {
+                self.attachCameraControls()
+            } else {
+                self.cameraControlService.detach()
+                self.viewModel.cameraControls = .none
+            }
+        }
+    }
+
+    private func attachCameraControls() {
+        guard let uid = cameraService.activeDeviceUID else { return }
+        cameraControlService.attach(deviceUID: uid)
+        viewModel.cameraControls = cameraControlService.capabilities
+        if let zoom = cameraControlService.zoom {
+            viewModel.cameraZoom = zoom
+        } else if let range = cameraControlService.capabilities.zoomRange {
+            viewModel.cameraZoom = range.lowerBound
+        }
+        if let aim = cameraControlService.panTilt {
+            viewModel.cameraPan = aim.pan
+            viewModel.cameraTilt = aim.tilt
+        }
+    }
+
+    /// The mirror panel never becomes key, so the camera session follows the
+    /// surface rather than any focus event: opening starts it, anything else
+    /// stops it and turns the camera indicator light back off.
+    func updateCameraSession(for state: AppViewModel.SurfaceState) {
+        guard !previewMode else { return }
+        if state == .mirror {
+            cameraService.start()
+        } else {
+            cameraService.stop()
+        }
+    }
+
     func updateMediaActivityLevel(for state: AppViewModel.SurfaceState) {
         guard !previewMode else { return }
         let level: NowPlayingService.ActivityLevel = switch state {
         case .expanded, .settings: .full
-        case .collapsed, .collapsedActivity, .confirmation, .pomodoroComplete: .compact
+        // The mirror shows no now-playing chrome, but closing it lands straight
+        // back on the activity pill, so its data must not have gone stale.
+        case .collapsed, .collapsedActivity, .confirmation, .pomodoroComplete, .mirror: .compact
         case .dormant, .drop, .onboarding: .hidden
         }
         nowPlayingService.setActivityLevel(level)
@@ -53,8 +99,11 @@ extension AppCoordinator {
         guard let screen = displayLocator.pointerScreen,
               let geometry = displayLocator.geometry(for: screen) else { return }
         let simulatesNotch = previewMode && CommandLine.arguments.contains("--preview-hardware-notch")
+        let simulatesExternalDisplay = previewMode
+            && CommandLine.arguments.contains("--preview-external-display")
         viewModel.collapsedActivityLayout = AppViewModel.CollapsedActivityLayout(
-            hasHardwareNotch: simulatesNotch || (geometry.notchRect != nil && geometry.safeAreaInsets.top > 0),
+            hasHardwareNotch: !simulatesExternalDisplay
+                && (simulatesNotch || (geometry.notchRect != nil && geometry.safeAreaInsets.top > 0)),
             notchWidth: simulatesNotch ? 156 : (geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width),
             notchBandHeight: simulatesNotch ? 32 : max(geometry.notchRect?.height ?? 0, geometry.safeAreaInsets.top)
         )
@@ -86,7 +135,10 @@ extension AppCoordinator {
             // Preserve Capture's Undo window; the finished timer remains visible
             // the next time the user opens the expanded surface.
             break
-        case .expanded, .drop, .settings, .onboarding, .pomodoroComplete:
+        // The mirror is deliberately left alone: the user opened it to look at
+        // something, and the finished timer is waiting when they next open the
+        // inbox.
+        case .expanded, .drop, .settings, .onboarding, .pomodoroComplete, .mirror:
             viewModel.isPomodoroCardVisible = true
         }
     }
