@@ -28,6 +28,8 @@ final class AppCoordinator {
     let displayLocator: DisplayLocator
     let nowPlayingService: NowPlayingService
     let pomodoroService: PomodoroService
+    let cameraService: CameraService
+    let cameraControlService: CameraControlService
     let defaults: UserDefaults
     let previewMode: Bool
 
@@ -43,7 +45,13 @@ final class AppCoordinator {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
 
-        let schema = Schema([CaptureItem.self, CaptureTag.self, ItemList.self, Attachment.self])
+        let schema = Schema([
+            CaptureItem.self,
+            CaptureTag.self,
+            ItemList.self,
+            SnippetCategory.self,
+            Attachment.self,
+        ])
         var storeRecoveryBackupURL: URL?
         if previewMode {
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -87,6 +95,12 @@ final class AppCoordinator {
             persistDuration: { duration in defaults.set(duration, forKey: DefaultsKey.pomodoroDuration) }
         )
         self.nowPlayingService = NowPlayingService()
+        self.cameraService = CameraService(onAccessPrompt: {
+            // An agent app with a non-key panel can otherwise leave the camera
+            // TCC prompt stranded behind the user's frontmost window.
+            NSApp.activate(ignoringOtherApps: true)
+        })
+        self.cameraControlService = CameraControlService()
 
         let timeFormat = AppViewModel.TimeFormat.fromStoredValue(
             defaults.string(forKey: DefaultsKey.timeFormat)
@@ -113,6 +127,12 @@ final class AppCoordinator {
                     title: "Send the revised capture flow",
                     destination: "Inbox"
                 )
+            }
+            if initialState == .mirror {
+                // No camera runs under --design-preview, so the control chrome
+                // needs a stand-in to be reviewable in snapshots.
+                preview.cameraControls = .init(zoomRange: 100...400, canRecenter: true)
+                preview.cameraZoom = 130
             }
             self.viewModel = preview
         } else {
@@ -148,6 +168,7 @@ final class AppCoordinator {
 
         configureHooks()
         configureMedia()
+        configureCamera()
         configureStateSynchronization()
     }
 
@@ -362,6 +383,7 @@ final class AppCoordinator {
         case "settings": return .settings
         case "onboarding": return .onboarding
         case "drop": return .drop
+        case "mirror": return .mirror
         default: return .expanded
         }
     }
@@ -434,6 +456,8 @@ final class AppCoordinator {
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
         nowPlayingService.stop()
+        cameraService.stop()
+        cameraControlService.detach()
         composerPasteTask?.cancel()
         displayEnvironmentObservers.forEach(NotificationCenter.default.removeObserver)
         displayEnvironmentObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
@@ -448,6 +472,9 @@ final class AppCoordinator {
         }
         hooks.onCaptureText = { [weak self] text, folderID in
             self?.captureManualText(text, folderID: folderID)
+        }
+        hooks.onCaptureQuickSnippet = { [weak self] text, categoryID in
+            self?.captureQuickSnippet(text, categoryID: categoryID)
         }
         hooks.onCaptureComposerImages = { [weak self] text, images, folderID in
             self?.captureComposerImages(text: text, images: images, folderID: folderID)
@@ -503,6 +530,21 @@ final class AppCoordinator {
         hooks.onDeleteTag = { [weak self] id in
             self?.deleteTag(id: id)
         }
+        hooks.onCreateSnippetCategory = { [weak self] name in
+            self?.createSnippetCategory(named: name)
+        }
+        hooks.onRenameSnippetCategory = { [weak self] id, name in
+            self?.renameSnippetCategory(id: id, to: name)
+        }
+        hooks.onDeleteSnippetCategory = { [weak self] id in
+            self?.deleteSnippetCategory(id: id)
+        }
+        hooks.onSetQuickSnippet = { [weak self] id, enabled, categoryID in
+            self?.setQuickSnippet(id: id, enabled: enabled, categoryID: categoryID)
+        }
+        hooks.onCopyQuickSnippet = { [weak self] id in
+            self?.copyQuickSnippet(id: id)
+        }
         hooks.onTrash = { [weak self] id in
             self?.trash(id: id)
         }
@@ -554,6 +596,19 @@ final class AppCoordinator {
         hooks.onOpenMediaAutomationSettings = {
             guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
             NSWorkspace.shared.open(url)
+        }
+        hooks.onOpenCameraSettings = {
+            guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") else { return }
+            NSWorkspace.shared.open(url)
+        }
+        hooks.onSetCameraZoom = { [weak self] zoom in
+            self?.cameraControlService.setZoom(zoom)
+        }
+        hooks.onRecenterCamera = { [weak self] in
+            self?.cameraControlService.recenter()
+        }
+        hooks.onMoveCamera = { [weak self] pan, tilt in
+            self?.cameraControlService.setPanTilt(pan: pan, tilt: tilt)
         }
         hooks.onPomodoroToggle = { [weak self] in self?.pomodoroService.toggle() }
         hooks.onPomodoroReset = { [weak self] in self?.pomodoroService.reset() }
@@ -607,10 +662,11 @@ final class AppCoordinator {
             .sink { [weak self] state in
                 Task { @MainActor in
                     guard let self else { return }
-                    if [.confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings].contains(state) {
+                    if [.confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings, .mirror].contains(state) {
                         self.updateIdlePillVisibility()
                     }
                     self.updateMediaActivityLevel(for: state)
+                    self.updateCameraSession(for: state)
                     PanelDiagnostics.log("surface state → \(state)")
                     // Leaving Settings while a shortcut is being recorded must
                     // restore the temporarily unregistered global hotkeys.

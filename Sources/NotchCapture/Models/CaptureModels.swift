@@ -107,7 +107,12 @@ final class CaptureItem {
     var sourceApplicationName: String?
     var sourceBundleIdentifier: String?
     var sourceDocumentURL: URL?
+    /// Non-nil when this ordinary capture is also exposed in Quick snippets.
+    /// Optional storage keeps the schema additive for existing libraries.
+    var reusableAt: Date?
+    var lastCopiedAt: Date?
     var list: ItemList?
+    var snippetCategory: SnippetCategory?
     @Relationship(deleteRule: .nullify, inverse: \CaptureTag.items)
     var tags: [CaptureTag]
     @Relationship(deleteRule: .cascade, inverse: \Attachment.item)
@@ -127,6 +132,9 @@ final class CaptureItem {
         origin: CaptureOrigin = .manual,
         source: CaptureSource = CaptureSource(),
         list: ItemList? = nil,
+        reusableAt: Date? = nil,
+        lastCopiedAt: Date? = nil,
+        snippetCategory: SnippetCategory? = nil,
         tags: [CaptureTag] = [],
         attachments: [Attachment] = [],
         createdAt: Date = .now,
@@ -148,7 +156,10 @@ final class CaptureItem {
         self.sourceApplicationName = source.applicationName
         self.sourceBundleIdentifier = source.bundleIdentifier
         self.sourceDocumentURL = source.documentURL
+        self.reusableAt = reusableAt
+        self.lastCopiedAt = lastCopiedAt
         self.list = list
+        self.snippetCategory = snippetCategory
         self.tags = tags
         self.attachments = attachments
         for attachment in attachments {
@@ -207,9 +218,66 @@ final class CaptureItem {
 
     var isArchived: Bool { archivedAt != nil }
     var isTrashed: Bool { trashedAt != nil }
+    var isQuickSnippet: Bool { reusableAt != nil }
+    var isQuickSnippetEligible: Bool {
+        attachments.allSatisfy { $0.kind == .url } &&
+            (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    }
+
+    var quickSnippetCopyText: String? {
+        if !text.isEmpty { return text }
+        let links = attachments
+            .sorted(by: { $0.order < $1.order })
+            .compactMap(\.url?.absoluteString)
+        return links.isEmpty ? nil : links.joined(separator: "\n")
+    }
 
     func touch(at date: Date = .now) {
         updatedAt = date
+    }
+}
+
+enum SnippetCategoryName {
+    static func displayName(_ proposedName: String) -> String {
+        proposedName
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+    static func normalized(_ proposedName: String) -> String {
+        displayName(proposedName)
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+    }
+}
+
+@Model
+final class SnippetCategory {
+    @Attribute(.unique) var id: UUID
+    var name: String
+    @Attribute(.unique) var normalizedName: String
+    var sortOrder: Int
+    var createdAt: Date
+    var updatedAt: Date
+    @Relationship(deleteRule: .nullify, inverse: \CaptureItem.snippetCategory)
+    var items: [CaptureItem]
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        normalizedName: String? = nil,
+        sortOrder: Int = 0,
+        createdAt: Date = .now,
+        updatedAt: Date = .now,
+        items: [CaptureItem] = []
+    ) {
+        self.id = id
+        self.name = SnippetCategoryName.displayName(name)
+        self.normalizedName = normalizedName ?? SnippetCategoryName.normalized(name)
+        self.sortOrder = sortOrder
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.items = items
     }
 }
 

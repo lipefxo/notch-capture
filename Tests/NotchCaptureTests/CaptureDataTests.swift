@@ -69,6 +69,60 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(try repository.fetch(scope: .inbox, search: "Work").map(\.id), [item.id])
     }
 
+    func testQuickSnippetRepositoryKeepsReusableStateOnTheCapture() throws {
+        let container = try makeContainer()
+        let repository = ItemRepository(modelContext: container.mainContext)
+        let category = try repository.createSnippetCategory(name: "  Client   Replies ")
+        let item = try repository.createItem(
+            text: "Hello @Lipe\nSecond line",
+            origin: .manual,
+            tagNames: ["Lipe"]
+        )
+
+        try repository.setQuickSnippet(true, for: item, category: category)
+
+        XCTAssertTrue(item.isQuickSnippet)
+        XCTAssertEqual(item.snippetCategory?.id, category.id)
+        XCTAssertEqual(item.quickSnippetCopyText, "Hello @Lipe\nSecond line")
+        XCTAssertEqual(category.name, "Client Replies")
+
+        let copiedAt = Date(timeIntervalSince1970: 42)
+        try repository.markQuickSnippetCopied(item, at: copiedAt)
+        XCTAssertEqual(item.lastCopiedAt, copiedAt)
+
+        try repository.renameSnippetCategory(category, to: "Replies")
+        XCTAssertEqual(item.snippetCategory?.name, "Replies")
+
+        try repository.deleteSnippetCategory(category)
+        XCTAssertTrue(item.isQuickSnippet)
+        XCTAssertNil(item.snippetCategory)
+
+        let link = try repository.createItem(
+            from: .url(try XCTUnwrap(URL(string: "https://example.com/docs"))),
+            origin: .manual
+        )
+        try repository.setQuickSnippet(true, for: link)
+        XCTAssertEqual(link.quickSnippetCopyText, "https://example.com/docs")
+
+        let file = try repository.createItem(
+            text: "File caption",
+            origin: .manual,
+            attachments: [
+                Attachment(
+                    kind: .file,
+                    typeIdentifier: UTType.pdf.identifier,
+                    originalFilename: "Report.pdf"
+                )
+            ]
+        )
+        XCTAssertThrowsError(try repository.setQuickSnippet(true, for: file)) {
+            XCTAssertEqual(
+                ($0 as? ItemRepositoryError)?.localizedDescription,
+                ItemRepositoryError.ineligibleQuickSnippet.localizedDescription
+            )
+        }
+    }
+
     func testEmbeddedTagCreationPreservesTextAndReusesNamesCaseInsensitively() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)
@@ -752,7 +806,7 @@ final class CaptureDataTests: XCTestCase {
         let manifest = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: package.appendingPathComponent("manifest.json"))) as? [String: Any]
         )
-        XCTAssertEqual(manifest["schemaVersion"] as? Int, 4)
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 5)
 
         let targetContainer = try makeContainer()
         let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
@@ -850,6 +904,55 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(try importer.importPackage(at: package).skippedDuplicateCount, 1)
     }
 
+    func testPackageRoundTripPreservesQuickSnippetCategoriesAndCopyOrder() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+
+        let sourceContainer = try makeContainer()
+        let sourceStore = try AttachmentStore(
+            rootURL: temporary.appendingPathComponent("source", isDirectory: true)
+        )
+        let sourceRepository = ItemRepository(modelContext: sourceContainer.mainContext)
+        let category = try sourceRepository.createSnippetCategory(name: "Prompts")
+        let item = try sourceRepository.createItem(text: "Draft a release note", origin: .manual)
+        let copiedAt = Date(timeIntervalSince1970: 5_000)
+        try sourceRepository.setQuickSnippet(true, for: item, category: category)
+        try sourceRepository.markQuickSnippetCopied(item, at: copiedAt)
+
+        let package = temporary.appendingPathComponent("Snippets.notchcapture", isDirectory: true)
+        try CapturePackageService(
+            modelContext: sourceContainer.mainContext,
+            attachmentStore: sourceStore
+        ).export(to: package)
+
+        let targetContainer = try makeContainer()
+        let targetStore = try AttachmentStore(
+            rootURL: temporary.appendingPathComponent("target", isDirectory: true)
+        )
+        let importer = CapturePackageService(
+            modelContext: targetContainer.mainContext,
+            attachmentStore: targetStore
+        )
+        let result = try importer.importPackage(at: package)
+        let imported = try XCTUnwrap(
+            targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first
+        )
+        let importedCategory = try XCTUnwrap(
+            targetContainer.mainContext.fetch(FetchDescriptor<SnippetCategory>()).first
+        )
+
+        XCTAssertEqual(result.importedItemCount, 1)
+        XCTAssertEqual(importedCategory.id, category.id)
+        XCTAssertEqual(imported.snippetCategory?.id, category.id)
+        XCTAssertNotNil(imported.reusableAt)
+        XCTAssertEqual(imported.lastCopiedAt, copiedAt)
+        XCTAssertEqual(try importer.importPackage(at: package).skippedDuplicateCount, 1)
+    }
+
     func testVersionOnePackageImportsWithoutTags() throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -892,7 +995,13 @@ final class CaptureDataTests: XCTestCase {
     }
 
     private func makeContainer() throws -> ModelContainer {
-        let schema = Schema([CaptureItem.self, CaptureTag.self, ItemList.self, Attachment.self])
+        let schema = Schema([
+            CaptureItem.self,
+            CaptureTag.self,
+            ItemList.self,
+            SnippetCategory.self,
+            Attachment.self,
+        ])
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [configuration])
     }

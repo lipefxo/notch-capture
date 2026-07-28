@@ -65,7 +65,9 @@ final class PanelStateTests: XCTestCase {
     }
 
     func testExplicitSessionsExcludePassiveStates() {
-        let passiveStates: Set<PanelState> = [.dormant, .collapsed, .collapsedActivity]
+        // The mirror is passive on purpose: an Escape/outside-click session
+        // would close the webcam preview the moment the user did anything else.
+        let passiveStates: Set<PanelState> = [.dormant, .collapsed, .collapsedActivity, .mirror]
 
         for state in PanelState.allCases {
             XCTAssertEqual(
@@ -478,7 +480,7 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         // the single table against accidental changes.
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .collapsed)).size,
-            CGSize(width: 198, height: 34)
+            CGSize(width: 226, height: 34)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .confirmation)).size,
@@ -486,15 +488,50 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .expanded)).size,
-            CGSize(width: 440, height: 560)
+            CGSize(width: 460, height: 640)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .onboarding)).size,
-            CGSize(width: 440, height: 500)
+            CGSize(width: 460, height: 500)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .settings)).size,
-            CGSize(width: 440, height: 560)
+            CGSize(width: 460, height: 640)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .mirror)).size,
+            CGSize(width: 460, height: 309)
+        )
+    }
+
+    func testMirrorIsAnOpenSurfaceRatherThanACompactOne() throws {
+        XCTAssertNil(
+            CompactSurfaceMetrics.resolve(state: .mirror, presentationSize: .minimal)
+        )
+        let mirror = try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .mirror))
+        XCTAssertEqual(mirror.bottomRadius, NotchTheme.surfaceBottomRadius)
+        XCTAssertGreaterThan(mirror.shadowOpacity, 0)
+        XCTAssertEqual(PanelShadowApron.resolve(for: .mirror), .standard)
+    }
+
+    func testMirrorMorphsOpenFromAndBackIntoTheCollapsedPill() {
+        XCTAssertEqual(
+            PanelTransitionPolicy.resolve(
+                from: .collapsed,
+                to: .mirror,
+                wasVisible: true,
+                reduceMotion: false
+            ).kind,
+            .expand
+        )
+        XCTAssertEqual(
+            PanelTransitionPolicy.resolve(
+                from: .mirror,
+                to: .collapsed,
+                wasVisible: true,
+                reduceMotion: false
+            ).kind,
+            .contract
         )
     }
 
@@ -531,15 +568,15 @@ final class SurfaceChromeMetricsTests: XCTestCase {
             SurfaceChromeMetrics.resolve(for: .collapsedActivity, compactPresentationSize: .extended)
         )
 
-        XCTAssertEqual(capture.size, CGSize(width: 300, height: 50))
-        XCTAssertEqual(activity.size, CGSize(width: 440, height: 56))
+        XCTAssertEqual(capture.size, CGSize(width: 332, height: 50))
+        XCTAssertEqual(activity.size, CGSize(width: 472, height: 56))
         XCTAssertEqual(capture.bottomRadius, 22)
         XCTAssertEqual(activity.bottomRadius, 22)
         XCTAssertEqual(capture.shadowOpacity, 0)
         XCTAssertEqual(activity.shadowOpacity, 0)
     }
 
-    func testHardwareNotchActivityPreservesNotchAndUsesPresetWings() {
+    func testHardwareNotchActivityAlwaysUsesCompactSymmetricWings() {
         let layout = AppViewModel.CollapsedActivityLayout(
             hasHardwareNotch: true,
             notchWidth: 188,
@@ -556,10 +593,29 @@ final class SurfaceChromeMetricsTests: XCTestCase {
             activityLayout: layout
         )
 
-        XCTAssertEqual(minimal?.contentSize.width, 188 + (116 * 2))
-        XCTAssertEqual(extended?.contentSize.width, 188 + (176 * 2))
-        XCTAssertEqual(extended?.shellSize.width, 188 + (176 * 2) + 20)
-        XCTAssertEqual(extended?.shellSize.height, 56)
+        XCTAssertEqual(minimal?.contentSize.width, 188 + (104 * 2))
+        XCTAssertEqual(extended, minimal)
+        XCTAssertEqual(extended?.shellSize.width, 188 + (104 * 2) + 20)
+        XCTAssertEqual(extended?.shellSize.height, 36)
+        XCTAssertEqual(extended?.bottomRadius, 16)
+        XCTAssertEqual(extended?.wingWidth, 104)
+    }
+
+    func testHardwareNotchActivityHeightTracksTheNotchBand() {
+        let layout = AppViewModel.CollapsedActivityLayout(
+            hasHardwareNotch: true,
+            notchWidth: 188,
+            notchBandHeight: 40
+        )
+
+        let activity = CompactSurfaceMetrics.resolve(
+            state: .collapsedActivity,
+            presentationSize: .extended,
+            activityLayout: layout
+        )
+
+        XCTAssertEqual(activity?.shellSize.height, 44)
+        XCTAssertEqual(activity?.bottomRadius, 16)
     }
 }
 
@@ -592,11 +648,11 @@ final class PanelShadowApronTests: XCTestCase {
         }
         XCTAssertEqual(
             PanelState.expanded.nominalSize,
-            CGSize(width: 440, height: 560)
+            CGSize(width: 460, height: 640)
         )
         XCTAssertEqual(
             PanelShadowApron.standard.applying(to: PanelState.expanded.nominalSize),
-            CGSize(width: 568, height: 640)
+            CGSize(width: 588, height: 720)
         )
     }
 }

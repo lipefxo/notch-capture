@@ -11,30 +11,35 @@ final class AppViewModel: ObservableObject {
     }
 
     enum ComposerCommand: String, CaseIterable, Identifiable, Hashable {
+        case snippet
         case folder
         case clear
 
         var id: String { rawValue }
         var completion: String {
             switch self {
+            case .snippet: "/snippet "
             case .folder: "/folder "
             case .clear: "/clear"
             }
         }
         var title: String {
             switch self {
+            case .snippet: "Create quick snippet"
             case .folder: "Create folder"
             case .clear: "Clear completed tasks"
             }
         }
         var detail: String {
             switch self {
+            case .snippet: "Save reusable text or a link"
             case .folder: "Create a top-level folder"
             case .clear: "Move all completed tasks to Trash"
             }
         }
         var icon: String {
             switch self {
+            case .snippet: "bolt.fill"
             case .folder: "folder.badge.plus"
             case .clear: "checkmark.circle"
             }
@@ -72,6 +77,17 @@ final class AppViewModel: ObservableObject {
     @Published var tags: [TagSummary] {
         didSet { invalidateDerivedLedger() }
     }
+    @Published var snippetCategories: [SnippetCategorySummary] {
+        didSet { invalidateDerivedLedger() }
+    }
+    @Published var selectedSnippetCategoryID: UUID? {
+        didSet { invalidateDerivedLedger() }
+    }
+    @Published private(set) var isSnippetDraftMode = false {
+        didSet { invalidateDerivedLedger() }
+    }
+    @Published var snippetDraftCategoryID: UUID?
+    @Published private(set) var copiedSnippetID: UUID?
     @Published var newFolderName = ""
     @Published private(set) var selectedTagSuggestionIndex = 0
     @Published private(set) var selectedComposerCommandIndex = 0
@@ -93,6 +109,15 @@ final class AppViewModel: ObservableObject {
     @Published var mediaConnectionStates: [NowPlayingSource: NowPlayingConnectionState] = [:]
     @Published var nowPlayingArtwork: NSImage?
     @Published var pomodoro: PomodoroState
+    @Published var cameraPreview: CameraService.PreviewState = .idle
+    @Published var cameraControls: CameraControlService.Capabilities = .none
+    /// In the device's own units, where 100 is 1x — the same scale as
+    /// `cameraControls.zoomRange`, so the two are always comparable.
+    @Published var cameraZoom: Double = 100
+    /// The gimbal's aim in arcseconds, matching `cameraControls.panRange` and
+    /// `tiltRange`.
+    @Published var cameraPan: Double = 0
+    @Published var cameraTilt: Double = 0
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
     @Published var isPomodoroCardVisible = false
     @Published var expandedUtilityFocus: UtilityFocus?
@@ -112,6 +137,7 @@ final class AppViewModel: ObservableObject {
         didSet { invalidateDerivedLedger() }
     }
     private var completionHoldTasks: [UUID: Task<Void, Never>] = [:]
+    private var copiedSnippetTask: Task<Void, Never>?
 
     var hooks: Hooks
     private let now: () -> Date
@@ -123,12 +149,14 @@ final class AppViewModel: ObservableObject {
     private var cachedVisibleItems: [LedgerItem]?
     private var cachedVisibleFolders: [FolderSummary]?
     private var cachedVisibleTagGroups: [TagGroup]?
+    private var cachedVisibleQuickSnippets: [LedgerItem]?
     private var cachedParsedQuery: (source: String, parsed: ParsedTagText)?
 
     private func invalidateDerivedLedger() {
         cachedVisibleItems = nil
         cachedVisibleFolders = nil
         cachedVisibleTagGroups = nil
+        cachedVisibleQuickSnippets = nil
     }
 
     init(
@@ -136,6 +164,7 @@ final class AppViewModel: ObservableObject {
         items: [LedgerItem] = [],
         folders: [FolderSummary] = [],
         tags: [TagSummary] = [],
+        snippetCategories: [SnippetCategorySummary] = [],
         autoHideExternalPill: Bool = false,
         launchAtLogin: Bool = false,
         timeFormat: TimeFormat = .twelveHour,
@@ -156,6 +185,10 @@ final class AppViewModel: ObservableObject {
         self.itemEditSession = nil
         self.folders = folders
         self.tags = tags
+        self.snippetCategories = snippetCategories
+        self.selectedSnippetCategoryID = nil
+        self.snippetDraftCategoryID = nil
+        self.copiedSnippetID = nil
         self.autoHideExternalPill = autoHideExternalPill
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
@@ -179,6 +212,9 @@ final class AppViewModel: ObservableObject {
             .filter { item in
                 matchesQuery(item, query: query)
             }
+            .filter { item in
+                !showsQuickSnippetShelf || !item.isQuickSnippet
+            }
             .sorted { lhs, rhs in
                 if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
                 return itemComesBefore(lhs, rhs)
@@ -189,6 +225,37 @@ final class AppViewModel: ObservableObject {
 
     var pinnedItems: [LedgerItem] { visibleItems.filter(\.isPinned) }
     var unpinnedItems: [LedgerItem] { visibleItems.filter { !$0.isPinned } }
+
+    var showsQuickSnippetShelf: Bool {
+        isAtRoot && filter == .all
+    }
+
+    var visibleQuickSnippets: [LedgerItem] {
+        if let cachedVisibleQuickSnippets { return cachedVisibleQuickSnippets }
+        guard showsQuickSnippetShelf else { return [] }
+        let query = parsedComposerQuery
+        let visible = items
+            .filter { $0.isQuickSnippet && !$0.isTrashed && $0.isQuickSnippetEligible }
+            .filter {
+                selectedSnippetCategoryID == nil ||
+                    $0.snippetCategoryID == selectedSnippetCategoryID
+            }
+            .filter { matchesQuery($0, query: query) }
+            .sorted(by: quickSnippetComesBefore)
+        cachedVisibleQuickSnippets = visible
+        return visible
+    }
+
+    var totalQuickSnippetCount: Int {
+        items.count { $0.isQuickSnippet && !$0.isTrashed && $0.isQuickSnippetEligible }
+    }
+
+    func quickSnippetCount(in categoryID: UUID) -> Int {
+        items.count {
+            $0.isQuickSnippet && !$0.isTrashed && $0.isQuickSnippetEligible &&
+                $0.snippetCategoryID == categoryID
+        }
+    }
 
     var visibleFolders: [FolderSummary] {
         if let cachedVisibleFolders { return cachedVisibleFolders }
@@ -219,7 +286,7 @@ final class AppViewModel: ObservableObject {
         return folders.first { $0.id == id }
     }
 
-    var navigationTitle: String { currentFolder?.name ?? "Capture" }
+    var navigationTitle: String { currentFolder?.name ?? "Inbox" }
     var captureDestinationID: UUID? { currentFolder?.id }
     var captureDestinationName: String { currentFolder?.name ?? "Inbox" }
     var isAtRoot: Bool { browseLocation == .root }
@@ -228,6 +295,10 @@ final class AppViewModel: ObservableObject {
         !isShowingGlobalSearchResults && itemEditSession == nil
     }
     var hasVisibleContent: Bool {
+        showsQuickSnippetShelf ||
+            !visibleTagGroups.isEmpty || !visibleFolders.isEmpty || !visibleItems.isEmpty
+    }
+    var hasVisibleRecentContent: Bool {
         !visibleTagGroups.isEmpty || !visibleFolders.isEmpty || !visibleItems.isEmpty
     }
     var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
@@ -246,6 +317,17 @@ final class AppViewModel: ObservableObject {
         return String(remainder)
     }
 
+    private var snippetCommandText: String? {
+        let command = "/snippet"
+        guard composerText.count >= command.count,
+              composerText.prefix(command.count).caseInsensitiveCompare(command) == .orderedSame else {
+            return nil
+        }
+        let remainder = composerText.dropFirst(command.count)
+        guard remainder.isEmpty || remainder.first?.isWhitespace == true else { return nil }
+        return String(remainder).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private var slashCommandQuery: String? {
         guard composerText.first == "/" else { return nil }
         let query = String(composerText.dropFirst())
@@ -254,6 +336,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var isFolderCommandActive: Bool { folderCommandName != nil }
+    var isSnippetCommandActive: Bool { snippetCommandText != nil && !isSnippetDraftMode }
     var isClearCommandActive: Bool {
         normalizedComposerText.caseInsensitiveCompare("/clear") == .orderedSame
     }
@@ -268,11 +351,16 @@ final class AppViewModel: ObservableObject {
         }
     }
     var composerHasQuery: Bool {
-        !isFolderCommandActive && !isClearCommandActive && !normalizedComposerText.isEmpty
+        !isSnippetDraftMode && !isSnippetCommandActive &&
+            !isFolderCommandActive && !isClearCommandActive && !normalizedComposerText.isEmpty
     }
     var composerHasImages: Bool { !composerImages.isEmpty }
-    var composerHasDraft: Bool { !normalizedComposerText.isEmpty || composerHasImages }
-    var searchMatchCount: Int { visibleFolders.count + visibleItems.count }
+    var composerHasDraft: Bool {
+        isSnippetDraftMode || !normalizedComposerText.isEmpty || composerHasImages
+    }
+    var searchMatchCount: Int {
+        visibleFolders.count + visibleQuickSnippets.count + visibleItems.count
+    }
     var composerHasMatches: Bool { composerHasQuery && searchMatchCount > 0 }
     var canCreateStandaloneTag: Bool {
         guard !composerHasImages else { return false }
@@ -289,14 +377,19 @@ final class AppViewModel: ObservableObject {
         return tags.contains { CaptureTagParser.normalize($0.name) == normalized }
     }
     var canAddComposerText: Bool {
-        !isFolderCommandActive && !isClearCommandActive
+        !isSnippetDraftMode && !isSnippetCommandActive &&
+            !isFolderCommandActive && !isClearCommandActive
             && composerHasQuery && searchMatchCount == 0 && !parsedComposerQuery.isTagOnly
     }
     var canSubmitComposer: Bool {
-        isFolderCommandActive || isClearCommandActive
-            || composerHasImages || canAddComposerText || canCreateStandaloneTag
+        isSnippetDraftMode
+            ? !normalizedComposerText.isEmpty && !composerHasImages
+            : isSnippetCommandActive || isFolderCommandActive || isClearCommandActive
+                || composerHasImages || canAddComposerText || canCreateStandaloneTag
     }
     var composerActionLabel: String {
+        if isSnippetDraftMode { return "Save snippet" }
+        if isSnippetCommandActive { return snippetCommandText?.isEmpty == false ? "Save snippet" : "Start snippet" }
         if isFolderCommandActive { return "Create folder" }
         if isClearCommandActive { return "Clear" }
         if canCreateStandaloneTag { return "Create tag" }
@@ -358,6 +451,81 @@ final class AppViewModel: ObservableObject {
         surfaceState = .expanded
     }
 
+    func collapseExpanded() {
+        guard surfaceState == .expanded else { return }
+        handleDismissalRequest(.externalClick)
+    }
+
+    /// One step is a tenth of the camera's own travel, which lands on tidy
+    /// stops for the common 1x–4x range without hard-coding that range.
+    var cameraZoomStep: Double {
+        guard let range = cameraControls.zoomRange else { return 0 }
+        return (range.upperBound - range.lowerBound) / 10
+    }
+
+    var canZoomIn: Bool {
+        guard let range = cameraControls.zoomRange else { return false }
+        return cameraZoom < range.upperBound - 0.001
+    }
+
+    var canZoomOut: Bool {
+        guard let range = cameraControls.zoomRange else { return false }
+        return cameraZoom > range.lowerBound + 0.001
+    }
+
+    /// The multiplier a person reads off the screen: 100 native units is 1x.
+    var cameraZoomFactor: Double { cameraZoom / 100 }
+
+    func stepCameraZoom(by steps: Int) {
+        guard let range = cameraControls.zoomRange else { return }
+        let target = cameraZoom + (Double(steps) * cameraZoomStep)
+        let clamped = min(max(target, range.lowerBound), range.upperBound)
+        guard clamped != cameraZoom else { return }
+        cameraZoom = clamped
+        hooks.onSetCameraZoom(clamped)
+    }
+
+    func recenterCamera() {
+        guard cameraControls.canRecenter else { return }
+        cameraPan = 0
+        cameraTilt = 0
+        hooks.onRecenterCamera()
+    }
+
+    /// One degree. The gimbal quantises to whole degrees, so finer updates are
+    /// pure traffic — this is what keeps a drag from flooding the motor.
+    static let cameraPanTiltStep: Double = 3600
+
+    /// Aims the gimbal at an absolute position, clamped to its travel. Both
+    /// axes move together because the device writes them as a single pair.
+    func moveCamera(toPan pan: Double, tilt: Double) {
+        guard let panRange = cameraControls.panRange,
+              let tiltRange = cameraControls.tiltRange else { return }
+        let steppedPan = Self.quantized(pan, to: panRange)
+        let steppedTilt = Self.quantized(tilt, to: tiltRange)
+        guard steppedPan != cameraPan || steppedTilt != cameraTilt else { return }
+        cameraPan = steppedPan
+        cameraTilt = steppedTilt
+        hooks.onMoveCamera(steppedPan, steppedTilt)
+    }
+
+    private static func quantized(_ value: Double, to range: ClosedRange<Double>) -> Double {
+        let clamped = min(max(value, range.lowerBound), range.upperBound)
+        return (clamped / cameraPanTiltStep).rounded() * cameraPanTiltStep
+    }
+
+    /// Opens or closes the webcam mirror. Closing returns to whichever idle
+    /// surface the pill would otherwise be showing, so the mirror never leaves
+    /// a live activity stranded behind it.
+    func toggleMirror() {
+        guard surfaceState != .mirror else {
+            surfaceState = isIdlePillHidden ? .dormant : idleSurfaceState
+            return
+        }
+        errorMessage = nil
+        surfaceState = .mirror
+    }
+
     func advanceOnboarding() {
         guard let next = OnboardingStep(rawValue: onboardingStep.rawValue + 1) else { return }
         onboardingStep = next
@@ -394,6 +562,18 @@ final class AppViewModel: ObservableObject {
     /// Pass `capturingAnyway` (⌘Return) to create a new item even when the
     /// text matches existing items; plain Return selects the first match.
     func submitComposer(capturingAnyway: Bool = false) {
+        if isSnippetDraftMode {
+            saveSnippetDraft()
+            return
+        }
+        if let snippetText = snippetCommandText {
+            if snippetText.isEmpty {
+                enterSnippetDraftMode()
+            } else {
+                saveQuickSnippet(text: snippetText, categoryID: snippetDraftCategoryID)
+            }
+            return
+        }
         if let proposedFolderName = folderCommandName {
             guard let folderID = createFolderAndReturnID(named: proposedFolderName) else { return }
             openCreatedFolder(id: folderID)
@@ -431,6 +611,8 @@ final class AppViewModel: ObservableObject {
         guard canAddComposerText || capturesDespiteMatches else {
             if let folder = visibleFolders.first {
                 openFolder(folder)
+            } else if let snippet = visibleQuickSnippets.first {
+                copyQuickSnippet(snippet)
             } else if let item = visibleItems.first {
                 select(item)
             }
@@ -444,6 +626,10 @@ final class AppViewModel: ObservableObject {
 
     @discardableResult
     func acceptPastedImages(_ providers: [NSItemProvider]) -> Bool {
+        guard !isSnippetDraftMode else {
+            errorMessage = "Quick snippets support text and links only."
+            return false
+        }
         let imageProviders = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.image.identifier) ||
                 $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
@@ -492,6 +678,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func acceptComposerCommand(_ command: ComposerCommand) {
+        if command == .snippet {
+            enterSnippetDraftMode()
+            return
+        }
         composerText = command.completion
         selectedComposerCommandIndex = 0
     }
@@ -513,6 +703,10 @@ final class AppViewModel: ObservableObject {
 
     func handleComposerReturn() {
         if acceptSelectedComposerCommand() { return }
+        if isSnippetDraftMode || isSnippetCommandActive {
+            submitComposer()
+            return
+        }
         if isFolderCommandActive {
             submitComposer()
             return
@@ -563,6 +757,186 @@ final class AppViewModel: ObservableObject {
 
     func deleteTag(_ tag: TagSummary) {
         hooks.onDeleteTag(tag.id)
+    }
+
+    var orderedSnippetCategories: [SnippetCategorySummary] {
+        snippetCategories.sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    var snippetDraftCategoryName: String {
+        guard let snippetDraftCategoryID,
+              let category = snippetCategories.first(where: { $0.id == snippetDraftCategoryID }) else {
+            return "No category"
+        }
+        return category.name
+    }
+
+    func selectSnippetCategory(_ categoryID: UUID?) {
+        selectedSnippetCategoryID = categoryID
+    }
+
+    func setSnippetDraftCategory(_ categoryID: UUID?) {
+        snippetDraftCategoryID = categoryID
+    }
+
+    @discardableResult
+    func createSnippetCategory(named proposedName: String) -> Bool {
+        let name = SnippetCategoryName.displayName(proposedName)
+        guard !name.isEmpty else {
+            errorMessage = "Give the category a name."
+            return false
+        }
+        guard !snippetCategories.contains(where: {
+            SnippetCategoryName.normalized($0.name) == SnippetCategoryName.normalized(name)
+        }) else {
+            errorMessage = "That snippet category already exists."
+            return false
+        }
+        errorMessage = nil
+        guard let id = hooks.onCreateSnippetCategory(name) else {
+            if errorMessage == nil { errorMessage = "Could not create the snippet category." }
+            return false
+        }
+        if !snippetCategories.contains(where: { $0.id == id }) {
+            let nextOrder = (snippetCategories.map(\.sortOrder).max() ?? -1) + 1
+            snippetCategories.append(
+                SnippetCategorySummary(id: id, name: name, sortOrder: nextOrder)
+            )
+        }
+        return true
+    }
+
+    @discardableResult
+    func renameSnippetCategory(
+        _ category: SnippetCategorySummary,
+        to proposedName: String
+    ) -> Bool {
+        let name = SnippetCategoryName.displayName(proposedName)
+        guard !name.isEmpty else {
+            errorMessage = "Give the category a name."
+            return false
+        }
+        guard !snippetCategories.contains(where: {
+            $0.id != category.id &&
+                SnippetCategoryName.normalized($0.name) == SnippetCategoryName.normalized(name)
+        }) else {
+            errorMessage = "That snippet category already exists."
+            return false
+        }
+        if let persistenceError = hooks.onRenameSnippetCategory(category.id, name) {
+            errorMessage = persistenceError
+            return false
+        }
+        if let index = snippetCategories.firstIndex(where: { $0.id == category.id }) {
+            snippetCategories[index].name = name
+        }
+        for index in items.indices where items[index].snippetCategoryID == category.id {
+            items[index].snippetCategoryName = name
+        }
+        errorMessage = nil
+        return true
+    }
+
+    func deleteSnippetCategory(_ category: SnippetCategorySummary) {
+        if selectedSnippetCategoryID == category.id { selectedSnippetCategoryID = nil }
+        if snippetDraftCategoryID == category.id { snippetDraftCategoryID = nil }
+        for index in items.indices where items[index].snippetCategoryID == category.id {
+            items[index].snippetCategoryID = nil
+            items[index].snippetCategoryName = nil
+        }
+        snippetCategories.removeAll { $0.id == category.id }
+        hooks.onDeleteSnippetCategory(category.id)
+    }
+
+    func setQuickSnippet(
+        _ item: LedgerItem,
+        enabled: Bool,
+        categoryID: UUID? = nil
+    ) {
+        guard !enabled || item.isQuickSnippetEligible else {
+            errorMessage = "Quick snippets support text and links only."
+            return
+        }
+        if let persistenceError = hooks.onSetQuickSnippet(item.id, enabled, categoryID) {
+            errorMessage = persistenceError
+            return
+        }
+        let categoryName = categoryID.flatMap { id in
+            snippetCategories.first(where: { $0.id == id })?.name
+        }
+        mutateItem(item.id) {
+            $0.reusableAt = enabled ? ($0.reusableAt ?? now()) : nil
+            $0.lastCopiedAt = enabled ? $0.lastCopiedAt : nil
+            $0.snippetCategoryID = enabled ? categoryID : nil
+            $0.snippetCategoryName = enabled ? categoryName : nil
+        }
+        errorMessage = nil
+    }
+
+    func copyQuickSnippet(_ item: LedgerItem) {
+        guard item.isQuickSnippet else { return }
+        if let persistenceError = hooks.onCopyQuickSnippet(item.id) {
+            errorMessage = persistenceError
+            return
+        }
+        let copiedAt = now()
+        mutateItem(item.id) { $0.lastCopiedAt = copiedAt }
+        copiedSnippetTask?.cancel()
+        copiedSnippetID = item.id
+        copiedSnippetTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.2))
+            guard !Task.isCancelled, self?.copiedSnippetID == item.id else { return }
+            self?.copiedSnippetID = nil
+        }
+        errorMessage = nil
+    }
+
+    func enterSnippetDraftMode() {
+        guard isAtRoot, filter == .all else {
+            openRoot()
+            filter = .all
+            return enterSnippetDraftMode()
+        }
+        composerImages = []
+        composerText = ""
+        snippetDraftCategoryID = selectedSnippetCategoryID
+        isSnippetDraftMode = true
+        errorMessage = nil
+        selectedComposerCommandIndex = 0
+        keyboardFocus = .composer
+    }
+
+    func exitSnippetDraftMode(retainingText: Bool) {
+        isSnippetDraftMode = false
+        snippetDraftCategoryID = nil
+        if !retainingText {
+            resetComposerDraft()
+        }
+        errorMessage = nil
+        keyboardFocus = .composer
+    }
+
+    private func saveSnippetDraft() {
+        saveQuickSnippet(text: composerText, categoryID: snippetDraftCategoryID)
+    }
+
+    private func saveQuickSnippet(text proposedText: String, categoryID: UUID?) {
+        guard !proposedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Type reusable text or paste a link."
+            return
+        }
+        if let persistenceError = hooks.onCaptureQuickSnippet(proposedText, categoryID) {
+            errorMessage = persistenceError
+            return
+        }
+        isSnippetDraftMode = false
+        snippetDraftCategoryID = nil
+        filter = .all
+        resetComposerDraft()
+        errorMessage = nil
     }
 
     func totalItemCount(for tagID: UUID) -> Int {
@@ -684,7 +1058,9 @@ final class AppViewModel: ObservableObject {
         }
         switch reason {
         case .escape:
-            if itemEditSession != nil {
+            if isSnippetDraftMode {
+                exitSnippetDraftMode(retainingText: true)
+            } else if itemEditSession != nil {
                 cancelEditing()
             } else if !tagSuggestions.isEmpty {
                 dismissTagAutocomplete()
@@ -1339,7 +1715,10 @@ final class AppViewModel: ObservableObject {
     }
 
     private var parsedComposerQuery: ParsedTagText {
-        guard !isFolderCommandActive, !isClearCommandActive else { return CaptureTagParser.parse("") }
+        guard !isSnippetDraftMode, !isSnippetCommandActive,
+              !isFolderCommandActive, !isClearCommandActive else {
+            return CaptureTagParser.parse("")
+        }
         let source = normalizedComposerText
         if let cachedParsedQuery, cachedParsedQuery.source == source {
             return cachedParsedQuery.parsed
@@ -1432,6 +1811,13 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    private func quickSnippetComesBefore(_ lhs: LedgerItem, _ rhs: LedgerItem) -> Bool {
+        let leftDate = lhs.lastCopiedAt ?? lhs.reusableAt ?? lhs.createdAt
+        let rightDate = rhs.lastCopiedAt ?? rhs.reusableAt ?? rhs.createdAt
+        if leftDate != rightDate { return leftDate > rightDate }
+        return lhs.id.uuidString < rhs.id.uuidString
+    }
+
     private func mutateItem(_ id: UUID, mutation: (inout LedgerItem) -> Void) {
         guard let index = items.firstIndex(where: { $0.id == id }) else { return }
         mutation(&items[index])
@@ -1494,6 +1880,8 @@ final class AppViewModel: ObservableObject {
     private func resetComposerDraft() {
         composerText = ""
         composerImages = []
+        isSnippetDraftMode = false
+        snippetDraftCategoryID = nil
         composerDraftID = UUID()
         selectedTagSuggestionIndex = 0
         selectedComposerCommandIndex = 0
@@ -1511,6 +1899,69 @@ extension AppViewModel {
         let lipeTag = TagSummary(name: "Lipe", colorSeed: 0.02)
         let launchTag = TagSummary(name: "Launch", colorSeed: 0.34)
         let ideasTag = TagSummary(name: "Ideas", colorSeed: 0.70)
+        let promptsCategory = SnippetCategorySummary(name: "Prompts", sortOrder: 0)
+        let repliesCategory = SnippetCategorySummary(name: "Replies", sortOrder: 1)
+        let linksCategory = SnippetCategorySummary(name: "Links", sortOrder: 2)
+        let friendlyFollowUp = LedgerItem(
+            title: "Friendly follow-up",
+            detail: "Hey! Just checking in on this. Let me know if you need anything from me.",
+            text: "Friendly follow-up\nHey! Just checking in on this. Let me know if you need anything from me.",
+            createdAt: today.addingTimeInterval(-420),
+            reusableAt: today.addingTimeInterval(-420),
+            lastCopiedAt: today.addingTimeInterval(-30),
+            snippetCategoryID: repliesCategory.id,
+            snippetCategoryName: repliesCategory.name
+        )
+        let reviewChecklist = LedgerItem(
+            title: "PR review checklist",
+            detail: "- [ ] Tests pass\n- [ ] Lint clean\n- [ ] Docs updated",
+            text: "PR review checklist\n- [ ] Tests pass\n- [ ] Lint clean\n- [ ] Docs updated",
+            createdAt: today.addingTimeInterval(-520),
+            reusableAt: today.addingTimeInterval(-520),
+            lastCopiedAt: today.addingTimeInterval(-60),
+            snippetCategoryID: promptsCategory.id,
+            snippetCategoryName: promptsCategory.name
+        )
+        let apiDocs = LedgerItem(
+            title: "OpenAI API docs",
+            text: "",
+            createdAt: today.addingTimeInterval(-620),
+            reusableAt: today.addingTimeInterval(-620),
+            lastCopiedAt: today.addingTimeInterval(-90),
+            snippetCategoryID: linksCategory.id,
+            snippetCategoryName: linksCategory.name,
+            attachments: [
+                LedgerAttachment(
+                    kind: .link,
+                    name: "OpenAI API docs",
+                    previewURL: URL(string: "https://platform.openai.com/docs")
+                )
+            ]
+        )
+        let supportingSnippets = [
+            LedgerItem(
+                title: "Summarize customer feedback",
+                reusableAt: today.addingTimeInterval(-720),
+                snippetCategoryID: promptsCategory.id,
+                snippetCategoryName: promptsCategory.name
+            ),
+            LedgerItem(
+                title: "Turn notes into action items",
+                reusableAt: today.addingTimeInterval(-820),
+                snippetCategoryID: promptsCategory.id,
+                snippetCategoryName: promptsCategory.name
+            ),
+            LedgerItem(
+                title: "Thanks for the update",
+                reusableAt: today.addingTimeInterval(-920),
+                snippetCategoryID: repliesCategory.id,
+                snippetCategoryName: repliesCategory.name
+            ),
+            LedgerItem(
+                title: "Meeting room access code",
+                reusableAt: today.addingTimeInterval(-1_020)
+            ),
+        ]
         let pinned = LedgerItem(
             title: "Review launch notes",
             detail: "Selected from Safari",
@@ -1528,6 +1979,10 @@ extension AppViewModel {
         let model = AppViewModel(
             surfaceState: .expanded,
             items: [
+                friendlyFollowUp,
+                reviewChecklist,
+                apiDocs,
+            ] + supportingSnippets + [
                 pinned,
                 LedgerItem(
                     title: "Projects capture flow",
@@ -1565,6 +2020,7 @@ extension AppViewModel {
             ],
             folders: [projectsFolder],
             tags: [lipeTag, launchTag, ideasTag],
+            snippetCategories: [promptsCategory, repliesCategory, linksCategory],
             nowPlaying: NowPlayingSnapshot(
                 source: .spotify,
                 trackKey: "preview-night-drive",
@@ -1602,6 +2058,14 @@ extension AppViewModel {
             snapshot.positionAnchor = .now
             model.nowPlaying = snapshot
         }
+        if CommandLine.arguments.contains("--preview-music-recovery"),
+           let snapshot = model.nowPlaying {
+            model.nowPlayingPresentation = NowPlayingPresentation(
+                source: snapshot.source,
+                state: .disconnected,
+                snapshot: snapshot.frozen()
+            )
+        }
         if CommandLine.arguments.contains("--preview-pomodoro-paused") {
             model.pomodoro.phase = .paused(remaining: 24 * 60 + 23)
         }
@@ -1609,6 +2073,19 @@ extension AppViewModel {
            let index = model.items.firstIndex(where: { $0.id == selectedTask.id }) {
             model.items[index].isCompleted = true
             model.items[index].completedAt = .now
+        }
+        if CommandLine.arguments.contains("--preview-snippet-copied") {
+            model.copiedSnippetID = reviewChecklist.id
+        }
+        if CommandLine.arguments.contains("--preview-empty-snippets") {
+            model.items.removeAll { $0.isQuickSnippet }
+            model.snippetCategories = []
+            model.selectedSnippetCategoryID = nil
+        }
+        if CommandLine.arguments.contains("--preview-snippet-draft") {
+            model.enterSnippetDraftMode()
+            model.setSnippetDraftCategory(promptsCategory.id)
+            model.composerText = "Thanks for sending this over — I’ll review it today."
         }
         if CommandLine.arguments.contains("--preview-empty-search") {
             model.composerText = "No matching capture"

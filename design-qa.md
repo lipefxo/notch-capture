@@ -1,3 +1,187 @@
+# Design QA — Option 3 Quick Snippets
+
+## Comparison
+
+- Selected visual source: `/Users/lipe/.codex/generated_images/019fa538-60e1-7803-8db6-119f32889d26/call_4hkrtrVOES0J8eicoAxBIshr.png` (970 × 1621 pixels).
+- Final native implementation: `.context/qa/quick-snippets/implementation-v3.png`.
+- Full-view combined evidence: `.context/qa/quick-snippets/source-vs-implementation-small.png` (source left, implementation right).
+- Focused equal-canvas shelf evidence: `.context/qa/quick-snippets/focused-snippet-shelf-comparison.png` (source left, implementation right).
+- Additional states: `.context/qa/quick-snippets/snippet-draft.png` and `.context/qa/quick-snippets/empty-state.png`.
+- Viewport and density: native panel window 460 × 640 points at 2× (920 × 1280 pixels).
+- State: root Inbox, All snippets, three visible snippet rows, one active Copied confirmation, populated Recent captures, and the existing unified composer.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The implementation preserves the approved Option 3 hierarchy: fixed Quick snippets shelf, tabbed custom categories with counts, three immediately reusable rows, explicit Copy/Copied feedback, and a separate Recent captures section.
+- The shelf remains fixed at three 62-point rows and scrolls internally when more snippets exist. The final native overlay scroller does not consume row width or create a persistent visual gutter.
+- Quick snippets are ordinary captures with reusable metadata, so edits, archive/trash state, export/import, tags, and links stay synchronized. Root All/search deduplicates shelf items from Recent captures; folder and lifecycle views continue to show the ordinary capture row.
+- The mock's second, top capture field is intentionally not duplicated. The approved implementation constraint was to keep the existing capture experience intact, so `/snippet` enters a dedicated reusable-snippet state in the established bottom composer.
+- The 640-point expanded height is limited to open Inbox/Drop/Settings surfaces and makes the complete three-row shelf, Recent captures hierarchy, and composer simultaneously legible.
+
+## Required Fidelity Surfaces
+
+- Fonts and typography: native SF typography follows the existing size and weight ramp. Shelf title, category tabs, row title/preview, and copy action retain the source hierarchy without introducing a new font.
+- Spacing and layout: the shelf uses the existing 20-point content column, compact 28-point category tabs, 62-point rows, 30-point leading icon tiles, and an internally scrolling 186-point list region.
+- Colors and tokens: the existing ink/graphite/control/text system is preserved. The selected category uses the production accent treatment and Copied uses the existing completion green.
+- Image quality and assets: no raster assets were required; code-native SF Symbols stay sharp at 2× and inherit production optical weights.
+- Copy and content: titles, category names, previews, counts, `Copy`, `Copied`, `Quick snippets`, and `Recent captures` match the approved content model. Clipboard payloads preserve stored text exactly, including line breaks and mentions; link-only snippets copy their URL text.
+- Empty and authoring states: a fresh library seeds no categories or snippets, retains All and the add-category action, and teaches `/snippet`. The composer draft state names its optional category and provides a clear exit back to normal capture.
+
+## Comparison History
+
+1. The first 460 × 560-point implementation exposed a P2 hierarchy issue: the fixed shelf left too little of Recent captures visible.
+2. The open-surface height was increased to 640 points so the shelf, Recent captures, and composer read as one view.
+3. The second pass exposed a P2 native-scroll issue: a persistent dark gutter reduced usable shelf width.
+4. The shelf was moved to the native overlay scroller configuration. The final full-view and focused comparisons show no remaining P0/P1/P2 fidelity issues.
+
+## Interaction and Accessibility Checks
+
+- Explicit Copy writes the exact snippet payload, keeps the panel open, moves the item to the front by `lastCopiedAt`, and returns from Copied to Copy after 1.2 seconds.
+- Category create, rename, delete, filter, count, and optional assignment paths are wired. Deleting a category leaves its snippets available under All.
+- Existing eligible text/link captures expose Add to Quick snippets; reusable captures expose category reassignment and removal. Image/file captures are rejected.
+- Shelf Edit opens the shared inline editor in place, so saving updates both the reusable shelf and the underlying capture.
+- `/snippet` enters the dedicated composer mode, Return saves, and Escape exits while retaining the typed text as a normal draft.
+- Buttons include native focus/activation behavior, help text, accessibility labels, selected traits, and Reduce Motion-aware category transitions.
+
+## Verification
+
+- `swift test`: 297 tests, zero failures.
+- Repository coverage includes snippet/category CRUD, text/link eligibility, lifecycle visibility, root deduplication, search/category filtering, copy ordering/feedback, and schema-v5 package round trips.
+- Native AppKit-hosted SwiftUI captures cover populated, Copied, snippet-draft, and fresh-empty states.
+- The debug application bundle builds successfully and passes strict code-signature verification.
+
+final result: passed
+
+---
+
+# Design QA — Expanded Header Center-to-Collapse
+
+## Comparison
+
+- Hardware-notch expanded capture: `.context/qa/native-display-compact-activity/expanded-center-collapse-hardware.png`.
+- External-display expanded capture: `.context/qa/native-display-compact-activity/expanded-center-collapse-external.png`.
+- Viewport and density: 460 × 560 points at 2× (920 × 1120 pixels).
+- State: expanded inbox with music and Pomodoro active.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The centered 156-point collapse target is visually absent in both captures; header typography, spacing, controls, content rows, and composer are unchanged.
+- The target is mounted behind the foreground header controls and is exposed to accessibility as `Collapse Notch Capture`, with the hint `Returns to the compact surface`.
+- Live hardware-notch and external-display passes confirmed the center target contracts to the context-appropriate compact activity surface.
+- Foreground regression checks passed: New Folder opens its modal, Pomodoro opens its menu, Settings navigates to the settings surface, and presentation scrims intercept outside clicks without collapsing the inbox.
+- View-model coverage confirms capture-pill, activity, and dormant destinations; successful inline edits save before collapse, while failed saves preserve the edit and keep the inbox expanded.
+
+## Verification
+
+- `swift test`: 291 tests, zero failures.
+- Hardware and external expanded captures remain 920 × 1120 pixels with no visible collapse affordance.
+- Live accessibility-driven interaction pass: center collapse, modal, menu, Settings, and presentation interception passed.
+
+final result: passed
+
+---
+
+# Design QA — Expanded Notch Clearance
+
+## Comparison
+
+- Current expanded implementation: `.context/qa/native-display-compact-activity/expanded-wide.png`.
+- Viewport and density: 460 × 560 points at 2× (920 × 1120 pixels).
+- State: expanded inbox with music and Pomodoro active.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The expanded content body increases from 420 to 440 points, moving the left and right header groups 10 points farther away from the centered hardware notch.
+- The outer expanded shell increases from 440 to 460 points. Height, top anchoring, bottom radii, row density, and composer geometry remain unchanged.
+- Expanded, Drop, Settings, and Onboarding share the same 460-point shell width, avoiding a horizontal jump during navigation.
+- Hardware-notch compact activity and external Minimal/Extended activity widths remain unchanged.
+
+## Verification
+
+- `swift test`: 289 tests, zero failures.
+- Geometry coverage asserts the 460 × 560-point expanded/settings shell, 460 × 500-point onboarding shell, and matching shadow canvas.
+
+final result: passed
+
+---
+
+# Design QA — Compact Activity Spacing and Expansion Target
+
+## Comparison
+
+- Current native implementation: `.context/qa/native-display-compact-activity/hardware-both-tight.png`.
+- Viewport and density: native hardware-notch panel window 384 × 44 points at 2× (768 × 88 pixels); visible surface 384 × 36 points.
+- State: playing music plus running Pomodoro with a simulated 156-point hardware notch.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- Each symmetric hardware-notch wing is now 104 points, down from 116 points. The 80-point music cluster and 54-point timer remain centered without clipping or overlap.
+- The full hardware-notch shell exposes an accessible `Open Notch Capture` background button. Its hit target follows the complete notch-hug shape, including the outer flare regions.
+- Existing foreground actions remain independent above the background target. A live accessibility-driven interaction pass confirmed that the background target opens the inbox, while Previous leaves the surface collapsed and invokes only its transport action.
+- External compact activity, the idle capture pill, and expanded geometry remain unchanged.
+
+## Verification
+
+- `swift test`: 289 tests, zero failures.
+- Hardware geometry coverage now asserts equal 104-point wings and identical Minimal/Extended metrics.
+- Live SwiftUI/AppKit interaction pass: expansion target passed; foreground transport isolation passed.
+
+final result: passed
+
+---
+
+# Design QA — Native-Display Compact Activity
+
+## Comparison
+
+- Source visual truth: `/Users/lipe/.codex/generated_images/019f93d5-cc8d-7662-8368-4aa2c819a3bc/call_HHfcVY2iOPuwYeUSvDXjYSN8.png` (1719 × 915 pixels as generated).
+- Normalized source: `.context/qa/native-display-compact-activity/reference-full-normalized.png` (2146 × 1142 pixels, matching the requested CleanShot scale).
+- Native implementation: `.context/qa/native-display-compact-activity/hardware-both-extended.png`.
+- Focused equal-canvas comparison: `.context/qa/native-display-compact-activity/reference-vs-implementation.png` (source left, implementation right).
+- Viewport and density: native hardware-notch panel window 408 × 44 points at 2× (816 × 88 pixels); visible surface 408 × 36 points. The normalized source and implementation were both cropped to 816 × 88 pixels before comparison.
+- State: playing music plus running Pomodoro, resting pointer state. Additional captures cover music-only, timer-only, playing hover, music paused, timer paused, media recovery, external Minimal/Extended, and expanded.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The hardware-notch shell stays top-anchored, uses equal 116-point wings, preserves the physical notch gap, and keeps the 16-point compact corner treatment at both Minimal and Extended settings.
+- Music is confined to the left wing: 22-point artwork, the existing waveform/hover transport treatment, and independent previous/next controls. The timer is confined to the right wing and keeps the existing monospaced urgency-color treatment.
+- Music-only and timer-only captures retain the same fixed wing positions; the unused wing remains blank instead of recentering the remaining activity.
+- External Minimal (300 × 34-point visible surface) and Extended (440 × 56-point visible surface) captures preserve their existing metadata, transport, progress, and timer layouts. The expanded 440 × 560-point surface is unchanged.
+
+## Required Fidelity Surfaces
+
+- Fonts and typography: native SF typography is preserved. The timer remains 11-point semibold monospaced text with monospaced digits; no metadata is rendered in the hardware-notch layout.
+- Spacing and layout: the normalized source and implementation agree on compact total width, top-edge attachment, equal left/right regions, one-row density, and absence of below-notch content. Native control spacing follows the production 116-point wing geometry from the approved plan.
+- Colors and tokens: the implementation uses the existing ink shell, primary/secondary text ramp, timer urgency colors, and shadowless compact chrome.
+- Image quality and assets: live album artwork continues through `NSImage` with high-quality interpolation, a 5-point continuous mask, and the existing adaptive overlay color. The preview fixture differs from the mock's album subject but exercises the real production asset path.
+- Copy and content: only dynamic activity content is shown. No song title, artist, duration, progress text, labels, or additional controls leak into the hardware-notch state.
+- Icons and interactions: SF Symbols preserve the existing optical weights. Artwork play/pause, previous, next, and timer pause/resume retain their native Button actions, help text, accessibility labels, keyboard focus, pressed feedback, and Reduce Motion behavior.
+- Recovery: the frozen artwork remains visible but dimmed and non-interactive, previous/next collapse to the existing accessible Retry action, and the opposite timer remains active.
+
+## Comparison History
+
+1. The first native single-activity captures exposed a P2 layout issue: SwiftUI removed an `EmptyView` wing, shifting music-only 58 points right and timer-only 58 points left.
+2. Both wings were changed to persistent clear 116-point layout regions with activity content overlaid at center.
+3. Post-fix pixel evidence matches the mixed state: music occupies x=58...203 in both mixed and music-only captures; the timer occupies x=647...712 in both mixed and timer-only captures.
+4. The final equal-canvas comparison found no remaining P0/P1/P2 differences. The source's generated dimensions were normalized to the originally requested CleanShot scale before width and placement were judged.
+
+## Verification
+
+- Hardware captures: `hardware-both-minimal.png`, `hardware-both-extended.png`, `hardware-music-only.png`, `hardware-timer-only.png`, `hardware-playing-hover.png`, `hardware-music-paused.png`, `hardware-timer-paused.png`, and `hardware-music-recovery.png` under `.context/qa/native-display-compact-activity/`.
+- External regression captures: `external-both-minimal.png` and `external-both-extended.png` in the same directory, produced with the debug-only external-display preview override.
+- Top-edge placement remains enforced by the existing `NotchGeometry.panelFrame` contract and its unit coverage.
+- The full Swift package suite passes 289 tests with zero failures.
+- The debug application bundle builds successfully and passes strict code-signature verification.
+
+final result: passed
+
+---
+
 # Design QA — Adaptive Album Playback Control
 
 ## Comparison

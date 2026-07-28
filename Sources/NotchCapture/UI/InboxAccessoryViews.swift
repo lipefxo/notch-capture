@@ -37,6 +37,16 @@ enum LedgerScrollAppearance {
         scrollView.verticalScroller?.alphaValue = 0
         scrollView.horizontalScroller?.alphaValue = 0
     }
+
+    static func showCompactVerticalIndicator(in scrollView: NSScrollView) {
+        scrollView.hasVerticalScroller = true
+        scrollView.hasHorizontalScroller = false
+        scrollView.autohidesScrollers = false
+        scrollView.scrollerStyle = .overlay
+        scrollView.verticalScroller?.controlSize = .mini
+        scrollView.verticalScroller?.knobStyle = .light
+        scrollView.verticalScroller?.alphaValue = 0.48
+    }
 }
 
 struct HiddenScrollIndicatorConfigurator: NSViewRepresentable {
@@ -65,6 +75,41 @@ struct HiddenScrollIndicatorConfigurator: NSViewRepresentable {
                 while let current = ancestor {
                     if let scrollView = current as? NSScrollView {
                         LedgerScrollAppearance.hideIndicators(in: scrollView)
+                        return
+                    }
+                    ancestor = current.superview
+                }
+            }
+        }
+    }
+}
+
+struct CompactVerticalScrollIndicatorConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> MarkerView {
+        MarkerView(frame: .zero)
+    }
+
+    func updateNSView(_ nsView: MarkerView, context: Context) {
+        nsView.configureContainingScrollView()
+    }
+
+    final class MarkerView: NSView {
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            configureContainingScrollView()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            configureContainingScrollView()
+        }
+
+        func configureContainingScrollView() {
+            DispatchQueue.main.async { [weak self] in
+                var ancestor: NSView? = self
+                while let current = ancestor {
+                    if let scrollView = current as? NSScrollView {
+                        LedgerScrollAppearance.showCompactVerticalIndicator(in: scrollView)
                         return
                     }
                     ancestor = current.superview
