@@ -7,6 +7,32 @@ private struct UncheckedTransfer<Value>: @unchecked Sendable {
     let value: Value
 }
 
+struct CameraFormatDimensions: Equatable, Sendable {
+    let width: Int32
+    let height: Int32
+}
+
+enum CameraLandscapePolicy {
+    /// Returns the widest format nearest 720p 16:9. Keeping this selection pure
+    /// makes the no-landscape fallback testable without camera hardware.
+    static func preferredFormatIndex(in dimensions: [CameraFormatDimensions]) -> Int? {
+        let targetAspect = 16.0 / 9.0
+        let preferredWidth = 1280.0
+
+        return dimensions.indices
+            .filter { dimensions[$0].width >= dimensions[$0].height }
+            .min { lhsIndex, rhsIndex in
+                let lhs = dimensions[lhsIndex]
+                let rhs = dimensions[rhsIndex]
+                let lhsAspect = abs(Double(lhs.width) / Double(lhs.height) - targetAspect)
+                let rhsAspect = abs(Double(rhs.width) / Double(rhs.height) - targetAspect)
+                guard abs(lhsAspect - rhsAspect) <= 0.01 else { return lhsAspect < rhsAspect }
+                return abs(Double(lhs.width) - preferredWidth)
+                    < abs(Double(rhs.width) - preferredWidth)
+            }
+    }
+}
+
 /// Holds the capture session outside actor isolation. `AVCaptureSession` is not
 /// `Sendable` and `startRunning()` blocks, so the session is only ever touched
 /// on its own serial queue; keeping it here also lets `deinit` tear the input
@@ -19,8 +45,14 @@ private final class CameraSessionLifetime: @unchecked Sendable {
     /// host never has to reach for the session itself.
     private(set) var previewLayer: AVCaptureVideoPreviewLayer?
 
-    func start(device: AVCaptureDevice) throws -> AVCaptureVideoPreviewLayer {
-        if let previewLayer, session != nil { return previewLayer }
+    func start(
+        device: AVCaptureDevice,
+        completion: @escaping @Sendable (Result<AVCaptureVideoPreviewLayer, CameraServiceError>) -> Void
+    ) throws {
+        if let previewLayer, session != nil {
+            completion(.success(previewLayer))
+            return
+        }
 
         let session = AVCaptureSession()
         let input = try AVCaptureDeviceInput(device: device)
@@ -31,10 +63,9 @@ private final class CameraSessionLifetime: @unchecked Sendable {
         session.beginConfiguration()
         session.sessionPreset = Self.landscapePreset(for: device, in: session)
         session.addInput(input)
-        session.commitConfiguration()
-
         let landscapeFormat = Self.landscapeFormat(for: device)
         Self.applyIfPortrait(landscapeFormat, to: device)
+        session.commitConfiguration()
 
         let layer = AVCaptureVideoPreviewLayer(session: session)
         layer.videoGravity = .resizeAspectFill
@@ -47,26 +78,42 @@ private final class CameraSessionLifetime: @unchecked Sendable {
 
         self.session = session
         self.previewLayer = layer
-        let transfer = UncheckedTransfer(value: (session: session, device: device, format: landscapeFormat))
+        let transfer = UncheckedTransfer(
+            value: (
+                session: session,
+                device: device,
+                format: landscapeFormat,
+                layer: layer
+            )
+        )
         queue.async {
             transfer.value.session.startRunning()
             // A gimbal camera parked in portrait mode overrides the format that
             // was chosen before the stream opened, so landscape is asserted once
-            // more with frames flowing — that is what rotates the gimbal back.
+            // more with frames flowing. The layer is not published until this
+            // completes, so portrait frames stay behind the starting placeholder.
             Self.applyIfPortrait(transfer.value.format, to: transfer.value.device)
+            if transfer.value.format != nil, !Self.isLandscape(transfer.value.device) {
+                completion(.failure(.landscapeUnavailable))
+            } else {
+                completion(.success(transfer.value.layer))
+            }
         }
-        return layer
     }
 
     /// Only ever moves a camera that is currently portrait, so a webcam the user
     /// deliberately left in landscape is never reconfigured out from under them.
     private static func applyIfPortrait(_ format: AVCaptureDevice.Format?, to device: AVCaptureDevice) {
         guard let format else { return }
-        let active = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
-        guard active.height > active.width else { return }
+        guard !isLandscape(device) else { return }
         guard (try? device.lockForConfiguration()) != nil else { return }
         device.activeFormat = format
         device.unlockForConfiguration()
+    }
+
+    private static func isLandscape(_ device: AVCaptureDevice) -> Bool {
+        let active = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        return active.width >= active.height
     }
 
     /// Gimbal webcams such as the Insta360 Link advertise portrait formats
@@ -93,20 +140,14 @@ private final class CameraSessionLifetime: @unchecked Sendable {
     /// The widest-supported format nearest 720p 16:9, which is what the preset
     /// list asks for too — the two must agree or the session resets the device.
     private static func landscapeFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {
-        let targetAspect = 16.0 / 9.0
-        let preferredWidth = 1280.0
-
-        return device.formats
-            .map { ($0, CMVideoFormatDescriptionGetDimensions($0.formatDescription)) }
-            .filter { $0.1.width >= $0.1.height }
-            .min { lhs, rhs in
-                let lhsAspect = abs(Double(lhs.1.width) / Double(lhs.1.height) - targetAspect)
-                let rhsAspect = abs(Double(rhs.1.width) / Double(rhs.1.height) - targetAspect)
-                guard abs(lhsAspect - rhsAspect) <= 0.01 else { return lhsAspect < rhsAspect }
-                return abs(Double(lhs.1.width) - preferredWidth)
-                    < abs(Double(rhs.1.width) - preferredWidth)
-            }?
-            .0
+        let dimensions = device.formats.map {
+            let size = CMVideoFormatDescriptionGetDimensions($0.formatDescription)
+            return CameraFormatDimensions(width: size.width, height: size.height)
+        }
+        guard let index = CameraLandscapePolicy.preferredFormatIndex(in: dimensions) else {
+            return nil
+        }
+        return device.formats[index]
     }
 
     func stop() {
@@ -126,11 +167,14 @@ private final class CameraSessionLifetime: @unchecked Sendable {
 
 enum CameraServiceError: LocalizedError {
     case inputUnavailable
+    case landscapeUnavailable
 
     var errorDescription: String? {
         switch self {
         case .inputUnavailable:
             return "The camera could not be added to the capture session."
+        case .landscapeUnavailable:
+            return "The camera could not be prepared in landscape orientation."
         }
     }
 }
@@ -140,6 +184,16 @@ enum CameraServiceError: LocalizedError {
 /// to reason about AVFoundation.
 @MainActor
 final class CameraService {
+    struct RunningSession: @unchecked Sendable {
+        let deviceUID: String
+        let previewLayer: AVCaptureVideoPreviewLayer
+    }
+
+    typealias SessionStarter = (
+        @escaping @Sendable (Result<RunningSession, CameraServiceError>) -> Void
+    ) throws -> Void
+    typealias SessionStopper = @Sendable () -> Void
+
     /// The running case carries its own preview layer so the UI never has to
     /// reach back into the service (or into AVFoundation) to find one.
     enum PreviewState: Equatable {
@@ -178,12 +232,14 @@ final class CameraService {
     /// finds the matching device without duplicating the selection rules.
     private(set) var activeDeviceUID: String?
 
-    private let sessionLifetime = CameraSessionLifetime()
+    private let startSession: SessionStarter
+    private let stopSession: SessionStopper
     private let authorizationStatus: () -> AVAuthorizationStatus
     private let requestAccess: (@escaping @Sendable (Bool) -> Void) -> Void
-    private let resolveDevice: @MainActor () -> AVCaptureDevice?
     private let onAccessPrompt: () -> Void
     private var accessTask: Task<Void, Never>?
+    private var sessionGeneration = 0
+    private var isStartingSession = false
 
     init(
         authorizationStatus: @escaping () -> AVAuthorizationStatus = {
@@ -193,17 +249,34 @@ final class CameraService {
             AVCaptureDevice.requestAccess(for: .video, completionHandler: completion)
         },
         resolveDevice: @escaping @MainActor () -> AVCaptureDevice? = CameraService.defaultDevice,
-        onAccessPrompt: @escaping () -> Void = {}
+        onAccessPrompt: @escaping () -> Void = {},
+        startSession: SessionStarter? = nil,
+        stopSession: SessionStopper? = nil
     ) {
+        let sessionLifetime = CameraSessionLifetime()
+        self.startSession = startSession ?? { completion in
+            guard let device = resolveDevice() else {
+                completion(.failure(.inputUnavailable))
+                return
+            }
+            let deviceUID = device.uniqueID
+            try sessionLifetime.start(device: device) { result in
+                completion(result.map {
+                    RunningSession(deviceUID: deviceUID, previewLayer: $0)
+                })
+            }
+        }
+        self.stopSession = stopSession ?? {
+            sessionLifetime.stop()
+        }
         self.authorizationStatus = authorizationStatus
         self.requestAccess = requestAccess
-        self.resolveDevice = resolveDevice
         self.onAccessPrompt = onAccessPrompt
     }
 
     deinit {
         accessTask?.cancel()
-        sessionLifetime.stop()
+        stopSession()
     }
 
     /// Continuity and external cameras are ordinary video devices on macOS 14,
@@ -217,6 +290,7 @@ final class CameraService {
     }
 
     func start() {
+        guard !isStartingSession else { return }
         switch authorizationStatus() {
         case .authorized:
             activateSession()
@@ -228,9 +302,11 @@ final class CameraService {
     }
 
     func stop() {
+        sessionGeneration += 1
+        isStartingSession = false
         accessTask?.cancel()
         accessTask = nil
-        sessionLifetime.stop()
+        stopSession()
         activeDeviceUID = nil
         state = .idle
     }
@@ -259,15 +335,28 @@ final class CameraService {
     }
 
     private func activateSession() {
-        guard let device = resolveDevice() else {
-            state = .unavailable
-            return
-        }
+        guard !isStartingSession else { return }
+        sessionGeneration += 1
+        let generation = sessionGeneration
+        isStartingSession = true
         do {
-            let layer = try sessionLifetime.start(device: device)
-            activeDeviceUID = device.uniqueID
-            state = .running(layer)
+            try startSession { [weak self] result in
+                Task { @MainActor [weak self] in
+                    guard let self, self.sessionGeneration == generation else { return }
+                    self.isStartingSession = false
+                    switch result {
+                    case let .success(session):
+                        self.activeDeviceUID = session.deviceUID
+                        self.state = .running(session.previewLayer)
+                    case .failure:
+                        self.stopSession()
+                        self.activeDeviceUID = nil
+                        self.state = .unavailable
+                    }
+                }
+            }
         } catch {
+            isStartingSession = false
             activeDeviceUID = nil
             state = .unavailable
         }

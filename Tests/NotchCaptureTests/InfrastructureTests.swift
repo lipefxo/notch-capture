@@ -500,7 +500,7 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .mirror)).size,
-            CGSize(width: 460, height: 309)
+            CGSize(width: 460, height: 373)
         )
     }
 

@@ -2,7 +2,23 @@ import AppKit
 import Combine
 @preconcurrency import UserNotifications
 
+enum CameraStartupFramingPolicy {
+    static func target(
+        presetState: CameraPresetState,
+        legacyAim: CameraAim?
+    ) -> CameraPreset? {
+        if let selectedSlot = presetState.selectedSlot,
+           let selectedPreset = presetState.preset(in: selectedSlot) {
+            return selectedPreset
+        }
+        return legacyAim.map { CameraPreset(pan: $0.pan, tilt: $0.tilt, zoom: nil) }
+    }
+}
+
 extension AppCoordinator {
+    private static let cameraPrimingDelay = Duration.milliseconds(120)
+    private static let cameraGimbalSettleDelay = Duration.milliseconds(900)
+
     func configureMedia() {
         guard !previewMode else { return }
 
@@ -42,21 +58,53 @@ extension AppCoordinator {
         guard !previewMode else { return }
         cameraService.onStateChange = { [weak self] state in
             guard let self else { return }
-            self.viewModel.cameraPreview = state
+            self.cameraPresentationTask?.cancel()
+            self.cameraPresentationTask = nil
             // Controls are only discoverable once a device has been resolved,
             // so capabilities are read off the back of the running state rather
             // than guessed up front.
             if case .running = state {
-                self.attachCameraControls()
+                self.prepareCameraPresentation(state)
             } else {
                 self.cameraControlService.detach()
                 self.viewModel.cameraControls = .none
+                self.viewModel.configureCameraPresets(.empty)
+                self.viewModel.cameraPreview = state
             }
         }
     }
 
-    private func attachCameraControls() {
-        guard let uid = cameraService.activeDeviceUID else { return }
+    private func prepareCameraPresentation(_ state: CameraService.PreviewState) {
+        let startupPreset = attachCameraControls()
+        let waitsForGimbal = viewModel.cameraControls.canMove
+        cameraPresentationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            if let startupPreset {
+                let primed = self.cameraControlService.primePanTiltRestore(
+                    pan: startupPreset.pan,
+                    tilt: startupPreset.tilt
+                )
+                if primed {
+                    try? await Task.sleep(for: Self.cameraPrimingDelay)
+                    guard !Task.isCancelled else { return }
+                }
+                self.viewModel.applyCameraPreset(startupPreset)
+            }
+
+            if waitsForGimbal {
+                try? await Task.sleep(for: Self.cameraGimbalSettleDelay)
+                guard !Task.isCancelled else { return }
+            }
+            guard self.viewModel.surfaceState == .mirror,
+                  self.cameraService.state == state else { return }
+            self.viewModel.cameraPreview = state
+            self.cameraPresentationTask = nil
+        }
+    }
+
+    private func attachCameraControls() -> CameraPreset? {
+        guard let uid = cameraService.activeDeviceUID else { return nil }
         cameraControlService.attach(deviceUID: uid)
         viewModel.cameraControls = cameraControlService.capabilities
         if let zoom = cameraControlService.zoom {
@@ -68,6 +116,17 @@ extension AppCoordinator {
             viewModel.cameraPan = aim.pan
             viewModel.cameraTilt = aim.tilt
         }
+        let presetState = cameraPresetStore.state(for: uid)
+        viewModel.configureCameraPresets(presetState)
+        return CameraStartupFramingPolicy.target(
+            presetState: presetState,
+            legacyAim: cameraAimStore.aim(for: uid)
+        )
+    }
+
+    func persistCameraAim(pan: Double, tilt: Double) {
+        guard let uid = cameraService.activeDeviceUID else { return }
+        cameraAimStore.setAim(CameraAim(pan: pan, tilt: tilt), for: uid)
     }
 
     /// The mirror panel never becomes key, so the camera session follows the

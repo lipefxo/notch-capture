@@ -30,6 +30,8 @@ final class AppCoordinator {
     let pomodoroService: PomodoroService
     let cameraService: CameraService
     let cameraControlService: CameraControlService
+    let cameraAimStore: CameraAimStore
+    let cameraPresetStore: CameraPresetStore
     let defaults: UserDefaults
     let previewMode: Bool
 
@@ -38,6 +40,7 @@ final class AppCoordinator {
     var hotKeyManager: GlobalHotKeyManager?
     private var cancellables: Set<AnyCancellable> = []
     var composerPasteTask: Task<Void, Never>?
+    var cameraPresentationTask: Task<Void, Never>?
     var pendingShortcutDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition]?
     var displayEnvironmentObservers: [NSObjectProtocol] = []
 
@@ -101,6 +104,8 @@ final class AppCoordinator {
             NSApp.activate(ignoringOtherApps: true)
         })
         self.cameraControlService = CameraControlService()
+        self.cameraAimStore = CameraAimStore(defaults: defaults)
+        self.cameraPresetStore = CameraPresetStore(defaults: defaults)
 
         let timeFormat = AppViewModel.TimeFormat.fromStoredValue(
             defaults.string(forKey: DefaultsKey.timeFormat)
@@ -131,8 +136,19 @@ final class AppCoordinator {
             if initialState == .mirror {
                 // No camera runs under --design-preview, so the control chrome
                 // needs a stand-in to be reviewable in snapshots.
-                preview.cameraControls = .init(zoomRange: 100...400, canRecenter: true)
+                preview.cameraControls = .init(
+                    zoomRange: 100...400,
+                    canRecenter: true,
+                    panRange: -522000...522000,
+                    tiltRange: -324000...360000
+                )
                 preview.cameraZoom = 130
+                var presetState = CameraPresetState.empty
+                presetState.setPreset(
+                    CameraPreset(pan: 0, tilt: -64800, zoom: 130),
+                    in: .one
+                )
+                preview.configureCameraPresets(presetState)
             }
             self.viewModel = preview
         } else {
@@ -458,6 +474,8 @@ final class AppCoordinator {
         nowPlayingService.stop()
         cameraService.stop()
         cameraControlService.detach()
+        cameraPresentationTask?.cancel()
+        cameraPresentationTask = nil
         composerPasteTask?.cancel()
         displayEnvironmentObservers.forEach(NotificationCenter.default.removeObserver)
         displayEnvironmentObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
@@ -605,10 +623,22 @@ final class AppCoordinator {
             self?.cameraControlService.setZoom(zoom)
         }
         hooks.onRecenterCamera = { [weak self] in
-            self?.cameraControlService.recenter()
+            guard let self else { return }
+            self.cameraControlService.recenter()
+            self.persistCameraAim(pan: 0, tilt: 0)
         }
         hooks.onMoveCamera = { [weak self] pan, tilt in
-            self?.cameraControlService.setPanTilt(pan: pan, tilt: tilt)
+            guard let self else { return }
+            self.cameraControlService.setPanTilt(pan: pan, tilt: tilt)
+            self.persistCameraAim(pan: pan, tilt: tilt)
+        }
+        hooks.onSaveCameraPreset = { [weak self] slot, preset in
+            guard let self, let uid = self.cameraService.activeDeviceUID else { return }
+            self.cameraPresetStore.setPreset(preset, in: slot, for: uid)
+        }
+        hooks.onSelectCameraPreset = { [weak self] slot in
+            guard let self, let uid = self.cameraService.activeDeviceUID else { return }
+            self.cameraPresetStore.select(slot, for: uid)
         }
         hooks.onPomodoroToggle = { [weak self] in self?.pomodoroService.toggle() }
         hooks.onPomodoroReset = { [weak self] in self?.pomodoroService.reset() }

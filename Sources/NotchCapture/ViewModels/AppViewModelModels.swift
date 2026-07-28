@@ -487,6 +487,8 @@ extension AppViewModel {
         var onSetCameraZoom: (Double) -> Void = { _ in }
         var onRecenterCamera: () -> Void = {}
         var onMoveCamera: (Double, Double) -> Void = { _, _ in }
+        var onSaveCameraPreset: (CameraPresetSlot, CameraPreset) -> Void = { _, _ in }
+        var onSelectCameraPreset: (CameraPresetSlot) -> Void = { _ in }
         var onPomodoroToggle: () -> Void = {}
         var onPomodoroReset: () -> Void = {}
         var onPomodoroSetDuration: (TimeInterval) -> Void = { _ in }

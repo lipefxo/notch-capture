@@ -51,10 +51,13 @@ enum NotchTheme {
     static let headerHeight: CGFloat = 62
     /// The mirror keeps the shared 20pt content column, so its 16:9 preview is
     /// 400 x 225. The surface is that plus the 54pt header row — which exists
-    /// so the hardware notch never eats into the video — and its two insets.
+    /// so the hardware notch never eats into the video — the framing controls,
+    /// and their insets.
     static let mirrorPreviewWidth: CGFloat = width - 40
     static let mirrorPreviewHeight: CGFloat = (mirrorPreviewWidth * 9 / 16).rounded()
-    static let mirrorHeight: CGFloat = 54 + 14 + mirrorPreviewHeight + 16
+    static let mirrorPresetControlsHeight: CGFloat = 52
+    static let mirrorHeight: CGFloat =
+        54 + 14 + mirrorPreviewHeight + 12 + mirrorPresetControlsHeight + 16
     /// Width of the concave fillets that merge the surface into the top screen edge.
     static let topFlare: CGFloat = 10
     /// Equal content width on either side of a hardware notch while a live activity is visible.
