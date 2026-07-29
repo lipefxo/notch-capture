@@ -303,7 +303,7 @@ struct MirrorSurfaceView: View {
             CameraPreviewLayerView(previewLayer: layer)
         case .requestingAccess:
             placeholder(
-                icon: "camera.aperture",
+                icon: "record.circle",
                 title: "Waiting for camera access",
                 message: "Choose Allow in the system prompt to start the mirror."
             )
@@ -316,12 +316,12 @@ struct MirrorSurfaceView: View {
             )
         case .unavailable:
             placeholder(
-                icon: "camera.aperture",
+                icon: "record.circle",
                 title: "No camera found",
                 message: "Connect a camera, or use Continuity Camera from an iPhone."
             )
         case .idle:
-            placeholder(icon: "camera.aperture", title: "Starting the camera", message: nil)
+            placeholder(icon: "record.circle", title: "Starting the camera", message: nil)
         }
     }
 

@@ -127,7 +127,7 @@ struct NotchSurfaceView: View {
                             .disabled(presentation.hasModal)
                             .accessibilityHidden(presentation.hasModal)
 
-                        NotchPresentationLayer()
+                        NotchPresentationLayer(viewModel: viewModel)
                     }
                     .coordinateSpace(name: NotchPresentationLayer.coordinateSpace)
                     .environmentObject(presentation)

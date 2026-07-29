@@ -502,7 +502,11 @@ final class NowPlayingServiceRefreshTests: XCTestCase {
 final class PomodoroServiceTests: XCTestCase {
     func testStartPauseResumeAndResetUseWallClockAnchors() {
         var current = Date(timeIntervalSinceReferenceDate: 1_000)
-        let service = PomodoroService(duration: 25 * 60, now: { current })
+        let service = PomodoroService(
+            duration: 25 * 60,
+            now: { current },
+            completionAlert: .init(play: {}, stop: {})
+        )
 
         service.start()
         current = current.addingTimeInterval(60)
@@ -520,11 +524,87 @@ final class PomodoroServiceTests: XCTestCase {
 
     func testDurationIsClampedAndPersisted() {
         var persisted: TimeInterval?
-        let service = PomodoroService(persistDuration: { persisted = $0 })
+        let service = PomodoroService(
+            persistDuration: { persisted = $0 },
+            completionAlert: .init(play: {}, stop: {})
+        )
         service.setDuration(10)
 
         XCTAssertEqual(service.state.duration, PomodoroState.durationRange.lowerBound)
         XCTAssertEqual(persisted, PomodoroState.durationRange.lowerBound)
+    }
+
+    func testCompletionAlertsAndPublishesOnlyOnce() {
+        var current = Date(timeIntervalSinceReferenceDate: 1_000)
+        var playCount = 0
+        var completionCount = 0
+        let service = PomodoroService(
+            duration: 60,
+            now: { current },
+            completionAlert: .init(
+                play: { playCount += 1 },
+                stop: {}
+            )
+        )
+        service.onCompleted = { completionCount += 1 }
+
+        service.start()
+        current = current.addingTimeInterval(61)
+        service.revalidateDeadline()
+        service.revalidateDeadline()
+
+        XCTAssertEqual(service.state.phase, .finished)
+        XCTAssertEqual(playCount, 1)
+        XCTAssertEqual(completionCount, 1)
+    }
+
+    func testResetInvalidatesCompletionAndStopsAlert() async {
+        var current = Date(timeIntervalSinceReferenceDate: 1_000)
+        var playCount = 0
+        var stopCount = 0
+        var completionCount = 0
+        let service = PomodoroService(
+            duration: 60,
+            now: { current },
+            completionAlert: .init(
+                play: { playCount += 1 },
+                stop: { stopCount += 1 }
+            )
+        )
+        service.onCompleted = { completionCount += 1 }
+
+        service.start()
+        service.reset()
+        current = current.addingTimeInterval(61)
+        service.revalidateDeadline()
+        await Task.yield()
+
+        XCTAssertEqual(service.state.phase, .idle)
+        XCTAssertEqual(playCount, 0)
+        XCTAssertEqual(completionCount, 0)
+        XCTAssertGreaterThanOrEqual(stopCount, 2)
+    }
+
+    func testResetStopsAnActiveCompletionAlert() {
+        var current = Date(timeIntervalSinceReferenceDate: 1_000)
+        var stopCount = 0
+        let service = PomodoroService(
+            duration: 60,
+            now: { current },
+            completionAlert: .init(
+                play: {},
+                stop: { stopCount += 1 }
+            )
+        )
+
+        service.start()
+        current = current.addingTimeInterval(61)
+        service.revalidateDeadline()
+        let stopsBeforeReset = stopCount
+        service.reset()
+
+        XCTAssertEqual(service.state.phase, .idle)
+        XCTAssertEqual(stopCount, stopsBeforeReset + 1)
     }
 }
 
@@ -600,5 +680,26 @@ final class LiveActivityViewModelTests: XCTestCase {
             PomodoroCountdownLabel.accessibilityValue(24 * 60 + 23),
             "24 minutes, 23 seconds remaining"
         )
+    }
+
+    func testPomodoroCompletionTakesOverEverySurface() {
+        let model = AppViewModel()
+        let surfaces: [AppViewModel.SurfaceState] = [
+            .dormant,
+            .collapsed,
+            .collapsedActivity,
+            .confirmation,
+            .expanded,
+            .drop,
+            .onboarding,
+            .settings,
+            .mirror,
+        ]
+
+        for surface in surfaces {
+            model.surfaceState = surface
+            model.presentPomodoroCompletion()
+            XCTAssertEqual(model.surfaceState, .pomodoroComplete)
+        }
     }
 }

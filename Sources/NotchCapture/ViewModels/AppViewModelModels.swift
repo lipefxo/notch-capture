@@ -483,6 +483,16 @@ extension AppViewModel {
         var onMusicSeek: (TimeInterval) -> Void = { _ in }
         var onReconnectMedia: (NowPlayingSource) -> Void = { _ in }
         var onOpenMediaAutomationSettings: () -> Void = {}
+        var onStartStudioLightPairing: () -> Void = {}
+        var onCancelStudioLightPairing: () -> Void = {}
+        var onPairStudioLight: (UUID) -> Void = { _ in }
+        var onRetryStudioLight: () -> Void = {}
+        var onForgetStudioLight: () -> Void = {}
+        var onRefreshStudioLight: () -> Void = {}
+        var onSetStudioLightPower: (Bool) -> Void = { _ in }
+        var onSetStudioLightBrightness: (Double, Bool) -> Void = { _, _ in }
+        var onSetStudioLightColorTemperature: (Int, Bool) -> Void = { _, _ in }
+        var onOpenBluetoothSettings: () -> Void = {}
         var onOpenCameraSettings: () -> Void = {}
         var onSetCameraZoom: (Double) -> Void = { _ in }
         var onRecenterCamera: () -> Void = {}
