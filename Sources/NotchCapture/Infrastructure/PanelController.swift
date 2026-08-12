@@ -44,10 +44,16 @@ struct PanelTransitionPolicy: Equatable {
         wasVisible: Bool,
         reduceMotion: Bool,
         compactPresentationSize: CompactPresentationSize = .minimal,
+        sourceSize explicitSourceSize: CGSize? = nil,
+        targetSize explicitTargetSize: CGSize? = nil,
         animated: Bool = true
     ) -> Self {
         guard animated else { return .immediate }
-        guard oldState != newState || !wasVisible else { return .immediate }
+        let oldSize = explicitSourceSize
+            ?? oldState.nominalSize(compactPresentationSize: compactPresentationSize)
+        let newSize = explicitTargetSize
+            ?? newState.nominalSize(compactPresentationSize: compactPresentationSize)
+        guard oldState != newState || !wasVisible || oldSize != newSize else { return .immediate }
 
         if !newState.isVisible {
             guard wasVisible else { return .immediate }
@@ -86,8 +92,6 @@ struct PanelTransitionPolicy: Equatable {
         }
 
         let recoveringFromHide = !oldState.isVisible && wasVisible
-        let oldSize = oldState.nominalSize(compactPresentationSize: compactPresentationSize)
-        let newSize = newState.nominalSize(compactPresentationSize: compactPresentationSize)
         let oldArea = oldSize.width * oldSize.height
         let newArea = newSize.width * newSize.height
         if newArea > oldArea {
@@ -102,6 +106,15 @@ struct PanelTransitionPolicy: Equatable {
             return Self(
                 kind: .contract,
                 spring: NotchMotion.surfaceContraction,
+                opacity: .unchanged,
+                fadeDuration: 0
+            )
+        }
+        if oldSize != newSize {
+            let grows = newSize.width + newSize.height > oldSize.width + oldSize.height
+            return Self(
+                kind: grows ? .expand : .contract,
+                spring: grows ? NotchMotion.surfaceExpansion : NotchMotion.surfaceContraction,
                 opacity: .unchanged,
                 fadeDuration: 0
             )
@@ -172,6 +185,17 @@ struct PanelDismissalEventPolicy {
 }
 
 struct PanelWindowInteractionPolicy {
+    static func suspendsHitTestingForCompactResize(
+        state: PanelState,
+        wasVisible: Bool,
+        sourceSize: CGSize,
+        targetSize: CGSize
+    ) -> Bool {
+        wasVisible
+            && [.collapsed, .collapsedActivity].contains(state)
+            && sourceSize != targetSize
+    }
+
     static func suspendsHitTesting(
         during transition: PanelTransitionPolicy,
         targetState: PanelState,
@@ -295,7 +319,11 @@ public final class PanelController: NSObject, ObservableObject {
     private let hostingView: NSHostingView<AnyView>
     private let morphCoordinator: PanelMorphCoordinator
     private let shadowPresentation: PanelShadowPresentation
-    private var targetDisplayID: CGDirectDisplayID?
+    private(set) var targetDisplayID: CGDirectDisplayID?
+    /// Last compact endpoint handed to the morph pipeline. Keeping this
+    /// separate from the provider lets an effective-size change retain its
+    /// actual source after the view model has already published the target.
+    private var renderedCompactPresentationSize: CompactPresentationSize = .minimal
     private weak var previouslyActiveApplication: NSRunningApplication?
     private let eventMonitors = PanelEventMonitorLifetime()
     private var confirmationDismissalTask: Task<Void, Never>?
@@ -377,14 +405,40 @@ public final class PanelController: NSObject, ObservableObject {
 
         let oldState = state
         let wasVisible = panel.isVisible
-        guard forceGeometry || oldState != newState || !wasVisible else { return }
+        let sourceCompactPresentationSize = renderedCompactPresentationSize
+        let targetCompactPresentationSize = compactPresentationSizeProvider()
+        let changesCompactPresentation = [.collapsed, .collapsedActivity].contains(newState)
+            && renderedCompactPresentationSize != targetCompactPresentationSize
+        guard forceGeometry || oldState != newState || !wasVisible || changesCompactPresentation else { return }
         PanelDiagnostics.log("present \(oldState.rawValue)→\(newState.rawValue) wasVisible=\(wasVisible)")
         confirmationDismissalTask?.cancel()
 
-        let resolvedScreen = screen ?? displayLocator.pointerScreen
+        let resolvedScreen = screen
+            ?? (changesCompactPresentation && wasVisible
+                ? targetDisplayID.flatMap(displayLocator.screen(withID:))
+                : nil)
+            ?? displayLocator.pointerScreen
         targetDisplayID = resolvedScreen.flatMap(displayLocator.displayID(for:))
-        guard let geometry = targetGeometry,
-              let targetFrame = panelFrame(for: newState, geometry: geometry) else {
+        guard let geometry = targetGeometry else {
+            transitionToHiddenState(.dormant, animated: false)
+            requestDismissal(reason: .automatic)
+            return
+        }
+        let sourceSize = surfaceSize(
+            for: oldState,
+            geometry: geometry,
+            compactPresentationSize: sourceCompactPresentationSize
+        )
+        let targetSize = surfaceSize(
+            for: newState,
+            geometry: geometry,
+            compactPresentationSize: targetCompactPresentationSize
+        )
+        guard let targetFrame = panelFrame(
+            for: newState,
+            geometry: geometry,
+            compactPresentationSize: targetCompactPresentationSize
+        ) else {
             // Without display geometry no surface can exist. Hide instead of
             // silently bailing, and tell the owner so the app-level state
             // machine doesn't keep believing a panel is on screen.
@@ -398,10 +452,13 @@ public final class PanelController: NSObject, ObservableObject {
             to: newState,
             wasVisible: wasVisible,
             reduceMotion: reduceMotion,
-            compactPresentationSize: compactPresentationSizeProvider()
+            compactPresentationSize: targetCompactPresentationSize,
+            sourceSize: sourceSize,
+            targetSize: targetSize
         )
 
         state = newState
+        renderedCompactPresentationSize = targetCompactPresentationSize
         panel.permitsKeyWindow = newState.acceptsKeyboardInput
         panel.level = PanelWindowLevelPolicy.surfaceLevel
         installDismissalMonitorsIfNeeded()
@@ -414,9 +471,11 @@ public final class PanelController: NSObject, ObservableObject {
                 for: oldState,
                 targetState: newState,
                 wasVisible: wasVisible,
-                geometry: geometry
+                geometry: geometry,
+                compactPresentationSize: sourceCompactPresentationSize,
+                explicitVisibleSize: sourceSize
             ),
-            targetSize: surfaceSize(for: newState, geometry: geometry)
+            targetSize: targetSize
         )
         let request = morphRequest(
             generation: generation,
@@ -439,7 +498,14 @@ public final class PanelController: NSObject, ObservableObject {
         } else {
             foregroundFrame = targetFrame
         }
-        let suspendsHitTesting = PanelWindowInteractionPolicy.suspendsHitTesting(
+        let isCompactResize = oldState == newState
+            && PanelWindowInteractionPolicy.suspendsHitTestingForCompactResize(
+                state: newState,
+                wasVisible: wasVisible,
+                sourceSize: sourceSize,
+                targetSize: targetSize
+            )
+        let suspendsHitTesting = isCompactResize || PanelWindowInteractionPolicy.suspendsHitTesting(
             transitionCanvasFrame: foregroundFrame,
             targetFrame: targetFrame
         )
@@ -448,6 +514,7 @@ public final class PanelController: NSObject, ObservableObject {
         configureShadowPresentation(
             for: newState,
             geometry: geometry,
+            compactPresentationSize: targetCompactPresentationSize,
             isTransitioning: usesMorphCoordinator
         )
         updateShadowPanel(
@@ -734,8 +801,16 @@ public final class PanelController: NSObject, ObservableObject {
         return panelFrame(for: state, geometry: geometry)
     }
 
-    private func panelFrame(for state: PanelState, geometry: NotchGeometry) -> CGRect? {
-        var size = surfaceSize(for: state, geometry: geometry)
+    private func panelFrame(
+        for state: PanelState,
+        geometry: NotchGeometry,
+        compactPresentationSize: CompactPresentationSize? = nil
+    ) -> CGRect? {
+        var size = surfaceSize(
+            for: state,
+            geometry: geometry,
+            compactPresentationSize: compactPresentationSize
+        )
         if [.collapsed, .collapsedActivity].contains(state) {
             let notchWidth = geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width
             size.width = max(size.width, notchWidth + 24)
@@ -745,8 +820,12 @@ public final class PanelController: NSObject, ObservableObject {
         return geometry.panelFrame(for: size)
     }
 
-    private func surfaceSize(for state: PanelState, geometry: NotchGeometry) -> CGSize {
-        let presentationSize = compactPresentationSizeProvider()
+    private func surfaceSize(
+        for state: PanelState,
+        geometry: NotchGeometry,
+        compactPresentationSize: CompactPresentationSize? = nil
+    ) -> CGSize {
+        let presentationSize = compactPresentationSize ?? compactPresentationSizeProvider()
         var size = state.nominalSize(compactPresentationSize: presentationSize)
         if state == .collapsedActivity {
             let simulatedNotch = CommandLine.arguments.contains("--design-preview")
@@ -755,6 +834,7 @@ public final class PanelController: NSObject, ObservableObject {
                 && CommandLine.arguments.contains("--preview-external-display")
             if simulatedNotch {
                 size = CompactSurfaceMetrics.hardwareActivity(
+                    for: presentationSize,
                     notchWidth: 156,
                     notchBandHeight: 32
                 ).shellSize
@@ -762,6 +842,7 @@ public final class PanelController: NSObject, ObservableObject {
                       let notchRect = geometry.notchRect,
                       geometry.safeAreaInsets.top > 0 {
                 size = CompactSurfaceMetrics.hardwareActivity(
+                    for: presentationSize,
                     notchWidth: notchRect.width,
                     notchBandHeight: max(notchRect.height, geometry.safeAreaInsets.top)
                 ).shellSize
@@ -777,16 +858,26 @@ public final class PanelController: NSObject, ObservableObject {
         for state: PanelState,
         targetState: PanelState,
         wasVisible: Bool,
-        geometry: NotchGeometry
+        geometry: NotchGeometry,
+        compactPresentationSize: CompactPresentationSize? = nil,
+        explicitVisibleSize: CGSize? = nil
     ) -> CGSize {
         guard wasVisible else {
             return PanelMorphGeometry.concealedAnchorSize(
                 for: geometry,
-                targetSize: surfaceSize(for: targetState, geometry: geometry)
+                targetSize: surfaceSize(
+                    for: targetState,
+                    geometry: geometry,
+                    compactPresentationSize: compactPresentationSize
+                )
             )
         }
         if state.isVisible {
-            return surfaceSize(for: state, geometry: geometry)
+            return explicitVisibleSize ?? surfaceSize(
+                for: state,
+                geometry: geometry,
+                compactPresentationSize: compactPresentationSize
+            )
         }
         return morphCoordinator.request?.geometry.targetSize
             ?? PanelMorphGeometry.notchAnchorSize(for: geometry)
@@ -829,11 +920,16 @@ public final class PanelController: NSObject, ObservableObject {
     private func configureShadowPresentation(
         for state: PanelState,
         geometry: NotchGeometry,
+        compactPresentationSize: CompactPresentationSize? = nil,
         isTransitioning: Bool = false
     ) {
         shadowPresentation.update(
             state: state,
-            size: surfaceSize(for: state, geometry: geometry),
+            size: surfaceSize(
+                for: state,
+                geometry: geometry,
+                compactPresentationSize: compactPresentationSize
+            ),
             isTransitioning: isTransitioning
         )
     }

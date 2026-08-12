@@ -67,7 +67,7 @@ The first launch shows a four-step tour of the main features (capture, organizin
 
 ## Idle behavior
 
-Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. Both pills carry the mirror toggle. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
+Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. When a window fills the display hosting the pill — full screen or a maximized window — an Extended pill smoothly reduces to Minimal and returns to Extended once the display is no longer occupied; the saved preference does not change. Both pills carry the mirror toggle. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
 
 ## Settings
 

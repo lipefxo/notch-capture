@@ -897,6 +897,45 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persistedSize, .extended)
     }
 
+    func testFullScreenCompactOverridePreservesSavedPreferenceAndOpenSurface() {
+        var persistedSizes: [CompactPresentationSize] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onSetCompactPresentationSize = { persistedSizes.append($0) }
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            compactPresentationSize: .extended,
+            hooks: hooks
+        )
+
+        viewModel.setFullScreenCompactOverride(true)
+
+        XCTAssertEqual(viewModel.compactPresentationSize, .extended)
+        XCTAssertEqual(viewModel.effectiveCompactPresentationSize, .minimal)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertTrue(persistedSizes.isEmpty)
+
+        viewModel.setFullScreenCompactOverride(false)
+
+        XCTAssertEqual(viewModel.compactPresentationSize, .extended)
+        XCTAssertEqual(viewModel.effectiveCompactPresentationSize, .extended)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertTrue(persistedSizes.isEmpty)
+    }
+
+    func testFullScreenCompactOverrideLeavesSavedMinimalPreferenceUnchanged() {
+        let viewModel = AppViewModel(compactPresentationSize: .minimal)
+
+        viewModel.setFullScreenCompactOverride(true)
+        XCTAssertEqual(viewModel.effectiveCompactPresentationSize, .minimal)
+
+        viewModel.compactPresentationSize = .extended
+        XCTAssertEqual(viewModel.compactPresentationSize, .extended)
+        XCTAssertEqual(viewModel.effectiveCompactPresentationSize, .minimal)
+
+        viewModel.setFullScreenCompactOverride(false)
+        XCTAssertEqual(viewModel.effectiveCompactPresentationSize, .extended)
+    }
+
     func testOnboardingNavigationStaysWithinTypedSteps() {
         let viewModel = AppViewModel(surfaceState: .onboarding)
         let steps = AppViewModel.OnboardingStep.allCases

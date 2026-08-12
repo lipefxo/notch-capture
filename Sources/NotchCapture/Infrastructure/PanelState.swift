@@ -125,10 +125,14 @@ struct CompactSurfaceMetrics: Equatable {
     }
 
     static func hardwareActivity(
+        for presentationSize: CompactPresentationSize,
         notchWidth: CGFloat,
         notchBandHeight: CGFloat
     ) -> Self {
-        let wingWidth = NotchTheme.collapsedActivityWingWidth
+        let wingWidth: CGFloat = switch presentationSize {
+        case .minimal: 0
+        case .extended: NotchTheme.collapsedActivityWingWidth
+        }
         let height = max(34, notchBandHeight + 4)
         return Self(
             shellSize: CGSize(width: notchWidth + (wingWidth * 2) + (NotchTheme.topFlare * 2), height: height),
@@ -149,6 +153,7 @@ struct CompactSurfaceMetrics: Equatable {
         case .collapsedActivity:
             if let activityLayout, activityLayout.hasHardwareNotch {
                 hardwareActivity(
+                    for: presentationSize,
                     notchWidth: activityLayout.notchWidth,
                     notchBandHeight: activityLayout.notchBandHeight
                 )

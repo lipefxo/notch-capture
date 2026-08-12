@@ -111,6 +111,344 @@ final class IdlePillVisibilityPolicyTests: XCTestCase {
     }
 }
 
+final class FullScreenDisplayDetectorTests: XCTestCase {
+    private let primary = DisplayBoundsSnapshot(
+        displayID: 1,
+        bounds: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+        visibleBounds: CGRect(x: 0, y: 25, width: 1_512, height: 957)
+    )
+    private let secondary = DisplayBoundsSnapshot(
+        displayID: 2,
+        bounds: CGRect(x: 1_512, y: 0, width: 1_920, height: 1_080),
+        visibleBounds: CGRect(x: 1_512, y: 25, width: 1_920, height: 1_055)
+    )
+
+    func testDetectsVisibleCoveringWindowsOnlyForEligibleOwners() {
+        let windows = [
+            window(pid: 42, bounds: primary.bounds),
+            // Maximized beneath the menu bar does not cover the display, so it
+            // stays out of the covered set (it is reported separately as a
+            // maximized display; see the maximize tests below).
+            window(pid: 42, bounds: CGRect(x: 1_512, y: 25, width: 1_920, height: 1_055)),
+            window(pid: 7, bounds: secondary.bounds),
+            window(pid: 42, bounds: secondary.bounds, alpha: 0),
+            window(pid: 42, bounds: secondary.bounds, isOnscreen: false),
+        ]
+
+        XCTAssertEqual(
+            FullScreenDisplayDetector.detect(
+                windows: windows,
+                displays: [primary, secondary],
+                eligibleOwnerPIDs: [42]
+            ),
+            [primary.displayID]
+        )
+    }
+
+    func testDetectsHelperWindowsButRejectsSystemAndDesktopOwners() {
+        let windows = [
+            window(pid: 42, bounds: primary.bounds),
+            // Browser full-screen video may move to a helper process and a
+            // positive overlay layer after its opening animation completes.
+            window(pid: 77, layer: 25, bounds: secondary.bounds),
+            // The app switcher is owned by a system process rather than the
+            // active application and must not trigger the compact override.
+            window(pid: 88, layer: 25, bounds: secondary.bounds),
+            window(pid: 77, layer: -1, bounds: secondary.bounds),
+        ]
+
+        XCTAssertEqual(
+            FullScreenDisplayDetector.detect(
+                windows: windows,
+                displays: [primary, secondary],
+                eligibleOwnerPIDs: [42, 77]
+            ),
+            [primary.displayID, secondary.displayID]
+        )
+    }
+
+    func testDetectsMaximizedWindowsFillingTheWorkingArea() {
+        let windows = [
+            // Maximized/zoomed: fills the working area below the menu bar.
+            window(pid: 42, bounds: primary.visibleBounds),
+            // A partially sized window is not maximized.
+            window(pid: 42, bounds: CGRect(x: 1_600, y: 200, width: 800, height: 500)),
+            // An ineligible owner filling the secondary working area is ignored.
+            window(pid: 7, bounds: secondary.visibleBounds),
+        ]
+
+        let observation = FullScreenDisplayDetector.observe(
+            windows: windows,
+            displays: [primary, secondary],
+            application: FullScreenApplicationIdentity(processID: 42, bundleIdentifier: nil, name: "Test"),
+            eligibleOwnerPIDs: [42]
+        )
+
+        XCTAssertEqual(observation.maximizedDisplayIDs, [primary.displayID])
+        // A window below the menu bar never covers the whole display.
+        XCTAssertTrue(observation.coveredDisplayIDs.isEmpty)
+    }
+
+    func testFullScreenCoverageAlsoReportsTheDisplayAsMaximized() {
+        let observation = FullScreenDisplayDetector.observe(
+            windows: [window(pid: 42, bounds: primary.bounds)],
+            displays: [primary, secondary],
+            application: FullScreenApplicationIdentity(processID: 42, bundleIdentifier: nil, name: "Test"),
+            eligibleOwnerPIDs: [42]
+        )
+
+        XCTAssertEqual(observation.coveredDisplayIDs, [primary.displayID])
+        XCTAssertEqual(observation.maximizedDisplayIDs, [primary.displayID])
+    }
+
+    func testCoverageAllowsBackingPixelRoundingButRejectsVisibleChrome() {
+        XCTAssertTrue(
+            FullScreenDisplayDetector.covers(
+                primary.bounds.insetBy(dx: 1, dy: 1),
+                displayBounds: primary.bounds
+            )
+        )
+        XCTAssertFalse(
+            FullScreenDisplayDetector.covers(
+                primary.bounds.insetBy(dx: 0, dy: 3),
+                displayBounds: primary.bounds
+            )
+        )
+    }
+
+    func testCompactOverrideAppliesOnlyToThePanelDisplay() {
+        let fullScreenDisplays: Set<CGDirectDisplayID> = [primary.displayID]
+
+        XCTAssertTrue(
+            FullScreenCompactPresentationPolicy.shouldForceMinimal(
+                targetDisplayID: primary.displayID,
+                fullScreenDisplayIDs: fullScreenDisplays
+            )
+        )
+        XCTAssertFalse(
+            FullScreenCompactPresentationPolicy.shouldForceMinimal(
+                targetDisplayID: secondary.displayID,
+                fullScreenDisplayIDs: fullScreenDisplays
+            )
+        )
+        XCTAssertFalse(
+            FullScreenCompactPresentationPolicy.shouldForceMinimal(
+                targetDisplayID: nil,
+                fullScreenDisplayIDs: fullScreenDisplays
+            )
+        )
+    }
+
+    func testBrowserCoveragePulseLatchesUntilMatchingExitPulse() {
+        var tracker = FullScreenSessionTracker()
+        let normal = FullScreenForegroundWindow(
+            windowID: 10,
+            bounds: CGRect(x: 120, y: 90, width: 1_100, height: 760)
+        )
+
+        XCTAssertFalse(tracker.update(sessionObservation(at: 10, foreground: normal)).stableStateChanged)
+        XCTAssertEqual(
+            tracker.update(sessionObservation(at: 10.1, covered: true)).fullScreenDisplayIDs,
+            [primary.displayID]
+        )
+
+        let latched = tracker.update(sessionObservation(at: 10.37, foreground: normal))
+        XCTAssertFalse(latched.stableStateChanged)
+        XCTAssertEqual(latched.fullScreenDisplayIDs, [primary.displayID])
+        XCTAssertEqual(latched.transitions.map(\.kind), [.compositorLatched])
+
+        let stillLatched = tracker.update(sessionObservation(at: 60, foreground: normal))
+        XCTAssertEqual(stillLatched.fullScreenDisplayIDs, [primary.displayID])
+
+        let exiting = tracker.update(sessionObservation(at: 61, covered: true))
+        XCTAssertFalse(exiting.stableStateChanged)
+        XCTAssertEqual(exiting.transitions.map(\.kind), [.exitPulse])
+
+        let exited = tracker.update(sessionObservation(at: 61.27, foreground: normal))
+        XCTAssertTrue(exited.stableStateChanged)
+        XCTAssertEqual(exited.fullScreenDisplayIDs, [])
+        XCTAssertEqual(exited.transitions.map(\.kind), [.exited])
+    }
+
+    func testPersistentCoverageIsNativeFullScreenAndClearsWhenCoverageEnds() {
+        var tracker = FullScreenSessionTracker()
+        _ = tracker.update(sessionObservation(at: 1, covered: true))
+
+        let confirmed = tracker.update(sessionObservation(at: 2.1, covered: true))
+        XCTAssertEqual(confirmed.fullScreenDisplayIDs, [primary.displayID])
+        XCTAssertEqual(confirmed.transitions.map(\.kind), [.nativeConfirmed])
+
+        let exited = tracker.update(sessionObservation(at: 2.3))
+        XCTAssertTrue(exited.stableStateChanged)
+        XCTAssertEqual(exited.fullScreenDisplayIDs, [])
+    }
+
+    func testNativeFullScreenSurvivesEntrySpaceChangeAndClearsAfterExitSpaceChange() {
+        var tracker = FullScreenSessionTracker()
+        _ = tracker.update(sessionObservation(at: 1, covered: true))
+
+        let enteredSpace = tracker.update(sessionObservation(
+            at: 1.2,
+            covered: true,
+            activeSpaceGeneration: 1
+        ))
+        XCTAssertEqual(enteredSpace.fullScreenDisplayIDs, [primary.displayID])
+        XCTAssertFalse(enteredSpace.stableStateChanged)
+
+        let exitedSpace = tracker.update(sessionObservation(
+            at: 8,
+            covered: true,
+            activeSpaceGeneration: 2
+        ))
+        XCTAssertEqual(exitedSpace.fullScreenDisplayIDs, [primary.displayID])
+
+        let settledExit = tracker.update(sessionObservation(
+            at: 8.2,
+            activeSpaceGeneration: 2
+        ))
+        XCTAssertEqual(settledExit.fullScreenDisplayIDs, [])
+        XCTAssertTrue(settledExit.stableStateChanged)
+    }
+
+    func testRapidBrowserExitPulseClearsWithoutAQuietPeriod() {
+        var tracker = FullScreenSessionTracker()
+        _ = tracker.update(sessionObservation(at: 1, covered: true))
+        _ = tracker.update(sessionObservation(at: 1.27))
+
+        let exitPulse = tracker.update(sessionObservation(at: 1.4, covered: true))
+        XCTAssertEqual(exitPulse.transitions.map(\.kind), [.exitPulse])
+        let exited = tracker.update(sessionObservation(at: 1.6))
+        XCTAssertEqual(exited.fullScreenDisplayIDs, [])
+    }
+
+    func testMaximizePulseDoesNotLatchButFullscreenFromMaximizedWindowDoes() {
+        let normal = FullScreenForegroundWindow(
+            windowID: 10,
+            bounds: CGRect(x: 120, y: 90, width: 1_100, height: 760)
+        )
+        let maximized = FullScreenForegroundWindow(
+            windowID: 10,
+            bounds: primary.visibleBounds
+        )
+        var maximizeTracker = FullScreenSessionTracker()
+        _ = maximizeTracker.update(sessionObservation(at: 1, foreground: normal))
+        _ = maximizeTracker.update(sessionObservation(at: 1.1, covered: true))
+        let rejected = maximizeTracker.update(sessionObservation(at: 1.35, foreground: maximized))
+        XCTAssertEqual(rejected.fullScreenDisplayIDs, [])
+        XCTAssertEqual(rejected.transitions.map(\.kind), [.maximizeRejected])
+
+        var fullscreenTracker = FullScreenSessionTracker()
+        _ = fullscreenTracker.update(sessionObservation(at: 2, foreground: maximized))
+        _ = fullscreenTracker.update(sessionObservation(at: 2.1, covered: true))
+        let latched = fullscreenTracker.update(sessionObservation(at: 2.37, foreground: maximized))
+        XCTAssertEqual(latched.fullScreenDisplayIDs, [primary.displayID])
+        XCTAssertEqual(latched.transitions.map(\.kind), [.compositorLatched])
+    }
+
+    func testApplicationAndSpaceChangesClearACompositorSession() {
+        var tracker = FullScreenSessionTracker()
+        _ = tracker.update(sessionObservation(at: 1, covered: true))
+        _ = tracker.update(sessionObservation(at: 1.2))
+
+        let switchedApplication = tracker.update(sessionObservation(
+            at: 2,
+            application: FullScreenApplicationIdentity(
+                processID: 88,
+                bundleIdentifier: "com.apple.dock",
+                name: "Dock"
+            )
+        ))
+        XCTAssertEqual(switchedApplication.fullScreenDisplayIDs, [])
+        XCTAssertEqual(switchedApplication.transitions.map(\.kind), [.contextReset])
+
+        _ = tracker.update(sessionObservation(at: 3, covered: true))
+        _ = tracker.update(sessionObservation(at: 3.2))
+        let switchedSpace = tracker.update(sessionObservation(at: 4, activeSpaceGeneration: 1))
+        XCTAssertEqual(switchedSpace.fullScreenDisplayIDs, [])
+        XCTAssertEqual(switchedSpace.transitions.map(\.kind), [.contextReset])
+    }
+
+    func testSessionsRemainScopedToTheirDisplayAndDisplayChangesClearThem() {
+        var tracker = FullScreenSessionTracker()
+        let secondaryObservation = FullScreenSessionObservation(
+            window: FullScreenWindowObservation(
+                application: FullScreenApplicationIdentity(
+                    processID: 42,
+                    bundleIdentifier: "company.thebrowser.Browser",
+                    name: "Arc"
+                ),
+                coveredDisplayIDs: [secondary.displayID],
+                foregroundWindowsByDisplay: [:],
+                displaysByID: [primary.displayID: primary, secondary.displayID: secondary]
+            ),
+            timestamp: 1,
+            activeSpaceGeneration: 0,
+            displayEnvironmentGeneration: 0
+        )
+
+        let entered = tracker.update(secondaryObservation)
+        XCTAssertEqual(entered.fullScreenDisplayIDs, [secondary.displayID])
+        XCTAssertFalse(entered.fullScreenDisplayIDs.contains(primary.displayID))
+
+        let topologyChanged = tracker.update(FullScreenSessionObservation(
+            window: FullScreenWindowObservation(
+                application: secondaryObservation.window.application,
+                coveredDisplayIDs: [],
+                foregroundWindowsByDisplay: [:],
+                displaysByID: [primary.displayID: primary]
+            ),
+            timestamp: 1.2,
+            activeSpaceGeneration: 0,
+            displayEnvironmentGeneration: 1
+        ))
+        XCTAssertEqual(topologyChanged.fullScreenDisplayIDs, [])
+        XCTAssertEqual(topologyChanged.transitions.map(\.kind), [.contextReset])
+    }
+
+    private func window(
+        id: CGWindowID = 1,
+        pid: pid_t,
+        layer: Int = 0,
+        bounds: CGRect,
+        alpha: Double = 1,
+        isOnscreen: Bool = true
+    ) -> WindowServerSnapshot {
+        WindowServerSnapshot(
+            windowID: id,
+            ownerPID: pid,
+            layer: layer,
+            bounds: bounds,
+            alpha: alpha,
+            isOnscreen: isOnscreen
+        )
+    }
+
+    private func sessionObservation(
+        at timestamp: TimeInterval,
+        covered: Bool = false,
+        foreground: FullScreenForegroundWindow? = nil,
+        application: FullScreenApplicationIdentity = FullScreenApplicationIdentity(
+            processID: 42,
+            bundleIdentifier: "company.thebrowser.Browser",
+            name: "Arc"
+        ),
+        activeSpaceGeneration: Int = 0,
+        displayEnvironmentGeneration: Int = 0
+    ) -> FullScreenSessionObservation {
+        FullScreenSessionObservation(
+            window: FullScreenWindowObservation(
+                application: application,
+                coveredDisplayIDs: covered ? [primary.displayID] : [],
+                foregroundWindowsByDisplay: foreground.map { [primary.displayID: $0] } ?? [:],
+                displaysByID: [primary.displayID: primary]
+            ),
+            timestamp: timestamp,
+            activeSpaceGeneration: activeSpaceGeneration,
+            displayEnvironmentGeneration: displayEnvironmentGeneration
+        )
+    }
+}
+
 final class PanelTransitionPolicyTests: XCTestCase {
     func testHiddenExpandedSurfaceStartsWithExpansionMorph() {
         let policy = PanelTransitionPolicy.resolve(
@@ -140,6 +478,62 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.spring, NotchMotion.surfaceExpansion)
         XCTAssertEqual(policy.opacity, .unchanged)
         XCTAssertEqual(policy.fadeDuration, 0)
+    }
+
+    func testCompactDensityChangesUseDirectionalSurfaceSprings() {
+        let extended = CompactSurfaceMetrics.capture(for: .extended).shellSize
+        let minimal = CompactSurfaceMetrics.capture(for: .minimal).shellSize
+
+        let contraction = PanelTransitionPolicy.resolve(
+            from: .collapsed,
+            to: .collapsed,
+            wasVisible: true,
+            reduceMotion: false,
+            sourceSize: extended,
+            targetSize: minimal
+        )
+        XCTAssertEqual(contraction.kind, .contract)
+        XCTAssertEqual(contraction.spring, NotchMotion.surfaceContraction)
+
+        let expansion = PanelTransitionPolicy.resolve(
+            from: .collapsed,
+            to: .collapsed,
+            wasVisible: true,
+            reduceMotion: false,
+            sourceSize: minimal,
+            targetSize: extended
+        )
+        XCTAssertEqual(expansion.kind, .expand)
+        XCTAssertEqual(expansion.spring, NotchMotion.surfaceExpansion)
+    }
+
+    func testCompactDensityChangeUsesReducedMotionFade() {
+        let policy = PanelTransitionPolicy.resolve(
+            from: .collapsed,
+            to: .collapsed,
+            wasVisible: true,
+            reduceMotion: true,
+            sourceSize: CompactSurfaceMetrics.capture(for: .extended).shellSize,
+            targetSize: CompactSurfaceMetrics.capture(for: .minimal).shellSize
+        )
+
+        XCTAssertEqual(policy.kind, .reducedFade)
+        XCTAssertNil(policy.spring)
+        XCTAssertEqual(policy.fadeDuration, NotchMotion.reducedMotionDuration)
+    }
+
+    func testCompactDensityChangeIsImmediateWhenResolvedGeometryDoesNotChange() {
+        let size = CGSize(width: 376, height: 42)
+        let policy = PanelTransitionPolicy.resolve(
+            from: .collapsedActivity,
+            to: .collapsedActivity,
+            wasVisible: true,
+            reduceMotion: false,
+            sourceSize: size,
+            targetSize: size
+        )
+
+        XCTAssertEqual(policy.kind, .immediate)
     }
 
     func testEveryHiddenVisibleSurfaceUsesTheSharedNotchMorph() {
@@ -576,7 +970,7 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         XCTAssertEqual(activity.shadowOpacity, 0)
     }
 
-    func testHardwareNotchActivityAlwaysUsesCompactSymmetricWings() {
+    func testHardwareNotchActivityHonorsCompactPresentationSize() {
         let layout = AppViewModel.CollapsedActivityLayout(
             hasHardwareNotch: true,
             notchWidth: 188,
@@ -593,8 +987,9 @@ final class SurfaceChromeMetricsTests: XCTestCase {
             activityLayout: layout
         )
 
-        XCTAssertEqual(minimal?.contentSize.width, 188 + (104 * 2))
-        XCTAssertEqual(extended, minimal)
+        XCTAssertEqual(minimal?.contentSize.width, 188)
+        XCTAssertEqual(minimal?.shellSize.width, 188 + 20)
+        XCTAssertEqual(minimal?.wingWidth, 0)
         XCTAssertEqual(extended?.shellSize.width, 188 + (104 * 2) + 20)
         XCTAssertEqual(extended?.shellSize.height, 36)
         XCTAssertEqual(extended?.bottomRadius, 16)
@@ -1137,6 +1532,25 @@ private final class UnavailableDisplayLocator: DisplayLocating {
 }
 
 final class PanelWindowInteractionPolicyTests: XCTestCase {
+    func testCompactResizeSuspendsHitTestingUntilTheCanvasSettles() {
+        XCTAssertTrue(
+            PanelWindowInteractionPolicy.suspendsHitTestingForCompactResize(
+                state: .collapsed,
+                wasVisible: true,
+                sourceSize: CompactSurfaceMetrics.capture(for: .extended).shellSize,
+                targetSize: CompactSurfaceMetrics.capture(for: .minimal).shellSize
+            )
+        )
+        XCTAssertFalse(
+            PanelWindowInteractionPolicy.suspendsHitTestingForCompactResize(
+                state: .expanded,
+                wasVisible: true,
+                sourceSize: CGSize(width: 332, height: 50),
+                targetSize: CGSize(width: 226, height: 34)
+            )
+        )
+    }
+
     func testSurfaceStaysInTheStatusBarPlane() {
         XCTAssertEqual(PanelWindowLevelPolicy.surfaceLevel, .statusBar)
     }

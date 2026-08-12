@@ -44,6 +44,13 @@ final class AppCoordinator {
     var cameraPresentationTask: Task<Void, Never>?
     var pendingShortcutDefinitions: [GlobalHotKeyAction: GlobalHotKeyDefinition]?
     var displayEnvironmentObservers: [NSObjectProtocol] = []
+    var fullScreenDetectionTask: Task<Void, Never>?
+    var fullScreenMonitoringTask: Task<Void, Never>?
+    var fullScreenDisplayIDs: Set<CGDirectDisplayID> = []
+    var rawFullScreenDisplayIDs: Set<CGDirectDisplayID> = []
+    var fullScreenSessionTracker = FullScreenSessionTracker()
+    var activeSpaceGeneration = 0
+    var displayEnvironmentGeneration = 0
 
     init(
         defaults: UserDefaults = .standard,
@@ -203,7 +210,7 @@ final class AppCoordinator {
             AnyView(NotchSurfaceView(viewModel: viewModel))
         }
         self.panelController.compactPresentationSizeProvider = { [weak viewModel] in
-            viewModel?.compactPresentationSize ?? .minimal
+            viewModel?.effectiveCompactPresentationSize ?? .minimal
         }
         self.panelController.panel.onLedgerRowKeyboardCommand = { [weak viewModel] command in
             viewModel?.performSelectedRowKeyboardCommand(command) ?? false
@@ -469,6 +476,8 @@ final class AppCoordinator {
 
         if !previewMode {
             installDisplayEnvironmentObservers()
+            startFullScreenMonitoring()
+            scheduleFullScreenDetection(delay: 0)
             updateIdlePillVisibility()
             do {
                 // One-time launch maintenance; not needed on every reload.
@@ -510,6 +519,10 @@ final class AppCoordinator {
         cameraPresentationTask?.cancel()
         cameraPresentationTask = nil
         composerPasteTask?.cancel()
+        fullScreenDetectionTask?.cancel()
+        fullScreenDetectionTask = nil
+        fullScreenMonitoringTask?.cancel()
+        fullScreenMonitoringTask = nil
         displayEnvironmentObservers.forEach(NotificationCenter.default.removeObserver)
         displayEnvironmentObservers.forEach(NSWorkspace.shared.notificationCenter.removeObserver)
         displayEnvironmentObservers.removeAll()
@@ -791,7 +804,7 @@ final class AppCoordinator {
             }
             .store(in: &cancellables)
 
-        viewModel.$compactPresentationSize
+        viewModel.$effectiveCompactPresentationSize
             .dropFirst()
             .sink { [weak self] _ in
                 guard let self, [.collapsed, .collapsedActivity].contains(self.viewModel.surfaceState) else { return }
@@ -808,6 +821,7 @@ final class AppCoordinator {
         updateCollapsedActivityLayout()
         let panelState = state.panelState
         panelController.present(panelState, activate: panelState.acceptsKeyboardInput)
+        applyFullScreenCompactOverride()
     }
 
     func updateIdlePillVisibility() {

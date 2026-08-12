@@ -3,14 +3,15 @@ import SwiftUI
 
 struct CollapsedActivityPillView: View {
     @ObservedObject var viewModel: AppViewModel
+    let presentationSize: CompactPresentationSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
-    private var isExtended: Bool { viewModel.compactPresentationSize == .extended }
+    private var isExtended: Bool { presentationSize == .extended }
 
     private var compactMetrics: CompactSurfaceMetrics {
         CompactSurfaceMetrics.resolve(
             state: .collapsedActivity,
-            presentationSize: viewModel.compactPresentationSize,
+            presentationSize: presentationSize,
             activityLayout: viewModel.collapsedActivityLayout
         )!
     }
@@ -18,13 +19,29 @@ struct CollapsedActivityPillView: View {
     var body: some View {
         Group {
             if viewModel.collapsedActivityLayout.hasHardwareNotch {
-                notchedLayout
+                if isExtended {
+                    notchedLayout
+                } else {
+                    minimalNotchedLayout
+                }
             } else {
                 fallbackLayout
             }
         }
         .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content, value: viewModel.isNowPlayingRecovering)
         .accessibilityElement(children: .contain)
+    }
+
+    /// Minimal full-screen presentation hugs the physical notch without live
+    /// activity wings. The shared clear overlay still makes the small shell a
+    /// target for reopening Notch Capture, while media remains active behind it.
+    private var minimalNotchedLayout: some View {
+        Color.clear
+            .frame(
+                width: compactMetrics.contentSize.width,
+                height: compactMetrics.contentSize.height
+            )
+            .allowsHitTesting(false)
     }
 
     private var notchedLayout: some View {
@@ -178,8 +195,6 @@ struct CollapsedActivityPillView: View {
         )
     }
 
-    /// The 104pt wing already had room for the 54pt timer plus a toggle, so the
-    /// hardware-notch layout keeps its symmetric geometry unchanged.
     private var notchedPomodoroWing: some View {
         HStack(spacing: 4) {
             if viewModel.pomodoro.isActive {
