@@ -100,8 +100,14 @@ final class AppViewModel: ObservableObject {
         didSet { hooks.onSetTimeFormat(timeFormat) }
     }
     @Published var compactPresentationSize: CompactPresentationSize {
-        didSet { hooks.onSetCompactPresentationSize(compactPresentationSize) }
+        didSet {
+            hooks.onSetCompactPresentationSize(compactPresentationSize)
+            refreshEffectiveCompactPresentationSize()
+        }
     }
+    /// The size currently rendered by passive pills. Full-screen content can
+    /// temporarily reduce this without rewriting the user's saved preference.
+    @Published private(set) var effectiveCompactPresentationSize: CompactPresentationSize
     /// False when Sparkle is inert (bare `swift run`, design previews).
     @Published var updatesEnabled = false
     @Published var nowPlaying: NowPlayingSnapshot?
@@ -129,6 +135,7 @@ final class AppViewModel: ObservableObject {
     /// the expanded surface resumes onboarding at the current step instead.
     private(set) var needsOnboarding: Bool
     @Published private(set) var isIdlePillHidden = false
+    private var forcesMinimalCompactPresentation = false
     @Published var shortcuts: [Shortcut]
     @Published var shortcutRecordingRequest: ShortcutRecordingRequest?
     /// Items whose completion is committed but still "held" in place so the
@@ -196,6 +203,7 @@ final class AppViewModel: ObservableObject {
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
         self.compactPresentationSize = compactPresentationSize
+        self.effectiveCompactPresentationSize = compactPresentationSize
         self.nowPlaying = nowPlaying
         self.nowPlayingPresentation = nowPlayingPresentation
         self.nowPlayingArtwork = nowPlayingArtwork
@@ -600,6 +608,20 @@ final class AppViewModel: ObservableObject {
         isIdlePillHidden = isHidden
         guard [.dormant, .collapsed, .collapsedActivity].contains(surfaceState) else { return }
         surfaceState = isHidden ? .dormant : idleSurfaceState
+    }
+
+    func setFullScreenCompactOverride(_ isActive: Bool) {
+        guard forcesMinimalCompactPresentation != isActive else { return }
+        forcesMinimalCompactPresentation = isActive
+        refreshEffectiveCompactPresentationSize()
+    }
+
+    private func refreshEffectiveCompactPresentationSize() {
+        let resolvedSize: CompactPresentationSize = forcesMinimalCompactPresentation
+            ? .minimal
+            : compactPresentationSize
+        guard effectiveCompactPresentationSize != resolvedSize else { return }
+        effectiveCompactPresentationSize = resolvedSize
     }
 
     func dismiss() {

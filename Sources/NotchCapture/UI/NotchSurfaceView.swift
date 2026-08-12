@@ -68,6 +68,7 @@ struct NotchSurfaceView: View {
     @EnvironmentObject private var morphCoordinator: PanelMorphCoordinator
     @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @State private var displayedState: AppViewModel.SurfaceState?
+    @State private var displayedCompactPresentationSize: CompactPresentationSize
     @State private var chromeMetrics: SurfaceChromeMetrics?
     @State private var activeTransition: AnyTransition = .opacity
     @State private var surfaceOpacity = 1.0
@@ -85,6 +86,9 @@ struct NotchSurfaceView: View {
 
     init(viewModel: AppViewModel) {
         self.viewModel = viewModel
+        _displayedCompactPresentationSize = State(
+            initialValue: viewModel.effectiveCompactPresentationSize
+        )
         _displayedState = State(
             initialValue: chromeMetrics(for: viewModel) == nil
                 ? nil
@@ -150,9 +154,6 @@ struct NotchSurfaceView: View {
         .onChange(of: viewModel.surfaceState) { oldState, newState in
             handleSurfaceStateChange(from: oldState, to: newState)
         }
-        .onChange(of: viewModel.compactPresentationSize) { _, _ in
-            refreshCompactChrome()
-        }
         .onChange(of: viewModel.collapsedActivityLayout) { _, _ in
             refreshCompactChrome()
         }
@@ -172,9 +173,15 @@ struct NotchSurfaceView: View {
         case .dormant:
             EmptyView()
         case .collapsed:
-            CollapsedPillView(viewModel: viewModel)
+            CollapsedPillView(
+                viewModel: viewModel,
+                presentationSize: displayedCompactPresentationSize
+            )
         case .collapsedActivity:
-            CollapsedActivityPillView(viewModel: viewModel)
+            CollapsedActivityPillView(
+                viewModel: viewModel,
+                presentationSize: displayedCompactPresentationSize
+            )
         case .confirmation:
             ConfirmationView(viewModel: viewModel)
         case .pomodoroComplete:
@@ -213,6 +220,7 @@ struct NotchSurfaceView: View {
         if isDropOnlyTransition(from: oldState, to: newState) {
             morphTask?.cancel()
             displayedState = newState
+            displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
             chromeMetrics = newMetrics
             surfaceOpacity = 1
             contentOpacity = 1
@@ -236,6 +244,7 @@ struct NotchSurfaceView: View {
         activeTransition = transition(from: visibleOldState, to: newState)
         withAnimation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content) {
             displayedState = newState
+            displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
             chromeMetrics = newMetrics
             surfaceOpacity = 1
             contentOpacity = 1
@@ -271,6 +280,7 @@ struct NotchSurfaceView: View {
         withoutAnimation {
             activeTransition = .opacity
             displayedState = viewModel.surfaceState
+            displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
             chromeMetrics = targetMetrics.anchored(at: request.geometry.sourceSize)
             surfaceOpacity = 1
             contentOpacity = 0
@@ -321,6 +331,7 @@ struct NotchSurfaceView: View {
         if hasVisibleSource {
             withAnimation(NotchMotion.surfaceContentReveal) {
                 displayedState = viewModel.surfaceState
+                displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
                 contentOpacity = 1
                 contentOffsetY = 0
                 contentScale = 1
@@ -360,6 +371,7 @@ struct NotchSurfaceView: View {
         if request.targetState.isVisible {
             withAnimation(NotchMotion.surfaceContentReveal) {
                 displayedState = viewModel.surfaceState
+                displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
                 contentOpacity = 1
                 contentOffsetY = 0
                 contentScale = 1
@@ -381,6 +393,7 @@ struct NotchSurfaceView: View {
         if !request.wasVisible {
             withoutAnimation {
                 displayedState = viewModel.surfaceState
+                displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
                 chromeMetrics = targetMetrics
                 surfaceOpacity = 1
                 contentOpacity = 1
@@ -400,6 +413,7 @@ struct NotchSurfaceView: View {
             withoutAnimation {
                 activeTransition = .opacity
                 displayedState = viewModel.surfaceState
+                displayedCompactPresentationSize = viewModel.effectiveCompactPresentationSize
                 chromeMetrics = targetMetrics
                 surfaceOpacity = 0
                 contentOpacity = 1
@@ -423,7 +437,7 @@ struct NotchSurfaceView: View {
     ) -> SurfaceChromeMetrics? {
         SurfaceChromeMetrics.resolve(
             for: state ?? viewModel.surfaceState,
-            compactPresentationSize: viewModel.compactPresentationSize,
+            compactPresentationSize: viewModel.effectiveCompactPresentationSize,
             activityLayout: viewModel.collapsedActivityLayout
         )
     }
@@ -460,8 +474,8 @@ struct NotchSurfaceView: View {
         switch state {
         case .expanded, .drop: "expanded"
         case .dormant: "dormant"
-        case .collapsed: "collapsed"
-        case .collapsedActivity: "collapsedActivity"
+        case .collapsed: "collapsed-\(displayedCompactPresentationSize.rawValue)"
+        case .collapsedActivity: "collapsedActivity-\(displayedCompactPresentationSize.rawValue)"
         case .confirmation: "confirmation"
         case .pomodoroComplete: "pomodoroComplete"
         case .onboarding: "onboarding"
@@ -507,13 +521,14 @@ struct NotchSurfaceView: View {
 
 struct CollapsedPillView: View {
     @ObservedObject var viewModel: AppViewModel
+    let presentationSize: CompactPresentationSize
     @State private var isHovered = false
 
     private var metrics: CompactSurfaceMetrics {
-        CompactSurfaceMetrics.capture(for: viewModel.compactPresentationSize)
+        CompactSurfaceMetrics.capture(for: presentationSize)
     }
 
-    private var isExtended: Bool { viewModel.compactPresentationSize == .extended }
+    private var isExtended: Bool { presentationSize == .extended }
 
     /// The pill was widened by exactly this slot when the mirror toggle was
     /// added, so the capture cluster keeps the width it has always had.
