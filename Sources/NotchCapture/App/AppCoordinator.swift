@@ -59,17 +59,15 @@ final class AppCoordinator {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
 
-        let schema = Schema([
-            CaptureItem.self,
-            CaptureTag.self,
-            ItemList.self,
-            SnippetCategory.self,
-            Attachment.self,
-        ])
+        let schema = Schema(NotchCaptureSchemaV2.models)
         var storeRecoveryBackupURL: URL?
         if previewMode {
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
-            self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+            self.modelContainer = try ModelContainer(
+                for: schema,
+                migrationPlan: NotchCaptureMigrationPlan.self,
+                configurations: [configuration]
+            )
         } else {
             let support = try FileManager.default.url(
                 for: .applicationSupportDirectory,
@@ -82,12 +80,20 @@ final class AppCoordinator {
             let storeURL = directory.appendingPathComponent("NotchCapture.store")
             let configuration = ModelConfiguration("NotchCapture", schema: schema, url: storeURL)
             do {
-                self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+                self.modelContainer = try ModelContainer(
+                    for: schema,
+                    migrationPlan: NotchCaptureMigrationPlan.self,
+                    configurations: [configuration]
+                )
             } catch {
                 // An unreadable store (corruption, incompatible schema) must not
                 // brick the app: keep the bad store as a backup and start fresh.
                 storeRecoveryBackupURL = try Self.moveStoreAside(storeURL: storeURL)
-                self.modelContainer = try ModelContainer(for: schema, configurations: [configuration])
+                self.modelContainer = try ModelContainer(
+                    for: schema,
+                    migrationPlan: NotchCaptureMigrationPlan.self,
+                    configurations: [configuration]
+                )
             }
         }
         self.attachmentStore = try AttachmentStore()
@@ -537,9 +543,6 @@ final class AppCoordinator {
         hooks.onCaptureText = { [weak self] text, folderID in
             self?.captureManualText(text, folderID: folderID)
         }
-        hooks.onCaptureQuickSnippet = { [weak self] text, categoryID in
-            self?.captureQuickSnippet(text, categoryID: categoryID)
-        }
         hooks.onCaptureComposerImages = { [weak self] text, images, folderID in
             self?.captureComposerImages(text: text, images: images, folderID: folderID)
         }
@@ -593,21 +596,6 @@ final class AppCoordinator {
         }
         hooks.onDeleteTag = { [weak self] id in
             self?.deleteTag(id: id)
-        }
-        hooks.onCreateSnippetCategory = { [weak self] name in
-            self?.createSnippetCategory(named: name)
-        }
-        hooks.onRenameSnippetCategory = { [weak self] id, name in
-            self?.renameSnippetCategory(id: id, to: name)
-        }
-        hooks.onDeleteSnippetCategory = { [weak self] id in
-            self?.deleteSnippetCategory(id: id)
-        }
-        hooks.onSetQuickSnippet = { [weak self] id, enabled, categoryID in
-            self?.setQuickSnippet(id: id, enabled: enabled, categoryID: categoryID)
-        }
-        hooks.onCopyQuickSnippet = { [weak self] id in
-            self?.copyQuickSnippet(id: id)
         }
         hooks.onTrash = { [weak self] id in
             self?.trash(id: id)

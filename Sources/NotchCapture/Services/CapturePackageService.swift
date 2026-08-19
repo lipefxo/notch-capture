@@ -3,13 +3,12 @@ import SwiftData
 import UniformTypeIdentifiers
 
 struct CapturePackageManifest: Codable, Sendable {
-    static let currentVersion = 5
+    static let currentVersion = 6
 
     let schemaVersion: Int
     let exportedAt: Date
     let lists: [ListRecord]
     let tags: [TagRecord]?
-    let snippetCategories: [SnippetCategoryRecord]?
     let items: [ItemRecord]
 
     struct ListRecord: Codable, Sendable {
@@ -24,14 +23,6 @@ struct CapturePackageManifest: Codable, Sendable {
         let id: UUID
         let name: String
         let colorSeed: Double?
-        let createdAt: Date
-        let updatedAt: Date
-    }
-
-    struct SnippetCategoryRecord: Codable, Sendable {
-        let id: UUID
-        let name: String
-        let sortOrder: Int
         let createdAt: Date
         let updatedAt: Date
     }
@@ -53,10 +44,98 @@ struct CapturePackageManifest: Codable, Sendable {
         let source: CaptureSource
         let listID: UUID?
         let tagIDs: [UUID]?
-        let reusableAt: Date?
-        let lastCopiedAt: Date?
-        let snippetCategoryID: UUID?
         let attachments: [AttachmentRecord]
+        /// Decode-only compatibility marker for package schemas 1...5.
+        /// It is never emitted in v6 exports.
+        let legacyReusableAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id, text, kind, isCompleted, completedAt, dueDate, isPinned
+            case archivedAt, trashedAt, sortOrder, createdAt, updatedAt, origin
+            case source, listID, tagIDs, attachments, reusableAt
+        }
+
+        init(
+            id: UUID,
+            text: String,
+            kind: CaptureItemKind,
+            isCompleted: Bool,
+            completedAt: Date?,
+            dueDate: Date?,
+            isPinned: Bool,
+            archivedAt: Date?,
+            trashedAt: Date?,
+            sortOrder: Int?,
+            createdAt: Date,
+            updatedAt: Date,
+            origin: CaptureOrigin,
+            source: CaptureSource,
+            listID: UUID?,
+            tagIDs: [UUID]?,
+            attachments: [AttachmentRecord]
+        ) {
+            self.id = id
+            self.text = text
+            self.kind = kind
+            self.isCompleted = isCompleted
+            self.completedAt = completedAt
+            self.dueDate = dueDate
+            self.isPinned = isPinned
+            self.archivedAt = archivedAt
+            self.trashedAt = trashedAt
+            self.sortOrder = sortOrder
+            self.createdAt = createdAt
+            self.updatedAt = updatedAt
+            self.origin = origin
+            self.source = source
+            self.listID = listID
+            self.tagIDs = tagIDs
+            self.attachments = attachments
+            self.legacyReusableAt = nil
+        }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            id = try container.decode(UUID.self, forKey: .id)
+            text = try container.decode(String.self, forKey: .text)
+            kind = try container.decode(CaptureItemKind.self, forKey: .kind)
+            isCompleted = try container.decode(Bool.self, forKey: .isCompleted)
+            completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+            dueDate = try container.decodeIfPresent(Date.self, forKey: .dueDate)
+            isPinned = try container.decode(Bool.self, forKey: .isPinned)
+            archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
+            trashedAt = try container.decodeIfPresent(Date.self, forKey: .trashedAt)
+            sortOrder = try container.decodeIfPresent(Int.self, forKey: .sortOrder)
+            createdAt = try container.decode(Date.self, forKey: .createdAt)
+            updatedAt = try container.decode(Date.self, forKey: .updatedAt)
+            origin = try container.decode(CaptureOrigin.self, forKey: .origin)
+            source = try container.decode(CaptureSource.self, forKey: .source)
+            listID = try container.decodeIfPresent(UUID.self, forKey: .listID)
+            tagIDs = try container.decodeIfPresent([UUID].self, forKey: .tagIDs)
+            attachments = try container.decode([AttachmentRecord].self, forKey: .attachments)
+            legacyReusableAt = try container.decodeIfPresent(Date.self, forKey: .reusableAt)
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            try container.encode(id, forKey: .id)
+            try container.encode(text, forKey: .text)
+            try container.encode(kind, forKey: .kind)
+            try container.encode(isCompleted, forKey: .isCompleted)
+            try container.encodeIfPresent(completedAt, forKey: .completedAt)
+            try container.encodeIfPresent(dueDate, forKey: .dueDate)
+            try container.encode(isPinned, forKey: .isPinned)
+            try container.encodeIfPresent(archivedAt, forKey: .archivedAt)
+            try container.encodeIfPresent(trashedAt, forKey: .trashedAt)
+            try container.encodeIfPresent(sortOrder, forKey: .sortOrder)
+            try container.encode(createdAt, forKey: .createdAt)
+            try container.encode(updatedAt, forKey: .updatedAt)
+            try container.encode(origin, forKey: .origin)
+            try container.encode(source, forKey: .source)
+            try container.encodeIfPresent(listID, forKey: .listID)
+            try container.encodeIfPresent(tagIDs, forKey: .tagIDs)
+            try container.encode(attachments, forKey: .attachments)
+        }
     }
 
     struct AttachmentRecord: Codable, Sendable {
@@ -108,7 +187,6 @@ final class CapturePackageService {
         let items = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
         let tags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
-        let snippetCategories = try modelContext.fetch(FetchDescriptor<SnippetCategory>())
         let parent = destination.deletingLastPathComponent()
         let temporary = parent.appendingPathComponent(".\(UUID().uuidString).notchcapture", isDirectory: true)
         let attachmentsDirectory = temporary.appendingPathComponent("attachments", isDirectory: true)
@@ -131,16 +209,6 @@ final class CapturePackageService {
                 id: $0.id,
                 name: $0.name,
                 colorSeed: $0.colorSeed,
-                createdAt: $0.createdAt,
-                updatedAt: $0.updatedAt
-            )
-        }
-
-        let snippetCategoryRecords = snippetCategories.map {
-            CapturePackageManifest.SnippetCategoryRecord(
-                id: $0.id,
-                name: $0.name,
-                sortOrder: $0.sortOrder,
                 createdAt: $0.createdAt,
                 updatedAt: $0.updatedAt
             )
@@ -205,9 +273,6 @@ final class CapturePackageService {
                 source: item.source,
                 listID: item.list?.id,
                 tagIDs: item.tags.map(\.id).sorted { $0.uuidString < $1.uuidString },
-                reusableAt: item.reusableAt,
-                lastCopiedAt: item.lastCopiedAt,
-                snippetCategoryID: item.snippetCategory?.id,
                 attachments: attachmentRecords
             )
         }
@@ -217,7 +282,6 @@ final class CapturePackageService {
             exportedAt: .now,
             lists: listRecords,
             tags: tagRecords,
-            snippetCategories: snippetCategoryRecords,
             items: itemRecords
         )
         let encoder = JSONEncoder()
@@ -252,22 +316,14 @@ final class CapturePackageService {
         let existingItems = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let existingLists = try modelContext.fetch(FetchDescriptor<ItemList>())
         let existingTags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
-        let existingSnippetCategories = try modelContext.fetch(FetchDescriptor<SnippetCategory>())
         let existingAttachments = try modelContext.fetch(FetchDescriptor<Attachment>())
         var itemsByID = Dictionary(uniqueKeysWithValues: existingItems.map { ($0.id, $0) })
         var listsByID = Dictionary(uniqueKeysWithValues: existingLists.map { ($0.id, $0) })
         var tagsByID = Dictionary(uniqueKeysWithValues: existingTags.map { ($0.id, $0) })
         var tagsByName = Dictionary(uniqueKeysWithValues: existingTags.map { ($0.normalizedName, $0) })
-        var snippetCategoriesByID = Dictionary(
-            uniqueKeysWithValues: existingSnippetCategories.map { ($0.id, $0) }
-        )
-        var snippetCategoriesByName = Dictionary(
-            uniqueKeysWithValues: existingSnippetCategories.map { ($0.normalizedName, $0) }
-        )
         var attachmentIDs = Set(existingAttachments.map(\.id))
         var listMapping: [UUID: ItemList] = [:]
         var tagMapping: [UUID: CaptureTag] = [:]
-        var snippetCategoryMapping: [UUID: SnippetCategory] = [:]
         var storedRelativePaths: [String] = []
         var importedCount = 0
         var duplicateCount = 0
@@ -330,53 +386,18 @@ final class CapturePackageService {
                 tagMapping[record.id] = tag
             }
 
-            for record in manifest.snippetCategories ?? [] {
-                let displayName = SnippetCategoryName.displayName(record.name)
-                let normalizedName = SnippetCategoryName.normalized(displayName)
-                guard !displayName.isEmpty else {
-                    throw CapturePackageError.invalidSnippetCategoryName(record.name)
-                }
-                if let existing = snippetCategoriesByName[normalizedName] {
-                    snippetCategoryMapping[record.id] = existing
-                    continue
-                }
-                let chosenID: UUID
-                if snippetCategoriesByID[record.id] == nil {
-                    chosenID = record.id
-                } else {
-                    chosenID = UUID()
-                    reassignedCount += 1
-                }
-                let category = SnippetCategory(
-                    id: chosenID,
-                    name: displayName,
-                    normalizedName: normalizedName,
-                    sortOrder: record.sortOrder,
-                    createdAt: record.createdAt,
-                    updatedAt: record.updatedAt
-                )
-                modelContext.insert(category)
-                snippetCategoriesByID[chosenID] = category
-                snippetCategoriesByName[normalizedName] = category
-                snippetCategoryMapping[record.id] = category
-            }
-
             for record in manifest.items {
+                // Packages created before v6 may contain retired Quick Snippets.
+                // Preserve the user's deletion choice by not importing them.
+                guard record.legacyReusableAt == nil else { continue }
                 let mappedTags = try (record.tagIDs ?? []).map { tagID in
                     guard let tag = tagMapping[tagID] else { throw CapturePackageError.missingTag(tagID) }
                     return tag
-                }
-                let mappedSnippetCategory = try record.snippetCategoryID.map { categoryID in
-                    guard let category = snippetCategoryMapping[categoryID] else {
-                        throw CapturePackageError.missingSnippetCategory(categoryID)
-                    }
-                    return category
                 }
                 if let existing = itemsByID[record.id],
                    isExactDuplicate(
                        record,
                        mappedTags: mappedTags,
-                       mappedSnippetCategory: mappedSnippetCategory,
                        of: existing
                    ) {
                     duplicateCount += 1
@@ -463,9 +484,6 @@ final class CapturePackageService {
                     origin: record.origin,
                     source: record.source,
                     list: record.listID.flatMap { listMapping[$0] },
-                    reusableAt: record.reusableAt,
-                    lastCopiedAt: record.lastCopiedAt,
-                    snippetCategory: mappedSnippetCategory,
                     tags: mappedTags,
                     attachments: attachments,
                     createdAt: record.createdAt,
@@ -492,7 +510,6 @@ final class CapturePackageService {
     private func isExactDuplicate(
         _ record: CapturePackageManifest.ItemRecord,
         mappedTags: [CaptureTag],
-        mappedSnippetCategory: SnippetCategory?,
         of item: CaptureItem
     ) -> Bool {
         let existingAttachments = item.attachments.sorted(by: { $0.order < $1.order })
@@ -520,9 +537,6 @@ final class CapturePackageService {
             record.origin == item.origin &&
             record.source == item.source &&
             record.listID == item.list?.id &&
-            record.reusableAt == item.reusableAt &&
-            record.lastCopiedAt == item.lastCopiedAt &&
-            mappedSnippetCategory?.id == item.snippetCategory?.id &&
             Set(mappedTags.map(\.id)) == Set(item.tags.map(\.id)) &&
             attachmentsMatch
     }
@@ -553,9 +567,7 @@ enum CapturePackageError: LocalizedError {
     case unsafePath(String)
     case missingAttachment(String)
     case missingTag(UUID)
-    case missingSnippetCategory(UUID)
     case invalidTagName(String)
-    case invalidSnippetCategoryName(String)
 
     var errorDescription: String? {
         switch self {
@@ -566,9 +578,7 @@ enum CapturePackageError: LocalizedError {
         case let .unsafePath(path): "The package contains an unsafe path: \(path)"
         case let .missingAttachment(path): "The package attachment is missing: \(path)"
         case let .missingTag(id): "The package references a missing tag: \(id.uuidString)"
-        case let .missingSnippetCategory(id): "The package references a missing snippet category: \(id.uuidString)"
         case let .invalidTagName(name): "The package contains an invalid tag name: \(name)"
-        case let .invalidSnippetCategoryName(name): "The package contains an invalid snippet category name: \(name)"
         }
     }
 }

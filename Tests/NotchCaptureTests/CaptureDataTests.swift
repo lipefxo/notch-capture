@@ -69,60 +69,6 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(try repository.fetch(scope: .inbox, search: "Work").map(\.id), [item.id])
     }
 
-    func testQuickSnippetRepositoryKeepsReusableStateOnTheCapture() throws {
-        let container = try makeContainer()
-        let repository = ItemRepository(modelContext: container.mainContext)
-        let category = try repository.createSnippetCategory(name: "  Client   Replies ")
-        let item = try repository.createItem(
-            text: "Hello @Lipe\nSecond line",
-            origin: .manual,
-            tagNames: ["Lipe"]
-        )
-
-        try repository.setQuickSnippet(true, for: item, category: category)
-
-        XCTAssertTrue(item.isQuickSnippet)
-        XCTAssertEqual(item.snippetCategory?.id, category.id)
-        XCTAssertEqual(item.quickSnippetCopyText, "Hello @Lipe\nSecond line")
-        XCTAssertEqual(category.name, "Client Replies")
-
-        let copiedAt = Date(timeIntervalSince1970: 42)
-        try repository.markQuickSnippetCopied(item, at: copiedAt)
-        XCTAssertEqual(item.lastCopiedAt, copiedAt)
-
-        try repository.renameSnippetCategory(category, to: "Replies")
-        XCTAssertEqual(item.snippetCategory?.name, "Replies")
-
-        try repository.deleteSnippetCategory(category)
-        XCTAssertTrue(item.isQuickSnippet)
-        XCTAssertNil(item.snippetCategory)
-
-        let link = try repository.createItem(
-            from: .url(try XCTUnwrap(URL(string: "https://example.com/docs"))),
-            origin: .manual
-        )
-        try repository.setQuickSnippet(true, for: link)
-        XCTAssertEqual(link.quickSnippetCopyText, "https://example.com/docs")
-
-        let file = try repository.createItem(
-            text: "File caption",
-            origin: .manual,
-            attachments: [
-                Attachment(
-                    kind: .file,
-                    typeIdentifier: UTType.pdf.identifier,
-                    originalFilename: "Report.pdf"
-                )
-            ]
-        )
-        XCTAssertThrowsError(try repository.setQuickSnippet(true, for: file)) {
-            XCTAssertEqual(
-                ($0 as? ItemRepositoryError)?.localizedDescription,
-                ItemRepositoryError.ineligibleQuickSnippet.localizedDescription
-            )
-        }
-    }
-
     func testEmbeddedTagCreationPreservesTextAndReusesNamesCaseInsensitively() throws {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)
@@ -806,7 +752,12 @@ final class CaptureDataTests: XCTestCase {
         let manifest = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: package.appendingPathComponent("manifest.json"))) as? [String: Any]
         )
-        XCTAssertEqual(manifest["schemaVersion"] as? Int, 5)
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 6)
+        XCTAssertNil(manifest["snippetCategories"])
+        let exportedItem = try XCTUnwrap((manifest["items"] as? [[String: Any]])?.first)
+        XCTAssertNil(exportedItem["reusableAt"])
+        XCTAssertNil(exportedItem["lastCopiedAt"])
+        XCTAssertNil(exportedItem["snippetCategoryID"])
 
         let targetContainer = try makeContainer()
         let targetStore = try AttachmentStore(rootURL: temporary.appendingPathComponent("target", isDirectory: true))
@@ -904,7 +855,7 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(try importer.importPackage(at: package).skippedDuplicateCount, 1)
     }
 
-    func testPackageRoundTripPreservesQuickSnippetCategoriesAndCopyOrder() throws {
+    func testLegacyPackageSkipsRetiredQuickSnippets() throws {
         let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
             UUID().uuidString,
             isDirectory: true
@@ -917,17 +868,25 @@ final class CaptureDataTests: XCTestCase {
             rootURL: temporary.appendingPathComponent("source", isDirectory: true)
         )
         let sourceRepository = ItemRepository(modelContext: sourceContainer.mainContext)
-        let category = try sourceRepository.createSnippetCategory(name: "Prompts")
-        let item = try sourceRepository.createItem(text: "Draft a release note", origin: .manual)
-        let copiedAt = Date(timeIntervalSince1970: 5_000)
-        try sourceRepository.setQuickSnippet(true, for: item, category: category)
-        try sourceRepository.markQuickSnippetCopied(item, at: copiedAt)
+        _ = try sourceRepository.createItem(text: "Delete this snippet", origin: .manual)
+        let kept = try sourceRepository.createItem(text: "Keep this capture", origin: .manual)
 
-        let package = temporary.appendingPathComponent("Snippets.notchcapture", isDirectory: true)
+        let package = temporary.appendingPathComponent("Legacy.notchcapture", isDirectory: true)
         try CapturePackageService(
             modelContext: sourceContainer.mainContext,
             attachmentStore: sourceStore
         ).export(to: package)
+        let manifestURL = package.appendingPathComponent("manifest.json")
+        var manifest = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as? [String: Any]
+        )
+        manifest["schemaVersion"] = 5
+        var items = try XCTUnwrap(manifest["items"] as? [[String: Any]])
+        let deletedIndex = try XCTUnwrap(items.firstIndex { $0["text"] as? String == "Delete this snippet" })
+        items[deletedIndex]["reusableAt"] = ISO8601DateFormatter().string(from: .now)
+        manifest["items"] = items
+        try JSONSerialization.data(withJSONObject: manifest, options: [.prettyPrinted, .sortedKeys])
+            .write(to: manifestURL, options: .atomic)
 
         let targetContainer = try makeContainer()
         let targetStore = try AttachmentStore(
@@ -941,16 +900,43 @@ final class CaptureDataTests: XCTestCase {
         let imported = try XCTUnwrap(
             targetContainer.mainContext.fetch(FetchDescriptor<CaptureItem>()).first
         )
-        let importedCategory = try XCTUnwrap(
-            targetContainer.mainContext.fetch(FetchDescriptor<SnippetCategory>()).first
-        )
 
         XCTAssertEqual(result.importedItemCount, 1)
-        XCTAssertEqual(importedCategory.id, category.id)
-        XCTAssertEqual(imported.snippetCategory?.id, category.id)
-        XCTAssertNotNil(imported.reusableAt)
-        XCTAssertEqual(imported.lastCopiedAt, copiedAt)
+        XCTAssertEqual(imported.id, kept.id)
+        XCTAssertEqual(imported.text, "Keep this capture")
         XCTAssertEqual(try importer.importPackage(at: package).skippedDuplicateCount, 1)
+    }
+
+    func testSchemaMigrationDeletesQuickSnippetsAndPreservesOrdinaryLibraryData() throws {
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(
+            UUID().uuidString,
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.createDirectory(at: temporary, withIntermediateDirectories: true)
+        let storeURL = temporary.appendingPathComponent("NotchCapture.store")
+        let keptID = UUID()
+
+        try populateLegacySnippetStore(at: storeURL, keptID: keptID)
+
+        let schema = Schema(NotchCaptureSchemaV2.models)
+        let configuration = ModelConfiguration("NotchCapture", schema: schema, url: storeURL)
+        let migrated = try ModelContainer(
+            for: schema,
+            migrationPlan: NotchCaptureMigrationPlan.self,
+            configurations: [configuration]
+        )
+        let captures = try migrated.mainContext.fetch(FetchDescriptor<CaptureItem>())
+        let tags = try migrated.mainContext.fetch(FetchDescriptor<CaptureTag>())
+        let lists = try migrated.mainContext.fetch(FetchDescriptor<ItemList>())
+        let attachments = try migrated.mainContext.fetch(FetchDescriptor<Attachment>())
+
+        XCTAssertEqual(captures.map(\.id), [keptID])
+        XCTAssertEqual(captures.first?.text, "Keep this capture")
+        XCTAssertEqual(tags.map(\.name), ["Work"])
+        XCTAssertEqual(lists.map(\.name), ["Projects"])
+        XCTAssertEqual(attachments.count, 1)
+        XCTAssertEqual(attachments.first?.originalFilename, "keep.txt")
     }
 
     func testVersionOnePackageImportsWithoutTags() throws {
@@ -995,14 +981,61 @@ final class CaptureDataTests: XCTestCase {
     }
 
     private func makeContainer() throws -> ModelContainer {
-        let schema = Schema([
-            CaptureItem.self,
-            CaptureTag.self,
-            ItemList.self,
-            SnippetCategory.self,
-            Attachment.self,
-        ])
+        let schema = Schema(NotchCaptureSchemaV2.models)
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
-        return try ModelContainer(for: schema, configurations: [configuration])
+        return try ModelContainer(
+            for: schema,
+            migrationPlan: NotchCaptureMigrationPlan.self,
+            configurations: [configuration]
+        )
+    }
+
+    private func populateLegacySnippetStore(at storeURL: URL, keptID: UUID) throws {
+        let schema = Schema(NotchCaptureSchemaV1.models)
+        let configuration = ModelConfiguration("NotchCapture", schema: schema, url: storeURL)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = container.mainContext
+        let tag = NotchCaptureSchemaV1.CaptureTag(
+            name: "Work",
+            normalizedName: "work"
+        )
+        let list = NotchCaptureSchemaV1.ItemList(name: "Projects")
+        let category = NotchCaptureSchemaV1.SnippetCategory(
+            name: "Replies",
+            normalizedName: "replies"
+        )
+        let keptAttachment = NotchCaptureSchemaV1.Attachment(
+            kindRawValue: AttachmentKind.file.rawValue,
+            typeIdentifier: UTType.plainText.identifier,
+            originalFilename: "keep.txt"
+        )
+        let deletedAttachment = NotchCaptureSchemaV1.Attachment(
+            kindRawValue: AttachmentKind.file.rawValue,
+            typeIdentifier: UTType.plainText.identifier,
+            originalFilename: "delete.txt"
+        )
+        let kept = NotchCaptureSchemaV1.CaptureItem(
+            id: keptID,
+            text: "Keep this capture",
+            list: list,
+            tags: [tag],
+            attachments: [keptAttachment]
+        )
+        let deleted = NotchCaptureSchemaV1.CaptureItem(
+            text: "Delete this snippet",
+            reusableAt: .now,
+            snippetCategory: category,
+            attachments: [deletedAttachment]
+        )
+        keptAttachment.item = kept
+        deletedAttachment.item = deleted
+        context.insert(tag)
+        context.insert(list)
+        context.insert(category)
+        context.insert(kept)
+        context.insert(deleted)
+        context.insert(keptAttachment)
+        context.insert(deletedAttachment)
+        try context.save()
     }
 }

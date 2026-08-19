@@ -154,18 +154,6 @@ extension AppViewModel {
         var name: String { tag.name }
     }
 
-    struct SnippetCategorySummary: Identifiable, Hashable {
-        var id: UUID
-        var name: String
-        var sortOrder: Int
-
-        init(id: UUID = UUID(), name: String, sortOrder: Int = 0) {
-            self.id = id
-            self.name = name
-            self.sortOrder = sortOrder
-        }
-    }
-
     enum TagSuggestion: Identifiable, Hashable {
         case existing(TagGroup)
         case create(String)
@@ -239,10 +227,6 @@ extension AppViewModel {
         var isArchived: Bool
         var isTrashed: Bool
         var sortOrder: Int?
-        var reusableAt: Date?
-        var lastCopiedAt: Date?
-        var snippetCategoryID: UUID?
-        var snippetCategoryName: String?
         var tags: [TagSummary]
         var attachments: [LedgerAttachment]
 
@@ -264,10 +248,6 @@ extension AppViewModel {
             isArchived: Bool = false,
             isTrashed: Bool = false,
             sortOrder: Int? = nil,
-            reusableAt: Date? = nil,
-            lastCopiedAt: Date? = nil,
-            snippetCategoryID: UUID? = nil,
-            snippetCategoryName: String? = nil,
             tags: [TagSummary] = [],
             attachments: [LedgerAttachment] = []
         ) {
@@ -291,10 +271,6 @@ extension AppViewModel {
             self.isArchived = isArchived
             self.isTrashed = isTrashed
             self.sortOrder = sortOrder
-            self.reusableAt = reusableAt
-            self.lastCopiedAt = lastCopiedAt
-            self.snippetCategoryID = snippetCategoryID
-            self.snippetCategoryName = snippetCategoryName
             self.tags = tags
             self.attachments = attachments
         }
@@ -334,26 +310,6 @@ extension AppViewModel {
             return subtitle
         }
 
-        var isQuickSnippet: Bool { reusableAt != nil }
-
-        var isQuickSnippetEligible: Bool {
-            attachments.allSatisfy { $0.kind == .link } &&
-                (!text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
-        }
-
-        var quickSnippetPreview: String {
-            let lines = text
-                .split(whereSeparator: \.isNewline)
-                .map(String.init)
-                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            if lines.count > 1 {
-                return lines.dropFirst().joined(separator: " · ")
-            }
-            if let first = attachments.first(where: { $0.kind == .link }) {
-                return first.previewURL?.absoluteString ?? first.name
-            }
-            return lines.first ?? detail
-        }
     }
 
     struct Confirmation: Equatable {
@@ -443,7 +399,6 @@ extension AppViewModel {
     struct Hooks {
         var onDismiss: () -> Void = {}
         var onCaptureText: (String, UUID?) -> Void = { _, _ in }
-        var onCaptureQuickSnippet: (String, UUID?) -> String? = { _, _ in nil }
         var onCaptureComposerImages: (String, [ComposerImage], UUID?) -> String? = { _, _, _ in nil }
         var onPastedImageProviders: ([NSItemProvider], UUID) -> Void = { _, _ in }
         var onUndoCapture: (UUID?) -> Void = { _ in }
@@ -462,11 +417,6 @@ extension AppViewModel {
         var onCreateTag: (String) -> Void = { _ in }
         var onRenameTag: (UUID, String) -> Void = { _, _ in }
         var onDeleteTag: (UUID) -> Void = { _ in }
-        var onCreateSnippetCategory: (String) -> UUID? = { _ in nil }
-        var onRenameSnippetCategory: (UUID, String) -> String? = { _, _ in nil }
-        var onDeleteSnippetCategory: (UUID) -> Void = { _ in }
-        var onSetQuickSnippet: (UUID, Bool, UUID?) -> String? = { _, _, _ in nil }
-        var onCopyQuickSnippet: (UUID) -> String? = { _ in nil }
         var onTrash: (UUID) -> Void = { _ in }
         var onRestore: (UUID) -> Void = { _ in }
         var onDeletePermanently: (UUID) -> Void = { _ in }

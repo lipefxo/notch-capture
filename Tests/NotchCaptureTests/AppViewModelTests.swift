@@ -85,157 +85,30 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.composerActionLabel, "Add")
     }
 
-    func testSlashCommandPickerShowsAndAcceptsFolderCommand() {
+    func testSlashCommandPickerOffersOnlyRemainingCommands() {
         let viewModel = AppViewModel()
 
         viewModel.composerText = "/"
 
-        XCTAssertEqual(viewModel.composerCommandSuggestions, [.snippet, .folder, .clear])
-        viewModel.moveComposerCommandSelection(by: 1)
+        XCTAssertEqual(viewModel.composerCommandSuggestions, [.folder, .clear])
         XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
         XCTAssertEqual(viewModel.composerText, "/folder ")
         XCTAssertTrue(viewModel.isFolderCommandActive)
+
+        viewModel.composerText = "/sn"
+        XCTAssertTrue(viewModel.composerCommandSuggestions.isEmpty)
 
         viewModel.composerText = "/unknown"
         XCTAssertTrue(viewModel.composerCommandSuggestions.isEmpty)
     }
 
-    func testSnippetCommandUsesDedicatedDraftAndEscapeKeepsANormalDraft() {
-        let category = AppViewModel.SnippetCategorySummary(name: "Replies")
-        var capturedText: String?
-        var capturedCategoryID: UUID?
-        var hooks = AppViewModel.Hooks()
-        hooks.onCaptureQuickSnippet = { text, categoryID in
-            capturedText = text
-            capturedCategoryID = categoryID
-            return nil
-        }
-        let viewModel = AppViewModel(
-            snippetCategories: [category],
-            hooks: hooks
-        )
+    func testRootLedgerShowsAllMatchingInboxCapturesWithoutAShelf() {
+        let first = AppViewModel.LedgerItem(title: "First", createdAt: .now)
+        let second = AppViewModel.LedgerItem(title: "Second", createdAt: .now.addingTimeInterval(-1))
+        let viewModel = AppViewModel(items: [second, first])
 
-        viewModel.composerText = "/sn"
-        XCTAssertEqual(viewModel.composerCommandSuggestions, [.snippet])
-        XCTAssertTrue(viewModel.acceptSelectedComposerCommand())
-        XCTAssertTrue(viewModel.isSnippetDraftMode)
-        XCTAssertEqual(viewModel.composerText, "")
-        XCTAssertFalse(viewModel.composerHasQuery)
-
-        viewModel.setSnippetDraftCategory(category.id)
-        viewModel.composerText = "Hello @Lipe\nSecond line"
-        viewModel.handleComposerReturn()
-
-        XCTAssertEqual(capturedText, "Hello @Lipe\nSecond line")
-        XCTAssertEqual(capturedCategoryID, category.id)
-        XCTAssertFalse(viewModel.isSnippetDraftMode)
-        XCTAssertEqual(viewModel.composerText, "")
-
-        viewModel.enterSnippetDraftMode()
-        viewModel.composerText = "Keep this as a normal draft"
-        viewModel.handleDismissalRequest(.escape)
-
-        XCTAssertFalse(viewModel.isSnippetDraftMode)
-        XCTAssertEqual(viewModel.composerText, "Keep this as a normal draft")
-        XCTAssertTrue(viewModel.composerHasQuery)
-    }
-
-    func testQuickSnippetShelfDeduplicatesRootAndHonorsCategorySearchAndLifecycle() {
-        let prompts = AppViewModel.SnippetCategorySummary(name: "Prompts")
-        let folder = AppViewModel.FolderSummary(name: "Work")
-        let reusable = AppViewModel.LedgerItem(
-            title: "Review checklist",
-            folderID: folder.id,
-            reusableAt: .now,
-            snippetCategoryID: prompts.id,
-            snippetCategoryName: prompts.name
-        )
-        let archived = AppViewModel.LedgerItem(
-            title: "Archived reply",
-            isArchived: true,
-            reusableAt: .now.addingTimeInterval(-10)
-        )
-        let trashed = AppViewModel.LedgerItem(
-            title: "Trashed reply",
-            isTrashed: true,
-            reusableAt: .now.addingTimeInterval(-20)
-        )
-        let ordinary = AppViewModel.LedgerItem(title: "Ordinary capture")
-        let viewModel = AppViewModel(
-            items: [reusable, archived, trashed, ordinary],
-            folders: [folder],
-            snippetCategories: [prompts]
-        )
-
-        XCTAssertTrue(viewModel.showsQuickSnippetShelf)
-        XCTAssertEqual(Set(viewModel.visibleQuickSnippets.map(\.id)), Set([reusable.id, archived.id]))
-        XCTAssertEqual(viewModel.visibleItems.map(\.id), [ordinary.id])
-
-        viewModel.selectSnippetCategory(prompts.id)
-        XCTAssertEqual(viewModel.visibleQuickSnippets.map(\.id), [reusable.id])
-        viewModel.composerText = "checklist"
-        XCTAssertEqual(viewModel.searchMatchCount, 1)
-        XCTAssertTrue(viewModel.visibleItems.isEmpty)
-
-        viewModel.openFolder(folder)
-        XCTAssertFalse(viewModel.showsQuickSnippetShelf)
-        XCTAssertEqual(viewModel.visibleItems.map(\.id), [reusable.id])
-
-        viewModel.openRoot()
-        viewModel.filter = .archive
-        XCTAssertFalse(viewModel.showsQuickSnippetShelf)
-        XCTAssertEqual(viewModel.visibleItems.map(\.id), [archived.id])
-    }
-
-    func testCopyingSnippetShowsFeedbackAndMovesItToTheFront() {
-        let now = Date(timeIntervalSince1970: 10_000)
-        let first = AppViewModel.LedgerItem(
-            title: "First",
-            reusableAt: now.addingTimeInterval(-300),
-            lastCopiedAt: now.addingTimeInterval(-100)
-        )
-        let second = AppViewModel.LedgerItem(
-            title: "Second",
-            reusableAt: now.addingTimeInterval(-200),
-            lastCopiedAt: now.addingTimeInterval(-50)
-        )
-        var copiedID: UUID?
-        var hooks = AppViewModel.Hooks()
-        hooks.onCopyQuickSnippet = {
-            copiedID = $0
-            return nil
-        }
-        let viewModel = AppViewModel(
-            items: [first, second],
-            hooks: hooks,
-            now: { now }
-        )
-
-        XCTAssertEqual(viewModel.visibleQuickSnippets.map(\.id), [second.id, first.id])
-        viewModel.copyQuickSnippet(first)
-
-        XCTAssertEqual(copiedID, first.id)
-        XCTAssertEqual(viewModel.copiedSnippetID, first.id)
-        XCTAssertEqual(viewModel.visibleQuickSnippets.map(\.id), [first.id, second.id])
-    }
-
-    func testQuickSnippetEligibilityAllowsOnlyTextAndLinks() {
-        XCTAssertTrue(AppViewModel.LedgerItem(title: "Text").isQuickSnippetEligible)
-        XCTAssertTrue(AppViewModel.LedgerItem(
-            title: "Link",
-            text: "",
-            attachments: [
-                .init(kind: .link, name: "example.com", previewURL: URL(string: "https://example.com"))
-            ]
-        ).isQuickSnippetEligible)
-        XCTAssertFalse(AppViewModel.LedgerItem(
-            title: "File",
-            attachments: [.init(kind: .file, name: "Report.pdf")]
-        ).isQuickSnippetEligible)
-        XCTAssertFalse(AppViewModel.LedgerItem(
-            title: "Caption with image",
-            attachments: [.init(kind: .image, name: "Image.png")]
-        ).isQuickSnippetEligible)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [first.id, second.id])
+        XCTAssertEqual(viewModel.searchMatchCount, 2)
     }
 
     func testClearCommandParsingIsCaseInsensitiveExactAndArgumentFree() {
