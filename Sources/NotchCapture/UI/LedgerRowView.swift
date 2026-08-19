@@ -1020,28 +1020,6 @@ struct LedgerRowView: View, Equatable {
             NotchMenuItem(title: item.isCompleted ? "Mark incomplete" : "Complete", icon: item.isCompleted ? "arrow.uturn.backward" : "checkmark") { viewModel.toggleComplete(item) },
             NotchMenuItem(title: item.isPinned ? "Unpin" : "Pin", icon: item.isPinned ? "pin.slash" : "pin") { viewModel.togglePin(item) },
         ]
-        if item.isQuickSnippet {
-            let categoryItems = quickSnippetCategoryMenuItems
-            items.append(NotchMenuItem(title: "Snippet category…", icon: "square.grid.2x2") { [presentation, actionsAnchor] in
-                presentation.present(NotchMenu(
-                    title: "Snippet category",
-                    anchor: actionsAnchor,
-                    items: categoryItems
-                ))
-            })
-            items.append(NotchMenuItem(title: "Remove from Quick snippets", icon: "bolt.slash") {
-                viewModel.setQuickSnippet(item, enabled: false)
-            })
-        } else if item.isQuickSnippetEligible, !item.isTrashed {
-            let categoryItems = quickSnippetCategoryMenuItems
-            items.append(NotchMenuItem(title: "Add to Quick snippets…", icon: "bolt") { [presentation, actionsAnchor] in
-                presentation.present(NotchMenu(
-                    title: "Add to Quick snippets",
-                    anchor: actionsAnchor,
-                    items: categoryItems
-                ))
-            })
-        }
         if !viewModel.folders.isEmpty || item.folderID != nil {
             let moveItems = moveMenuItems
             items.append(NotchMenuItem(title: "Move to…", icon: "folder") { [presentation, actionsAnchor] in
@@ -1056,28 +1034,6 @@ struct LedgerRowView: View, Equatable {
                 item.isArchived ? viewModel.restore(item) : viewModel.archive(item)
             })
             items.append(NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { viewModel.trash(item) })
-        }
-        return items
-    }
-
-    private var quickSnippetCategoryMenuItems: [NotchMenuItem] {
-        var items = [
-            NotchMenuItem(
-                title: "No category",
-                icon: "circle.dashed",
-                isChecked: item.isQuickSnippet && item.snippetCategoryID == nil
-            ) {
-                viewModel.setQuickSnippet(item, enabled: true, categoryID: nil)
-            }
-        ]
-        for category in viewModel.orderedSnippetCategories {
-            items.append(NotchMenuItem(
-                title: category.name,
-                icon: "square.grid.2x2",
-                isChecked: item.snippetCategoryID == category.id
-            ) {
-                viewModel.setQuickSnippet(item, enabled: true, categoryID: category.id)
-            })
         }
         return items
     }

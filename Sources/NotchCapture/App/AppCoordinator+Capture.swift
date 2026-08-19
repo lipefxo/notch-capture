@@ -30,37 +30,6 @@ extension AppCoordinator {
         }
     }
 
-    func captureQuickSnippet(_ text: String, categoryID: UUID?) -> String? {
-        do {
-            let parsed = CaptureTagParser.parse(text)
-            let payload: CapturePayload = if let url = CaptureURLParser.url(from: parsed.text) {
-                .url(url)
-            } else {
-                .text(text)
-            }
-            let item = try repository.createItem(
-                from: payload,
-                origin: .manual,
-                tagNames: parsed.tagNames
-            )
-            let category = try categoryID.map(findSnippetCategoryForCapture)
-            try repository.setQuickSnippet(true, for: item, category: category)
-            presentCaptureFeedback(for: item, feedback: .stayExpanded)
-            return nil
-        } catch {
-            reloadFromStore()
-            return error.localizedDescription
-        }
-    }
-
-    private func findSnippetCategoryForCapture(_ id: UUID) throws -> SnippetCategory {
-        let categories = try modelContainer.mainContext.fetch(FetchDescriptor<SnippetCategory>())
-        guard let category = categories.first(where: { $0.id == id }) else {
-            throw ItemRepositoryError.snippetCategoryNotFound(id)
-        }
-        return category
-    }
-
     func captureComposerImages(
         text: String,
         images: [AppViewModel.ComposerImage],
