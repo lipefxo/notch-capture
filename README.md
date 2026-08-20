@@ -31,6 +31,12 @@ The expanded surface includes a utility shelf:
 
 While idle, active music or a running timer shows in a compact activity pill in the notch.
 
+## Audio output
+
+The expanded surface includes a persistent three-way output strip for this Mac's AirPods, EDIFIER M60 speakers, and the headphones connected through the `fifine Ampli1` interface. Available devices switch both normal app audio and system sounds with one click; disconnected devices remain visible but disabled so each target stays in a predictable position. The strip follows changes made in Control Center and updates automatically when Bluetooth or USB devices appear or disappear.
+
+The integration uses Apple's Core Audio hardware properties directly. It does not record audio, request microphone access, initiate Bluetooth connections, or install an audio driver.
+
 ## Mirror
 
 A camera glyph in the notch — present on both compact pills and in the expanded header — opens a live webcam preview. It is a mirror only: nothing is recorded, captured, or sent anywhere. Unlike the inbox surfaces it never takes keyboard focus and does not close when you click elsewhere, so it stays put while you get ready for a call; the same glyph, the header's close button, or a click on the notch itself puts it away and turns the camera off. The first use asks for camera access (macOS ties that grant to the build's signature, so development builds re-prompt).

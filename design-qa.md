@@ -1,3 +1,49 @@
+# Design QA — Persistent Audio Output Strip
+
+## Comparison
+
+- Source visual truth: `/Users/lipe/.codex/generated_images/01a01ca9-addb-7382-a850-7cd3e3f7ede9/exec-eeb8d107-1772-48ae-8079-67a28e18509d.png` (1086 × 1449 pixels).
+- Native implementation: `.context/qa/audio-output/expanded-strip-final-clean.png` (920 × 1280 pixels; 460 × 640 points at 2×).
+- Full-view comparison: `.context/qa/audio-output/reference-vs-implementation.png` (1888 × 1280 pixels).
+- Focused header/strip comparison: `.context/qa/audio-output/reference-vs-implementation-strip.png` (1888 × 460 pixels).
+- Density normalization: the generated source was proportionally normalized to the implementation's 920-pixel width; both focused regions cover the top 230 points at the implementation's 2× density.
+- State: expanded inbox, AirPods unavailable, Edifier selected, interface headphones available.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- The native 44-point strip preserves the selected direction's three equal controls, stable ordering, inset dividers, dimmed unavailable state with disconnect badge, violet selected icon/text, and 2-point underline.
+- The implementation intentionally keeps the production app's current header utilities, tags, folders, ledger, and floating composer rather than replacing them with the older conceptual content generated around the strip.
+- Typography uses native SF at the app's compact control scale. Canvas-resolved labels preserve the intended weights while avoiding the persistent AppKit host's first-commit glyph omission.
+- Spacing and layout match the reference rhythm: the strip sits immediately below the header, fills the existing 20-point content column, keeps 44-point hit targets, and does not clip any label or icon.
+- Colors map to existing tokens: ink background, hairline separators, secondary/tertiary text states, and the established violet `dueAccent` for the active output.
+- No raster assets were required. Device artwork uses template-rendered SF Symbols with native antialiasing and a code-native unavailable badge.
+- Copy is concise and matches the selected direction: `AirPods`, `Edifier`, and `Headphones`.
+
+## Interaction and Accessibility Checks
+
+- Available controls route through the ViewModel into the Core Audio service; unavailable controls are disabled and cannot write hardware state.
+- Selection writes both media and system-sound defaults, then publishes hardware readback rather than an optimistic state. External device/default listeners refresh the strip.
+- Preview actions update only preview state and cannot change the Mac's real output.
+- Accessibility coverage exposes the `Audio output` group, current device, per-device availability, selected traits, and switching hints.
+- Isolated tests cover selection, split-default failures, device disappearance, external notifications, hook forwarding, and visible accessibility states without touching real audio hardware.
+
+## Comparison History
+
+1. The first native capture exposed a P2 rendering defect: the persistent AppKit host omitted the Edifier and Headphones static labels on first commit. The three labels were moved to compact Canvas rendering, and the next capture showed all labels consistently.
+2. The first focused comparison exposed a P2 state-color mismatch: the selected speaker glyph remained white while the source used violet. The SF Symbol was forced into template/monochrome rendering and changed to the outlined speaker variant. The final focused comparison shows icon, label, and underline sharing the selected token.
+3. The post-fix full and focused comparisons found no remaining P0/P1/P2 typography, spacing, color, icon, copy, or clipping issues.
+
+## Verification
+
+- `swift test --quiet`: 371 tests, zero failures.
+- Debug application bundle builds successfully and passes strict code-signature verification.
+- Native preview capture uses `--preview-audio-output-strip` to keep the evidence deterministic and prevent composer keystrokes from changing the comparison state.
+
+final result: passed
+
+---
+
 # Design QA — Expanded Header Center-to-Collapse
 
 ## Comparison

@@ -433,6 +433,8 @@ extension AppViewModel {
         var onMusicSeek: (TimeInterval) -> Void = { _ in }
         var onReconnectMedia: (NowPlayingSource) -> Void = { _ in }
         var onOpenMediaAutomationSettings: () -> Void = {}
+        var onRefreshAudioOutputs: () -> Void = {}
+        var onSelectAudioOutput: (AudioOutputTarget) -> Void = { _ in }
         var onStartStudioLightPairing: () -> Void = {}
         var onCancelStudioLightPairing: () -> Void = {}
         var onPairStudioLight: (UUID) -> Void = { _ in }
