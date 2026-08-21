@@ -57,19 +57,82 @@ struct AudioOutputDevice: Equatable, Sendable {
     }
 }
 
+struct AudioVolumeViewState: Equatable, Sendable {
+    var value: Double?
+    var isMuted: Bool
+    var canSetVolume: Bool
+    var canSetMute: Bool
+    var deviceName: String?
+
+    static let empty = Self(
+        value: nil,
+        isMuted: false,
+        canSetVolume: false,
+        canSetMute: false,
+        deviceName: nil
+    )
+
+    static let preview = Self(
+        value: 0.64,
+        isMuted: false,
+        canSetVolume: true,
+        canSetMute: true,
+        deviceName: AudioOutputTarget.edifier.systemDeviceName
+    )
+
+    var clampedValue: Double? {
+        value.map { min(1, max(0, $0)) }
+    }
+
+    var isEffectivelyMuted: Bool {
+        isMuted || (clampedValue ?? 1) <= 0.0001
+    }
+
+    var percentageText: String {
+        guard let clampedValue else { return "Device controls" }
+        return "\(Int((clampedValue * 100).rounded()))%"
+    }
+
+    var accessibilityValue: String {
+        guard let clampedValue else {
+            return deviceName.map { "Use controls on \($0)" } ?? "Use device controls"
+        }
+        let percentage = Int((clampedValue * 100).rounded())
+        return isEffectivelyMuted ? "Muted, \(percentage)%" : "\(percentage)%"
+    }
+}
+
 struct AudioOutputViewState: Equatable, Sendable {
     var availableTargets: Set<AudioOutputTarget>
     var mediaTarget: AudioOutputTarget?
     var systemTarget: AudioOutputTarget?
     var mediaDeviceName: String?
     var systemDeviceName: String?
+    var volume: AudioVolumeViewState
+
+    init(
+        availableTargets: Set<AudioOutputTarget>,
+        mediaTarget: AudioOutputTarget?,
+        systemTarget: AudioOutputTarget?,
+        mediaDeviceName: String?,
+        systemDeviceName: String?,
+        volume: AudioVolumeViewState = .empty
+    ) {
+        self.availableTargets = availableTargets
+        self.mediaTarget = mediaTarget
+        self.systemTarget = systemTarget
+        self.mediaDeviceName = mediaDeviceName
+        self.systemDeviceName = systemDeviceName
+        self.volume = volume
+    }
 
     static let empty = Self(
         availableTargets: [],
         mediaTarget: nil,
         systemTarget: nil,
         mediaDeviceName: nil,
-        systemDeviceName: nil
+        systemDeviceName: nil,
+        volume: .empty
     )
 
     static let preview = Self(
@@ -77,7 +140,8 @@ struct AudioOutputViewState: Equatable, Sendable {
         mediaTarget: .edifier,
         systemTarget: .edifier,
         mediaDeviceName: AudioOutputTarget.edifier.systemDeviceName,
-        systemDeviceName: AudioOutputTarget.edifier.systemDeviceName
+        systemDeviceName: AudioOutputTarget.edifier.systemDeviceName,
+        volume: .preview
     )
 
     func isAvailable(_ target: AudioOutputTarget) -> Bool {

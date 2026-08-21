@@ -1,3 +1,38 @@
+# Design QA — Focused Notch Volume Control
+
+## Comparison
+
+- Selected direction: option 2, with a compact speaker entry point, a focused 340 × 56-point notch surface, and a 44-point expanded volume row.
+- Native captures: `.context/qa/volume-control/idle-final-3.png`, `.context/qa/volume-control/hardware-activity-final-3.png`, `.context/qa/volume-control/volume-final-3.png`, `.context/qa/volume-control/volume-muted-final-3.png`, `.context/qa/volume-control/volume-unsupported-final-3.png`, and `.context/qa/volume-control/expanded-final-3.png`.
+- States: idle pill, hardware-notch music activity, normal focused volume, muted focused volume, device-controlled output, and expanded inbox.
+
+## Findings
+
+- No actionable P0/P1/P2 findings remain.
+- Idle and external-display music pills gain one 28-point speaker slot without reducing their existing content width. Hardware-notch activity keeps its wing geometry and fits speaker plus mirror controls in the trailing wing.
+- The focused surface keeps the notch-hug silhouette, standard open-surface shadow, compact white volume fill, rounded percentage, and a clear Back action. It does not request keyboard focus.
+- The expanded row sits directly below the output strip. Its white slider hierarchy leaves violet reserved for the selected output device.
+- Muted and zero-volume states use the muted speaker presentation while preserving the scalar value. Unsupported devices keep the controls visible and replace the percentage with `Device controls`.
+- The final visual pass corrected an AppKit first-commit repaint omission on the focused surface and made the speaker glyph use deterministic monochrome Canvas shading in both focused and expanded layouts.
+
+## Interaction and Accessibility Checks
+
+- Back and outside click close the explicit volume session; there is no pointer-exit or timed dismissal.
+- Closing re-evaluates live activity and returns to playing music, the idle capture pill, or dormant when the external pill is configured to hide.
+- VoiceOver can operate mute, volume, and Back while the panel remains non-activating and does not take keyboard input from the foreground app.
+- Unavailable volume and mute capabilities disable only the corresponding hardware action and expose device-control guidance.
+
+## Verification
+
+- `swift test --quiet`: 366 tests, zero failures.
+- Core Audio and ViewModel coverage includes reads, clamped writes, hardware readback, failures, unsupported controls, channel-balance preservation, listener rebinding, output switching, preview isolation, explicit-session behavior, return destinations, and geometry.
+- Debug application bundle builds successfully and passes strict code-signature verification.
+- Deterministic native captures were inspected at original resolution for all planned layout states.
+
+final result: passed
+
+---
+
 # Design QA — Persistent Audio Output Strip
 
 ## Comparison

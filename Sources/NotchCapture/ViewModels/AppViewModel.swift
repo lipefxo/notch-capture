@@ -837,6 +837,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleDismissalRequest(_ reason: PanelDismissalReason) {
+        if surfaceState == .volume {
+            closeVolumeControl()
+            return
+        }
         switch reason {
         case .escape:
             if itemEditSession != nil {
@@ -1495,6 +1499,23 @@ final class AppViewModel: ObservableObject {
     func selectAudioOutput(_ target: AudioOutputTarget) {
         hooks.onSelectAudioOutput(target)
     }
+    func setOutputVolume(_ volume: Double) {
+        let clamped = min(1, max(0, volume))
+        audioOutputState.volume.value = clamped
+        hooks.onSetOutputVolume(clamped)
+    }
+    func setOutputMuted(_ isMuted: Bool) {
+        audioOutputState.volume.isMuted = isMuted
+        hooks.onSetOutputMuted(isMuted)
+    }
+    func openVolumeControl() {
+        guard [.collapsed, .collapsedActivity].contains(surfaceState) else { return }
+        surfaceState = .volume
+    }
+    func closeVolumeControl() {
+        guard surfaceState == .volume else { return }
+        surfaceState = isIdlePillHidden ? .dormant : idleSurfaceState
+    }
 
     private var normalizedComposerText: String {
         composerText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1791,6 +1812,18 @@ extension AppViewModel {
                 source: snapshot.source,
                 state: .disconnected,
                 snapshot: snapshot.frozen()
+            )
+        }
+        if CommandLine.arguments.contains("--preview-volume-muted") {
+            model.audioOutputState.volume.isMuted = true
+        }
+        if CommandLine.arguments.contains("--preview-volume-unsupported") {
+            model.audioOutputState.volume = AudioVolumeViewState(
+                value: nil,
+                isMuted: false,
+                canSetVolume: false,
+                canSetMute: false,
+                deviceName: AudioOutputTarget.headphones.systemDeviceName
             )
         }
         if CommandLine.arguments.contains("--preview-completed-item"),

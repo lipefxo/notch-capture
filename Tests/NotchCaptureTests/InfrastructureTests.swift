@@ -564,6 +564,26 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(policy.spring, NotchMotion.surfaceContraction)
     }
 
+    func testFocusedVolumeSurfaceMorphsWithoutBecomingAKeyboardState() {
+        let opening = PanelTransitionPolicy.resolve(
+            from: .collapsed,
+            to: .volume,
+            wasVisible: true,
+            reduceMotion: false
+        )
+        let closing = PanelTransitionPolicy.resolve(
+            from: .volume,
+            to: .collapsed,
+            wasVisible: true,
+            reduceMotion: false
+        )
+
+        XCTAssertEqual(opening.kind, .expand)
+        XCTAssertEqual(closing.kind, .contract)
+        XCTAssertTrue(PanelState.volume.isExplicitSession)
+        XCTAssertFalse(PanelState.volume.acceptsKeyboardInput)
+    }
+
     func testSameSizeContentNavigationDoesNotResizeWindow() {
         let policy = PanelTransitionPolicy.resolve(
             from: .expanded,
@@ -874,7 +894,11 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         // the single table against accidental changes.
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .collapsed)).size,
-            CGSize(width: 226, height: 34)
+            CGSize(width: 254, height: 34)
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .volume)).size,
+            CGSize(width: 340, height: 56)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .confirmation)).size,
@@ -962,8 +986,8 @@ final class SurfaceChromeMetricsTests: XCTestCase {
             SurfaceChromeMetrics.resolve(for: .collapsedActivity, compactPresentationSize: .extended)
         )
 
-        XCTAssertEqual(capture.size, CGSize(width: 332, height: 50))
-        XCTAssertEqual(activity.size, CGSize(width: 472, height: 56))
+        XCTAssertEqual(capture.size, CGSize(width: 360, height: 50))
+        XCTAssertEqual(activity.size, CGSize(width: 500, height: 56))
         XCTAssertEqual(capture.bottomRadius, 22)
         XCTAssertEqual(activity.bottomRadius, 22)
         XCTAssertEqual(capture.shadowOpacity, 0)
@@ -1031,6 +1055,7 @@ final class PanelShadowApronTests: XCTestCase {
 
     func testVisibleOpenSurfacesUseTheStandardShadowCanvasWithoutExpandingTheSurface() {
         let openStates: [PanelState] = [
+            .volume,
             .confirmation,
             .expanded,
             .dropTarget,
@@ -1545,8 +1570,8 @@ final class PanelWindowInteractionPolicyTests: XCTestCase {
             PanelWindowInteractionPolicy.suspendsHitTestingForCompactResize(
                 state: .expanded,
                 wasVisible: true,
-                sourceSize: CGSize(width: 332, height: 50),
-                targetSize: CGSize(width: 226, height: 34)
+                sourceSize: CGSize(width: 360, height: 50),
+                targetSize: CGSize(width: 254, height: 34)
             )
         )
     }

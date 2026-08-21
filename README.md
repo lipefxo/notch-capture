@@ -34,6 +34,8 @@ While idle, active music shows in a compact activity pill in the notch.
 
 The expanded surface includes a persistent three-way output strip for this Mac's AirPods, EDIFIER M60 speakers, and the headphones connected through the `fifine Ampli1` interface. Available devices switch both normal app audio and system sounds with one click; disconnected devices remain visible but disabled so each target stays in a predictable position. The strip follows changes made in Control Center and updates automatically when Bluetooth or USB devices appear or disappear.
 
+A volume row below the output strip controls the current default output and toggles mute. The compact capture and music pills expose the same control through a speaker button that morphs into a focused volume surface without taking keyboard focus; Back or a click elsewhere returns to the current idle pill. Outputs with physical-only controls stay visible and explain that their device controls should be used instead.
+
 The integration uses Apple's Core Audio hardware properties directly. It does not record audio, request microphone access, initiate Bluetooth connections, or install an audio driver.
 
 ## Mirror

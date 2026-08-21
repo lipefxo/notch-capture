@@ -37,7 +37,7 @@ struct CollapsedActivityPillView: View {
     private var minimalNotchedLayout: some View {
         HStack(spacing: 4) {
             notchedMusicWing
-            compactMirrorToggle
+            compactTrailingControls
         }
             .frame(
                 width: compactMetrics.contentSize.width,
@@ -90,7 +90,7 @@ struct CollapsedActivityPillView: View {
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 52)
-                compactMirrorToggle
+                compactTrailingControls
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: 34)
@@ -107,6 +107,21 @@ struct CollapsedActivityPillView: View {
         )
     }
 
+    private var compactVolumeButton: some View {
+        CompactVolumeButton(
+            viewModel: viewModel,
+            glyphSize: 10.5,
+            width: CompactSurfaceMetrics.audioControlSlot - 6
+        )
+    }
+
+    private var compactTrailingControls: some View {
+        HStack(spacing: 0) {
+            compactVolumeButton
+            compactMirrorToggle
+        }
+    }
+
     @ViewBuilder
     private var extendedFallbackLayout: some View {
         switch viewModel.collapsedActivityContent {
@@ -114,7 +129,7 @@ struct CollapsedActivityPillView: View {
             HStack(spacing: 8) {
                 extendedMusicInfoView(snapshot)
                     .frame(maxWidth: .infinity)
-                extendedMirrorToggle
+                extendedTrailingControls
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
@@ -155,8 +170,15 @@ struct CollapsedActivityPillView: View {
         )
     }
 
+    private var extendedTrailingControls: some View {
+        HStack(spacing: 0) {
+            CompactVolumeButton(viewModel: viewModel)
+            extendedMirrorToggle
+        }
+    }
+
     private var notchedTrailingWing: some View {
-        extendedMirrorToggle
+        extendedTrailingControls
             .frame(height: compactMetrics.contentSize.height)
     }
 
