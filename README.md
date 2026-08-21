@@ -82,13 +82,13 @@ The Settings surface (opened from the expanded inbox) covers launch at login, th
 
 ## Updating
 
-Release builds check the project's appcast for updates (Sparkle asks once whether to check automatically; "Check for Updates…" also lives in Settings, next to the running version).
+Release builds check the project's appcast hourly and notify before installing a newer build. "Check for Updates…" also lives in Settings, next to the running version.
 
-Installing a release for the first time: current builds are not yet notarized, so macOS will refuse to open the app directly. Go to System Settings → Privacy & Security and click "Open Anyway" (macOS 15 removed the old right-click → Open bypass). Updates applied through Sparkle don't need this again.
+For the first install, download `NotchCapture-<version>.dmg` from the [latest GitHub release](https://github.com/lipefxo/notch-capture/releases/latest), open it, and drag Notch Capture onto the Applications shortcut. Current builds are not yet notarized, so macOS will refuse to open the downloaded app directly. Go to System Settings → Privacy & Security and click "Open Anyway" (macOS 15 removed the old right-click → Open bypass). Updates applied through Sparkle don't need this again.
 
 Until releases are signed with a stable Developer ID, macOS also ties the Automation permission (used to control Apple Music and Spotify) to each build's ad-hoc signature — expect to re-grant it after an update.
 
-Releases are published by pushing a `v*` tag; see `.github/workflows/release.yml` and `Scripts/package-release.sh`.
+Every successful push to `master` publishes an immutable `v0.1.<build>` GitHub release. The build number is the Git commit count, and each release contains a first-install DMG plus the Sparkle ZIP. The workflow can also be rerun manually on `master`; reruns repair the existing release instead of creating duplicate tags. See `.github/workflows/release.yml` and `Scripts/package-release.sh`.
 
 ## Local data
 

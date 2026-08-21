@@ -38,7 +38,11 @@
     <string>https://lipefxo.github.io/notch-capture/appcast.xml</string>
     <key>SUPublicEDKey</key>
     <string>nJgZqqiu+KaY6lpY9cRlkxZkbaFL8TFG9oM5gn2zxMQ=</string>
+    <key>SUEnableAutomaticChecks</key>
+    <true/>
+    <key>SUAutomaticallyUpdate</key>
+    <false/>
     <key>SUScheduledCheckInterval</key>
-    <integer>86400</integer>
+    <integer>3600</integer>
 </dict>
 </plist>

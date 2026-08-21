@@ -1,37 +1,46 @@
-# Release pipeline: builds, tests, packages, and publishes on a `v*` tag push.
+# Every successful master build becomes an immutable Sparkle release.
 #
-# Secrets (all optional except the EdDSA key):
-#   SPARKLE_ED_PRIVATE_KEY   Required for signed updates — raw private key from
-#                            `generate_keys -x` (Sparkle refuses unsigned
-#                            archives unless the app is Developer ID signed).
-#   DEVELOPER_ID_P12         Base64 Developer ID Application .p12. Adding this
-#   DEVELOPER_ID_P12_PASSWORD  plus the three notarization secrets below
-#   CODESIGN_IDENTITY_NAME   activates real signing + notarization; without
-#   APPLE_ID                 them the workflow ships an ad-hoc build and
-#   APPLE_TEAM_ID            testers use "Open Anyway" on first install.
-#   APPLE_APP_PASSWORD
+# Required secret:
+#   SPARKLE_ED_PRIVATE_KEY   Raw private key exported by `generate_keys -x`.
+#
+# Optional Developer ID + notarization secrets (the default is an ad-hoc build):
+#   DEVELOPER_ID_P12, DEVELOPER_ID_P12_PASSWORD, CODESIGN_IDENTITY_NAME,
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
 name: Release
 
 on:
   push:
-    tags: ["v*"]
+    branches: [master]
+  workflow_dispatch:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: notch-capture-release
+  cancel-in-progress: false
 
 jobs:
   release:
+    if: github.ref == 'refs/heads/master'
     runs-on: macos-15
     env:
       HAS_DEVELOPER_ID: ${{ secrets.DEVELOPER_ID_P12 != '' }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: CFBundleVersion is `git rev-list --count HEAD`.
+          # Full history is required for the monotonic commit-count build number.
           fetch-depth: 0
 
-      - name: Derive version from tag
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Derive release metadata
+        run: |
+          BUILD_NUMBER="$(git rev-list --count HEAD)"
+          VERSION="0.1.$BUILD_NUMBER"
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> "$GITHUB_ENV"
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=v$VERSION" >> "$GITHUB_ENV"
 
       - name: Run tests
         run: swift test
@@ -47,7 +56,7 @@ jobs:
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
           security set-keychain-settings -lut 3600 "$KEYCHAIN"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
-          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          printf '%s' "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
           security import "$RUNNER_TEMP/cert.p12" -k "$KEYCHAIN" \
             -P "$P12_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: \
@@ -57,7 +66,7 @@ jobs:
 
       - name: Note ad-hoc build
         if: env.HAS_DEVELOPER_ID != 'true'
-        run: echo "No Developer ID secrets — shipping an ad-hoc signed, un-notarized build."
+        run: echo "No Developer ID secrets — shipping an ad-hoc signed, unnotarized build."
 
       - name: Package release
         env:
@@ -66,37 +75,62 @@ jobs:
           APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
           SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
         run: |
-          if [ -n "$SPARKLE_ED_PRIVATE_KEY" ]; then
-            KEY_FILE="$RUNNER_TEMP/sparkle_ed_key"
-            printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
-            export SPARKLE_ED_KEY_FILE="$KEY_FILE"
-          else
-            echo "::warning::SPARKLE_ED_PRIVATE_KEY not set — appcast entries will be unsigned."
+          if [ -z "$SPARKLE_ED_PRIVATE_KEY" ]; then
+            echo "::error::SPARKLE_ED_PRIVATE_KEY is required for secure Sparkle updates."
+            exit 1
           fi
+          KEY_FILE="$RUNNER_TEMP/sparkle_ed_key"
+          printf '%s' "$SPARKLE_ED_PRIVATE_KEY" > "$KEY_FILE"
+          chmod 600 "$KEY_FILE"
+          export SPARKLE_ED_KEY_FILE="$KEY_FILE"
           Scripts/package-release.sh "$VERSION"
 
-      - name: Upload release assets
+      - name: Create or repair GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" \
-            --title "Notch Capture $VERSION" \
-            --generate-notes \
-            "dist/NotchCapture-$VERSION.zip"
-
-      - name: Publish appcast to gh-pages
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git fetch origin gh-pages || true
-          if git show-ref --verify --quiet refs/remotes/origin/gh-pages; then
-            git worktree add "$RUNNER_TEMP/gh-pages" origin/gh-pages
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            git fetch --force origin \
+              "refs/tags/$RELEASE_TAG:refs/tags/$RELEASE_TAG"
+            TAG_COMMIT="$(git rev-list -n 1 "$RELEASE_TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "release tag $RELEASE_TAG points to $TAG_COMMIT, expected $GITHUB_SHA" >&2
+              exit 1
+            fi
           else
-            git worktree add --detach "$RUNNER_TEMP/gh-pages"
-            git -C "$RUNNER_TEMP/gh-pages" checkout --orphan gh-pages
-            git -C "$RUNNER_TEMP/gh-pages" rm -rf --quiet . || true
+            gh release create "$RELEASE_TAG" \
+              --target "$GITHUB_SHA" \
+              --title "Notch Capture $VERSION" \
+              --generate-notes
           fi
-          cp dist/appcast.xml "$RUNNER_TEMP/gh-pages/appcast.xml"
-          git -C "$RUNNER_TEMP/gh-pages" add appcast.xml
-          git -C "$RUNNER_TEMP/gh-pages" commit -m "appcast for $GITHUB_REF_NAME"
-          git -C "$RUNNER_TEMP/gh-pages" push origin HEAD:gh-pages
+          gh release upload "$RELEASE_TAG" --clobber \
+            "dist/NotchCapture-$VERSION.zip" \
+            "dist/NotchCapture-$VERSION.dmg"
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Stage appcast site
+        run: |
+          mkdir -p "$RUNNER_TEMP/pages"
+          cp dist/appcast.xml "$RUNNER_TEMP/pages/appcast.xml"
+
+      - name: Upload appcast site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: ${{ runner.temp }}/pages
+
+  deploy-appcast:
+    if: github.ref == 'refs/heads/master'
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy appcast to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

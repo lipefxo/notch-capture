@@ -10,7 +10,10 @@ set -euo pipefail
 #                      re-prompts between dev builds are expected until releases
 #                      are signed with a stable Developer ID.
 #   MARKETING_VERSION  Overrides CFBundleShortVersionString (releases derive it
-#                      from the git tag; local builds keep the plist value).
+#                      from the build number; local builds keep the plist value).
+#   BUILD_NUMBER       Overrides CFBundleVersion (default: commit count). This
+#                      is useful for installing an older local baseline before
+#                      testing the next merge-driven Sparkle update.
 
 ROOT="${0:A:h:h}"
 CONFIGURATION="${1:-debug}"
@@ -19,6 +22,12 @@ CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 FRAMEWORKS="$CONTENTS/Frameworks"
 IDENTITY="${CODESIGN_IDENTITY:--}"
+BUILD_NUMBER="${BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}"
+
+if [[ ! "$BUILD_NUMBER" =~ '^[1-9][0-9]*$' ]]; then
+  echo "error: BUILD_NUMBER must be a positive integer (got '$BUILD_NUMBER')" >&2
+  exit 64
+fi
 
 swift build --package-path "$ROOT" -c "$CONFIGURATION"
 
@@ -37,7 +46,6 @@ fi
 ditto "$SPARKLE_FRAMEWORK" "$FRAMEWORKS/Sparkle.framework"
 
 # Sparkle decides "is newer" from CFBundleVersion; it must increase every build.
-BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD)"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUILD_NUMBER" "$CONTENTS/Info.plist"
 if [[ -n "${MARKETING_VERSION:-}" ]]; then
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $MARKETING_VERSION" "$CONTENTS/Info.plist"
