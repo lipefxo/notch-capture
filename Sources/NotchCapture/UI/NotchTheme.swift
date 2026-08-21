@@ -1,25 +1,6 @@
 import SwiftUI
 
 enum NotchTheme {
-    struct PomodoroTimerColor: Equatable {
-        let red: Double
-        let green: Double
-        let blue: Double
-
-        var color: Color {
-            Color(red: red, green: green, blue: blue)
-        }
-
-        func interpolated(to target: Self, amount: Double) -> Self {
-            let progress = min(max(amount, 0), 1)
-            return Self(
-                red: red + ((target.red - red) * progress),
-                green: green + ((target.green - green) * progress),
-                blue: blue + ((target.blue - blue) * progress)
-            )
-        }
-    }
-
     private struct TagPaletteAnchor {
         let red: Double
         let green: Double
@@ -62,12 +43,7 @@ enum NotchTheme {
     static let topFlare: CGFloat = 10
     /// Equal content width on either side of a hardware notch while a live activity is visible.
     static let collapsedActivityWingWidth: CGFloat = 104
-    private static let primaryAccentComponents = PomodoroTimerColor(
-        red: 1,
-        green: 1,
-        blue: 1
-    )
-    static let primaryAccent = primaryAccentComponents.color
+    static let primaryAccent = Color.white
     /// Completion remains the app's positive mint signal even when the
     /// general-purpose accent changes.
     static let completionAccent = Color(red: 0.23, green: 0.78, blue: 0.50)
@@ -108,27 +84,6 @@ enum NotchTheme {
     static let warning = Color.orange
     static let destructive = Color.red
 
-    /// Maps the remaining share of a focus session from calm white through amber to red.
-    static func pomodoroTimerColor(remaining: TimeInterval, duration: TimeInterval) -> PomodoroTimerColor {
-        guard duration.isFinite, duration > 0, remaining.isFinite else {
-            return pomodoroDestructive
-        }
-
-        let remainingFraction = min(max(remaining / duration, 0), 1)
-        switch remainingFraction {
-        case 0.5...:
-            return primaryAccentComponents
-        case 0.2...:
-            let progress = (0.5 - remainingFraction) / 0.3
-            return primaryAccentComponents.interpolated(to: pomodoroWarning, amount: progress)
-        default:
-            let progress = (0.2 - remainingFraction) / 0.2
-            return pomodoroWarning.interpolated(to: pomodoroDestructive, amount: progress)
-        }
-    }
-
-    private static let pomodoroWarning = PomodoroTimerColor(red: 1, green: 0.5, blue: 0)
-    private static let pomodoroDestructive = PomodoroTimerColor(red: 1, green: 0, blue: 0)
     /// Bottom corner radius shared by every open surface state and the composer.
     static let surfaceBottomRadius: CGFloat = 24
     private static let tagPaletteAnchors = [

@@ -813,9 +813,9 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(surfaceState: .onboarding)
         let steps = AppViewModel.OnboardingStep.allCases
 
-        XCTAssertEqual(steps, [.capture, .organize, .music, .pomodoro])
+        XCTAssertEqual(steps, [.capture, .organize, .music])
         XCTAssertEqual(steps.first, .capture)
-        XCTAssertEqual(steps.last, .pomodoro)
+        XCTAssertEqual(steps.last, .music)
 
         XCTAssertEqual(viewModel.onboardingStep, .capture)
         viewModel.retreatOnboarding()
@@ -839,7 +839,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(AppViewModel.OnboardingStep.allCases.last?.isFinal ?? false)
         XCTAssertTrue(AppViewModel.OnboardingStep.allCases.first?.isFirst ?? false)
         XCTAssertFalse(AppViewModel.OnboardingStep.capture.isFinal)
-        XCTAssertFalse(AppViewModel.OnboardingStep.pomodoro.isFirst)
+        XCTAssertTrue(AppViewModel.OnboardingStep.music.isFinal)
     }
 
     func testOpeningExpandedResumesOnboardingUntilFinished() {
@@ -870,7 +870,7 @@ final class AppViewModelTests: XCTestCase {
         var hooks = AppViewModel.Hooks()
         hooks.onCompleteOnboarding = { completionCount += 1 }
         let viewModel = AppViewModel(surfaceState: .onboarding, hooks: hooks)
-        viewModel.onboardingStep = .pomodoro
+        viewModel.onboardingStep = .music
 
         viewModel.finishOnboarding()
         viewModel.finishOnboarding()
@@ -880,7 +880,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.keyboardFocus, .composer)
     }
 
-    func testIdleVisibilityControlsDismissalAndPomodoroAcknowledgement() {
+    func testIdleVisibilityControlsDismissal() {
         let viewModel = AppViewModel(surfaceState: .expanded)
         viewModel.setIdlePillHidden(true)
 
@@ -890,10 +890,6 @@ final class AppViewModelTests: XCTestCase {
         viewModel.setIdlePillHidden(false)
         XCTAssertEqual(viewModel.surfaceState, .collapsed)
 
-        viewModel.surfaceState = .pomodoroComplete
-        viewModel.setIdlePillHidden(true)
-        viewModel.handleDismissalRequest(.escape)
-        XCTAssertEqual(viewModel.surfaceState, .dormant)
     }
 
     func testCollapseExpandedUsesTheContextualIdleSurfaceAndClearsDraft() {
@@ -905,9 +901,17 @@ final class AppViewModelTests: XCTestCase {
 
         let activity = AppViewModel(
             surfaceState: .expanded,
-            pomodoro: PomodoroState(
-                duration: 25 * 60,
-                phase: .paused(remaining: 12 * 60)
+            nowPlaying: NowPlayingSnapshot(
+                source: .spotify,
+                trackKey: "activity-track",
+                title: "Track",
+                artist: "Artist",
+                album: "Album",
+                duration: 100,
+                isPlaying: false,
+                position: 12,
+                positionAnchor: .now,
+                artworkURL: nil
             )
         )
         activity.collapseExpanded()

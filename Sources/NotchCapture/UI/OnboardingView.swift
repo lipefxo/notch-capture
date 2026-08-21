@@ -17,8 +17,6 @@ struct OnboardingView: View {
                     OnboardingOrganizePage()
                 case .music:
                     OnboardingMusicPage()
-                case .pomodoro:
-                    OnboardingPomodoroPage()
                 }
             }
             .id(viewModel.onboardingStep)

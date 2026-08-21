@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { CheckIcon, LinkIcon, NoteIcon } from "@phosphor-icons/react";
+import { CheckIcon, LinkIcon, NoteIcon, PauseIcon, SkipBackIcon, SkipForwardIcon } from "@phosphor-icons/react";
 import { notchMotion } from "@/styles/motion";
 
 type Scene = "idle" | "composer" | "typing" | "ledger" | "complete" | "shelf";
@@ -66,8 +66,11 @@ export function NotchDemo() {
             <motion.div key="shelf" className="shelf" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }}>
               <span className="albumArt" aria-hidden="true" />
               <div><strong>On the Move</strong><small>Notch Capture Radio</small></div>
-              <span className="timer">24:23</span>
-              <span className="pause">Ⅱ</span>
+              <div className="shelfControls" aria-hidden="true">
+                <SkipBackIcon size={16} weight="bold" />
+                <span className="shelfControl"><PauseIcon size={13} weight="bold" /></span>
+                <SkipForwardIcon size={16} weight="bold" />
+              </div>
             </motion.div>
           ) : showsLedger ? (
             <motion.div key="ledger" className="miniLedger" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={notchMotion.surfaceContent}>

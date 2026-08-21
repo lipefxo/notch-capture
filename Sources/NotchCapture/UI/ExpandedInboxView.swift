@@ -123,7 +123,6 @@ struct ExpandedInboxView: View {
     @State private var appearanceTask: Task<Void, Never>?
     @State private var ledgerScrollTask: Task<Void, Never>?
     @State private var folderHeaderMenuAnchor: CGRect = .zero
-    @State private var pomodoroMenuAnchor: CGRect = .zero
     @State private var studioLightPopoverAnchor: CGRect = .zero
 
     // The composer shares the same 20-point content column as the header,
@@ -416,8 +415,6 @@ struct ExpandedInboxView: View {
 
                     routeHeaderTrailingAction
 
-                    pomodoroControl
-
                     if viewModel.studioLightState.isConfigured {
                         studioLightControl
                     }
@@ -511,35 +508,10 @@ struct ExpandedInboxView: View {
                 .transition(navigationPlan.transition)
             }
         }
-        // This fixed slot prevents the Pomodoro and Settings controls from
-        // shifting when the root-only action comes and goes.
+        // This fixed slot prevents the utility controls from shifting when the
+        // root-only action comes and goes.
         .frame(width: 28, height: 28)
         .clipped()
-    }
-
-    private var pomodoroControl: some View {
-        Button {
-            presentPomodoroMenu()
-        } label: {
-            Group {
-                if viewModel.pomodoro.isActive {
-                    PomodoroCountdownLabel(state: viewModel.pomodoro)
-                        .frame(minWidth: 38)
-                } else {
-                    Image(systemName: "clock.fill")
-                        .font(.system(size: 13, weight: .regular))
-                }
-            }
-            .frame(height: 28)
-        }
-        .buttonStyle(PressableIconButtonStyle(
-            idleForeground: viewModel.pomodoro.isActive ? NotchTheme.primaryAccent : NotchTheme.secondaryText,
-            width: viewModel.pomodoro.isActive ? 42 : 28
-        ))
-        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-        .menuAnchor($pomodoroMenuAnchor)
-        .help(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
-        .accessibilityLabel(viewModel.pomodoro.isActive ? "Focus timer" : "Start a focus timer")
     }
 
     private var studioLightControl: some View {
@@ -570,43 +542,6 @@ struct ExpandedInboxView: View {
         return state.snapshot.isOn
             ? NotchTheme.primaryAccent
             : NotchTheme.secondaryText
-    }
-
-    private func presentPomodoroMenu() {
-        var items: [NotchMenuItem] = []
-        var style: NotchMenu.Style = .standard
-        switch viewModel.pomodoro.phase {
-        case .idle:
-            style = .pomodoroDurationPicker
-            for minutes in [15, 25, 45, 60] {
-                items.append(NotchMenuItem(
-                    title: String(format: "%d:00", minutes),
-                    icon: nil,
-                    isChecked: minutes == Int(viewModel.pomodoro.duration / 60)
-                ) {
-                    viewModel.setPomodoroDuration(TimeInterval(minutes * 60))
-                    viewModel.togglePomodoro()
-                })
-            }
-        case .running:
-            items.append(NotchMenuItem(title: "Pause", icon: "pause.fill") { viewModel.togglePomodoro() })
-            items.append(NotchMenuItem(title: "End session", icon: "stop.fill") { viewModel.resetPomodoro() })
-        case .paused:
-            items.append(NotchMenuItem(title: "Resume", icon: "play.fill") { viewModel.togglePomodoro() })
-            items.append(NotchMenuItem(title: "End session", icon: "stop.fill") { viewModel.resetPomodoro() })
-        case .finished:
-            items.append(NotchMenuItem(title: "Restart", icon: "arrow.clockwise") {
-                viewModel.acknowledgePomodoro()
-                viewModel.togglePomodoro()
-            })
-            items.append(NotchMenuItem(title: "Dismiss", icon: "xmark") { viewModel.acknowledgePomodoro() })
-        }
-        presentation.present(NotchMenu(
-            title: "Focus timer",
-            anchor: pomodoroMenuAnchor,
-            items: items,
-            style: style
-        ))
     }
 
     private func navigate(_ update: () -> Void) {

@@ -67,17 +67,6 @@ struct OnboardingMusicPage: View {
     }
 }
 
-struct OnboardingPomodoroPage: View {
-    var body: some View {
-        OnboardingFeaturePage(
-            headline: "Track your time",
-            subtitle: "Run your Pomodoro sessions"
-        ) {
-            OnboardingPomodoroIllustration()
-        }
-    }
-}
-
 private struct OnboardingLoopTimeline<Content: View>: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -332,57 +321,6 @@ private struct OnboardingMusicIllustration: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(
             "Music playback example for Currents by Tame Impala with progress and transport controls."
-        )
-    }
-}
-
-private struct OnboardingPomodoroIllustration: View {
-    private let duration: TimeInterval = 12
-    private let presets = [15, 25, 45, 60]
-
-    var body: some View {
-        OnboardingLoopTimeline(duration: duration, staticPhase: 0) { phase, time in
-            let remaining = 1_500 - Int(phase * duration)
-            let activeOpacity = 0.14 + (0.05 * (0.5 + (0.5 * sin(2 * .pi * time / 3))))
-
-            OnboardingMockCard {
-                VStack(spacing: 14) {
-                    HStack(spacing: 8) {
-                        Image(systemName: "timer")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(NotchTheme.primaryAccent)
-                        Text(String(format: "%d:%02d", remaining / 60, remaining % 60))
-                            .font(.system(size: 24, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(NotchTheme.primaryText)
-                    }
-
-                    HStack(spacing: 6) {
-                        ForEach(presets, id: \.self) { minutes in
-                            Text("\(minutes)")
-                                .font(.system(size: 9.5, weight: .medium))
-                                .foregroundStyle(
-                                    minutes == 25
-                                        ? NotchTheme.primaryAccent
-                                        : NotchTheme.tertiaryText
-                                )
-                                .padding(.horizontal, 7)
-                                .frame(height: 20)
-                                .background(
-                                    minutes == 25
-                                        ? NotchTheme.primaryAccent.opacity(activeOpacity)
-                                        : Color.white.opacity(0.045)
-                                )
-                                .clipShape(Capsule())
-                        }
-                    }
-                }
-                .padding(.vertical, 16)
-                .frame(width: 220)
-            }
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel(
-            "Pomodoro timer example counting down from 25 minutes with 15, 25, 45, and 60 minute presets."
         )
     }
 }

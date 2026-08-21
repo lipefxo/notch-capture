@@ -11,7 +11,7 @@ open ".build/Notch Capture.app"
 
 ## Capture targets
 
-Record the centered notch region for: capture with tag, completion wave, link with favicon, now playing, Pomodoro and idle pill.
+Record the centered notch region for: capture with tag, completion wave, link with favicon, now playing, and idle pill.
 
 ```sh
 screencapture -v -R <x,y,width,height> /tmp/nc-capture-with-tag.mov
