@@ -2337,6 +2337,92 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(recentered, 1)
     }
 
+    func testNotificationReplacesStableKeyInPlace() {
+        let viewModel = AppViewModel(surfaceState: .collapsed)
+        let checking = notification(title: "Checking", detail: "Starting")
+        let downloading = notification(title: "Downloading", detail: "42%")
+
+        viewModel.postNotification(checking, delivery: .immediate)
+        viewModel.postNotification(downloading, delivery: .backgroundUpdate)
+
+        XCTAssertEqual(viewModel.surfaceState, .notification)
+        XCTAssertEqual(viewModel.notification, downloading)
+    }
+
+    func testAutomaticNotificationQueuesUntilBusySurfaceReturnsToIdle() {
+        let viewModel = AppViewModel(surfaceState: .expanded)
+        let update = notification(title: "Update available", detail: "3.2 MB")
+
+        viewModel.postNotification(update, delivery: .whenIdle)
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertNil(viewModel.notification)
+
+        viewModel.surfaceState = .collapsed
+        XCTAssertTrue(viewModel.presentPendingNotificationIfIdle())
+        XCTAssertEqual(viewModel.surfaceState, .notification)
+        XCTAssertEqual(viewModel.notification, update)
+    }
+
+    func testManualNotificationRestoresSettingsAndDispatchesActionOnce() {
+        var actions: [(String, String)] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onNotificationAction = { actions.append(($0, $1)) }
+        let viewModel = AppViewModel(surfaceState: .settings, hooks: hooks)
+        var update = notification(title: "Update available", detail: "3.2 MB")
+        update.secondaryAction = .init(
+            id: "later",
+            title: "Later",
+            dismissesNotification: true
+        )
+        update.dismissalActionID = "later"
+
+        viewModel.postNotification(update, delivery: .immediate)
+        viewModel.handleDismissalRequest(.escape)
+        viewModel.performNotificationAction("later")
+
+        XCTAssertEqual(viewModel.surfaceState, .settings)
+        XCTAssertNil(viewModel.notification)
+        XCTAssertEqual(actions.count, 1)
+        XCTAssertEqual(actions.first?.0, "software-update")
+        XCTAssertEqual(actions.first?.1, "later")
+    }
+
+    func testBackgroundUpdateHidesWithoutCancellationAndReadyStateResurfaces() {
+        var actions: [(String, String)] = []
+        var hooks = AppViewModel.Hooks()
+        hooks.onNotificationAction = { actions.append(($0, $1)) }
+        let viewModel = AppViewModel(surfaceState: .collapsed, hooks: hooks)
+        let downloading = notification(title: "Downloading", detail: "12%")
+
+        viewModel.postNotification(downloading, delivery: .immediate)
+        viewModel.handleDismissalRequest(.externalClick)
+        XCTAssertEqual(viewModel.surfaceState, .collapsed)
+        XCTAssertNil(viewModel.notification)
+        XCTAssertTrue(actions.isEmpty)
+
+        viewModel.postNotification(
+            notification(title: "Downloading", detail: "86%"),
+            delivery: .backgroundUpdate
+        )
+        XCTAssertEqual(viewModel.surfaceState, .collapsed)
+
+        let ready = notification(title: "Ready", detail: "Restart to finish")
+        viewModel.postNotification(ready, delivery: .whenIdle)
+        XCTAssertEqual(viewModel.surfaceState, .notification)
+        XCTAssertEqual(viewModel.notification, ready)
+    }
+
+    private func notification(title: String, detail: String) -> NotchNotification {
+        NotchNotification(
+            id: "software-update",
+            systemImage: "arrow.down",
+            tone: .neutral,
+            title: title,
+            detail: detail,
+            accessibilityText: "\(title). \(detail)."
+        )
+    }
+
     private func composerImage(
         name: String,
         contents: String,

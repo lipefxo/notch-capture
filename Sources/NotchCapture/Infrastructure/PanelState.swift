@@ -25,6 +25,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
     case collapsedActivity
     case volume
     case confirmation
+    case notification
     case expanded
     case dropTarget
     case onboarding
@@ -40,7 +41,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
     /// the Escape/outside-click dismissal monitors and closes only on request.
     public var isExplicitSession: Bool {
         switch self {
-        case .volume, .confirmation, .expanded, .dropTarget, .onboarding, .settings:
+        case .volume, .confirmation, .notification, .expanded, .dropTarget, .onboarding, .settings:
             return true
         case .dormant, .collapsed, .collapsedActivity, .mirror:
             return false
@@ -51,7 +52,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .expanded, .dropTarget, .onboarding, .settings:
             return true
-        case .dormant, .collapsed, .collapsedActivity, .volume, .confirmation, .mirror:
+        case .dormant, .collapsed, .collapsedActivity, .volume, .confirmation, .notification, .mirror:
             return false
         }
     }
@@ -74,6 +75,8 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
             CGSize(width: 340, height: 56)
         case .confirmation:
             CGSize(width: 300, height: 56)
+        case .notification:
+            CGSize(width: 460, height: 72)
         case .expanded, .dropTarget, .settings:
             CGSize(
                 width: NotchTheme.width + (NotchTheme.topFlare * 2),

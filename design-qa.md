@@ -1,3 +1,38 @@
+# Design QA — Notch-Native Update Notifications
+
+## Comparison
+
+- Selected direction: Option 1’s quiet horizontal strip.
+- Source visual truth: `/Users/lipe/.codex/generated_images/01a0248c-cf8e-78b1-9335-b3bf6c3e067e/exec-10339cbe-4527-4802-98d1-316fa59067e0.png`.
+- Native fixtures: `.context/update-notification-qa/{available,downloading,ready,uptodate,error}-{hardware,external}.png`.
+- Viewport and density: 460 × 72 points at 2× (920 × 144 pixels), including the shared 10-point flares.
+
+## Findings
+
+- No actionable P0/P1/P2 visual findings remain.
+- The native surface preserves the production notch-hug silhouette rather than copying the generated image’s detached decorative peak. It uses the approved 28-point mint status icon, 14-point outer padding, two-line 12/10.5-point type stack, graphite hairlines, and unfilled trailing actions.
+- Available, downloading, ready, up-to-date, and error fixtures retain one stable geometry. Long error metadata truncates before the action region; titles and action labels remain intact.
+- The first native capture exposed the persistent AppKit host’s known first-commit glyph omission in the detail and action labels. The notification state now participates in the settled repaint repair, and the final captures contain every label.
+- The reference and final native capture were inspected together at original resolution. The implementation intentionally follows the plan’s denser production dimensions and existing top-connected shell rather than the generated image’s enlarged illustrative proportions.
+
+## Interaction and Accessibility Checks
+
+- Automatic discoveries queue behind expanded, onboarding, Settings, volume, confirmation, mirror, and drop sessions. Keyed lifecycle updates coalesce into one `software-update` notification.
+- Manual Settings checks restore Settings after Later, cancellation, success, or error. The notification panel is an explicit dismissal session but never accepts keyboard focus.
+- Escape/outside-click maps to Later or check cancellation when appropriate, hides valid background download/install work without cancelling it, and acknowledges terminal states.
+- Actions provide at least 44-point hit targets. The surface exposes a combined VoiceOver status plus individually labelled actions, and Reduce Motion substitutes the short opacity transition.
+
+## Verification
+
+- `swift test`: 377 tests, zero failures.
+- Coverage includes keyed replacement, queued/manual delivery, interrupted-surface restoration, background hiding/resurfacing, non-key 460 × 72 geometry, invalid content lengths, progress clamping, one-shot cancellations/replies, retry, teardown, and focus resurfacing.
+- The debug application bundle builds successfully; all five fixtures were captured on hardware-notch and external-display simulations.
+- Full production-appcast download, authorization, replacement, and relaunch remains an interactive release-validation step.
+
+final result: passed
+
+---
+
 # Design QA — Focused Notch Volume Control
 
 ## Comparison

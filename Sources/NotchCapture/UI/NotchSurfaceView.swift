@@ -30,7 +30,7 @@ struct SurfaceChromeMetrics: Equatable {
                 shadowRadius: 0,
                 shadowY: 0
             )
-        case .volume, .confirmation, .expanded, .drop, .onboarding, .settings, .mirror:
+        case .volume, .confirmation, .notification, .expanded, .drop, .onboarding, .settings, .mirror:
             return Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: NotchTheme.surfaceBottomRadius,
@@ -186,6 +186,8 @@ struct NotchSurfaceView: View {
             VolumeControlSurfaceView(viewModel: viewModel)
         case .confirmation:
             ConfirmationView(viewModel: viewModel)
+        case .notification:
+            NotchNotificationView(viewModel: viewModel)
         case .expanded, .drop:
             ExpandedInboxView(viewModel: viewModel)
         case .onboarding:
@@ -269,7 +271,7 @@ struct NotchSurfaceView: View {
                 // time it opens, so give each settled presentation one repair.
                 withoutAnimation { initialCommitRepaint += 1 }
             } else if initialCommitRepaint == 0,
-                      [.collapsed, .collapsedActivity, .confirmation, .mirror]
+                      [.collapsed, .collapsedActivity, .confirmation, .notification, .mirror]
                           .contains(viewModel.surfaceState) {
                 withoutAnimation { initialCommitRepaint = 1 }
             }
@@ -481,6 +483,7 @@ struct NotchSurfaceView: View {
         case .collapsedActivity: "collapsedActivity-\(displayedCompactPresentationSize.rawValue)"
         case .volume: "volume"
         case .confirmation: "confirmation"
+        case .notification: "notification"
         case .onboarding: "onboarding"
         case .settings: "settings"
         case .mirror: "mirror"
