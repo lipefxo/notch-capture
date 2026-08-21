@@ -149,6 +149,9 @@ final class AppCoordinator {
             let preview = AppViewModel.preview
             preview.surfaceState = initialState
             preview.onboardingStep = Self.requestedPreviewOnboardingStep()
+            if initialState == .notification {
+                preview.postNotification(Self.requestedPreviewNotification(), delivery: .immediate)
+            }
             if initialState == .confirmation {
                 preview.confirmation = AppViewModel.Confirmation(
                     title: "Send the revised capture flow",
@@ -223,6 +226,7 @@ final class AppCoordinator {
         }
 
         configureHooks()
+        configureUpdates()
         configureMedia()
         configureAudioOutput()
         configureStudioLight()
@@ -438,11 +442,74 @@ final class AppCoordinator {
         case "activity": return .collapsedActivity
         case "volume": return .volume
         case "confirmation": return .confirmation
+        case "notification": return .notification
         case "settings": return .settings
         case "onboarding": return .onboarding
         case "drop": return .drop
         case "mirror": return .mirror
         default: return .expanded
+        }
+    }
+
+    private nonisolated static func requestedPreviewNotification() -> NotchNotification {
+        let variant = CommandLine.arguments.first(where: {
+            $0.hasPrefix("--preview-notification=")
+        }).map { String($0.dropFirst("--preview-notification=".count)) } ?? "available"
+
+        switch variant {
+        case "downloading":
+            return NotchNotification(
+                id: NotchUpdateUserDriver.notificationID,
+                systemImage: "arrow.down",
+                tone: .neutral,
+                title: "Downloading Notch Capture 0.1.30",
+                detail: "42% · 1.3 MB of 3.2 MB",
+                progress: .fraction(0.42),
+                primaryAction: .init(id: "cancel-download", title: "Cancel", emphasis: .primary),
+                accessibilityText: "Downloading Notch Capture 0.1.30. 42 percent."
+            )
+        case "ready":
+            return NotchNotification(
+                id: NotchUpdateUserDriver.notificationID,
+                systemImage: "arrow.clockwise",
+                tone: .positive,
+                title: "Notch Capture 0.1.30 is ready",
+                detail: "Restart to finish installing the update",
+                secondaryAction: .init(id: "later", title: "Later"),
+                primaryAction: .init(id: "restart", title: "Restart", emphasis: .primary),
+                accessibilityText: "Notch Capture 0.1.30 is ready to restart."
+            )
+        case "uptodate", "up-to-date":
+            return NotchNotification(
+                id: NotchUpdateUserDriver.notificationID,
+                systemImage: "checkmark",
+                tone: .positive,
+                title: "Notch Capture is up to date",
+                detail: "You’re running the latest available version",
+                accessibilityText: "Notch Capture is up to date."
+            )
+        case "error":
+            return NotchNotification(
+                id: NotchUpdateUserDriver.notificationID,
+                systemImage: "exclamationmark",
+                tone: .error,
+                title: "Update couldn’t be completed",
+                detail: "Check your internet connection and try again",
+                secondaryAction: .init(id: "dismiss", title: "Dismiss"),
+                primaryAction: .init(id: "retry", title: "Retry", emphasis: .primary),
+                accessibilityText: "The update could not be completed."
+            )
+        default:
+            return NotchNotification(
+                id: NotchUpdateUserDriver.notificationID,
+                systemImage: "arrow.down",
+                tone: .neutral,
+                title: "Notch Capture 0.1.30 is available",
+                detail: "3.2 MB update",
+                secondaryAction: .init(id: "later", title: "Later"),
+                primaryAction: .init(id: "install", title: "Update", emphasis: .primary),
+                accessibilityText: "Notch Capture 0.1.30 is available. 3.2 MB update."
+            )
         }
     }
 
@@ -462,6 +529,7 @@ final class AppCoordinator {
 
     func start() {
         if !previewMode {
+            updaterService.start()
             nowPlayingService.setActivityLevel(.compact)
             audioOutputService.start()
             studioLightService.start()
@@ -514,6 +582,7 @@ final class AppCoordinator {
     }
 
     func stop() {
+        updaterService.stop()
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
         nowPlayingService.stop()
@@ -769,6 +838,12 @@ final class AppCoordinator {
         hooks.onCheckForUpdates = { [weak self] in
             self?.updaterService.checkForUpdates()
         }
+        hooks.onNotificationAction = { [weak self] notificationID, actionID in
+            self?.updaterService.performNotificationAction(
+                notificationID: notificationID,
+                actionID: actionID
+            )
+        }
         hooks.onQuit = {
             NSApp.terminate(nil)
         }
@@ -779,6 +854,18 @@ final class AppCoordinator {
             let before = self.viewModel.surfaceState
             self.viewModel.handleDismissalRequest(reason)
             PanelDiagnostics.log("dismissal(\(reason)) surface \(before)→\(self.viewModel.surfaceState)")
+        }
+    }
+
+    private func configureUpdates() {
+        updaterService.onNotification = { [weak viewModel] notification, delivery in
+            viewModel?.postNotification(notification, delivery: delivery)
+        }
+        updaterService.onDismissNotification = { [weak viewModel] id in
+            viewModel?.removeNotification(id: id)
+        }
+        updaterService.onEnabledChange = { [weak viewModel] isEnabled in
+            viewModel?.updatesEnabled = isEnabled
         }
     }
 
@@ -799,6 +886,10 @@ final class AppCoordinator {
             .sink { [weak self] state in
                 Task { @MainActor in
                     guard let self else { return }
+                    guard self.viewModel.surfaceState == state else { return }
+                    if self.viewModel.presentPendingNotificationIfIdle() {
+                        return
+                    }
                     if [.volume, .confirmation, .expanded, .drop, .onboarding, .settings, .mirror].contains(state) {
                         self.updateIdlePillVisibility()
                     }

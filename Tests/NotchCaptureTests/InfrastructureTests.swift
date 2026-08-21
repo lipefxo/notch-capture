@@ -77,6 +77,12 @@ final class PanelStateTests: XCTestCase {
             )
         }
     }
+
+    func testNotificationIsExplicitWithoutAcceptingKeyboardFocus() {
+        XCTAssertTrue(PanelState.notification.isExplicitSession)
+        XCTAssertFalse(PanelState.notification.acceptsKeyboardInput)
+        XCTAssertEqual(PanelState.notification.nominalSize, CGSize(width: 460, height: 72))
+    }
 }
 
 final class IdlePillVisibilityPolicyTests: XCTestCase {
@@ -905,6 +911,10 @@ final class SurfaceChromeMetricsTests: XCTestCase {
             CGSize(width: 300, height: 56)
         )
         XCTAssertEqual(
+            try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .notification)).size,
+            CGSize(width: 460, height: 72)
+        )
+        XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .expanded)).size,
             CGSize(width: 460, height: 640)
         )
@@ -1057,6 +1067,7 @@ final class PanelShadowApronTests: XCTestCase {
         let openStates: [PanelState] = [
             .volume,
             .confirmation,
+            .notification,
             .expanded,
             .dropTarget,
             .onboarding,

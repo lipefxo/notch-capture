@@ -94,6 +94,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var effectiveCompactPresentationSize: CompactPresentationSize
     /// False when Sparkle is inert (bare `swift run`, design previews).
     @Published var updatesEnabled = false
+    @Published private(set) var notification: NotchNotification?
     @Published var nowPlaying: NowPlayingSnapshot?
     @Published var nowPlayingPresentation: NowPlayingPresentation?
     @Published var mediaConnectionStates: [NowPlayingSource: NowPlayingConnectionState] = [:]
@@ -133,6 +134,13 @@ final class AppViewModel: ObservableObject {
     var hooks: Hooks
     private let now: () -> Date
     private var composerDraftID = UUID()
+    private struct PendingNotification {
+        var notification: NotchNotification
+        var isEligibleForPresentation: Bool
+    }
+    private var pendingNotifications: [String: PendingNotification] = [:]
+    private var pendingNotificationOrder: [String] = []
+    private var notificationResumeState: SurfaceState?
 
     /// Memoized derived state. The filter/sort pipeline over all items runs
     /// often (several times per render pass), so it is computed at most once
@@ -551,6 +559,125 @@ final class AppViewModel: ObservableObject {
         hooks.onDismiss()
     }
 
+    // MARK: - Notch notifications
+
+    /// Delivers keyed content to the reusable notch notification host. Active
+    /// content is always replaced in place; automatic delivery waits until the
+    /// current surface is idle instead of interrupting user work.
+    func postNotification(
+        _ newNotification: NotchNotification,
+        delivery: NotchNotificationDelivery
+    ) {
+        if notification?.id == newNotification.id {
+            notification = newNotification
+            if surfaceState != .notification, delivery == .immediate {
+                revealNotification(newNotification)
+            }
+            return
+        }
+
+        if var pending = pendingNotifications[newNotification.id] {
+            pending.notification = newNotification
+            if delivery == .whenIdle || delivery == .immediate {
+                pending.isEligibleForPresentation = true
+            }
+            pendingNotifications[newNotification.id] = pending
+        } else {
+            pendingNotifications[newNotification.id] = PendingNotification(
+                notification: newNotification,
+                isEligibleForPresentation: delivery != .backgroundUpdate
+            )
+            pendingNotificationOrder.append(newNotification.id)
+        }
+
+        switch delivery {
+        case .immediate:
+            removePendingNotification(id: newNotification.id)
+            revealNotification(newNotification)
+        case .whenIdle:
+            _ = presentPendingNotificationIfIdle()
+        case .backgroundUpdate:
+            break
+        }
+    }
+
+    /// Called when a busy surface returns to its passive state. Returns true
+    /// when it presented a notification and superseded the incoming idle state.
+    @discardableResult
+    func presentPendingNotificationIfIdle() -> Bool {
+        guard [.dormant, .collapsed, .collapsedActivity].contains(surfaceState) else {
+            return false
+        }
+        guard let id = pendingNotificationOrder.first(where: {
+            pendingNotifications[$0]?.isEligibleForPresentation == true
+        }), let pending = pendingNotifications[id] else {
+            return false
+        }
+        removePendingNotification(id: id)
+        revealNotification(pending.notification)
+        return true
+    }
+
+    func performNotificationAction(_ actionID: String) {
+        guard let notification else { return }
+        let action = notification.actions.first { $0.id == actionID }
+        let isImplicitDismissal = notification.dismissalActionID == actionID
+            || notification.autoDismissActionID == actionID
+        if action?.dismissesNotification == true || isImplicitDismissal {
+            removeNotification(id: notification.id)
+        }
+        hooks.onNotificationAction(notification.id, actionID)
+    }
+
+    func removeNotification(id: String) {
+        removePendingNotification(id: id)
+        guard notification?.id == id else { return }
+        notification = nil
+        restoreSurfaceAfterNotification()
+    }
+
+    private func handleNotificationDismissal() {
+        guard let notification else {
+            restoreSurfaceAfterNotification()
+            return
+        }
+        if let actionID = notification.dismissalActionID {
+            performNotificationAction(actionID)
+        } else {
+            pendingNotifications[notification.id] = PendingNotification(
+                notification: notification,
+                isEligibleForPresentation: false
+            )
+            if !pendingNotificationOrder.contains(notification.id) {
+                pendingNotificationOrder.append(notification.id)
+            }
+            self.notification = nil
+            restoreSurfaceAfterNotification()
+        }
+    }
+
+    private func revealNotification(_ notification: NotchNotification) {
+        if surfaceState != .notification {
+            notificationResumeState = surfaceState
+        }
+        self.notification = notification
+        surfaceState = .notification
+    }
+
+    private func restoreSurfaceAfterNotification() {
+        guard surfaceState == .notification else { return }
+        let target = notificationResumeState ?? (isIdlePillHidden ? .dormant : idleSurfaceState)
+        notificationResumeState = nil
+        surfaceState = target == .notification
+            ? (isIdlePillHidden ? .dormant : idleSurfaceState)
+            : target
+    }
+
+    private func removePendingNotification(id: String) {
+        pendingNotifications[id] = nil
+        pendingNotificationOrder.removeAll { $0 == id }
+    }
+
     /// Pass `capturingAnyway` (⌘Return) to create a new item even when the
     /// text matches existing items; plain Return selects the first match.
     func submitComposer(capturingAnyway: Bool = false) {
@@ -837,6 +964,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleDismissalRequest(_ reason: PanelDismissalReason) {
+        if surfaceState == .notification {
+            handleNotificationDismissal()
+            return
+        }
         if surfaceState == .volume {
             closeVolumeControl()
             return

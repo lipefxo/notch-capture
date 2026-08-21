@@ -137,7 +137,7 @@ extension AppCoordinator {
         case .expanded, .settings: .full
         // The mirror shows no now-playing chrome, but closing it lands straight
         // back on the activity pill, so its data must not have gone stale.
-        case .collapsed, .collapsedActivity, .volume, .confirmation, .mirror: .compact
+        case .collapsed, .collapsedActivity, .volume, .confirmation, .notification, .mirror: .compact
         case .dormant, .drop, .onboarding: .hidden
         }
         nowPlayingService.setActivityLevel(level)

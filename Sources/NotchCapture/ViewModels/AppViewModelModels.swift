@@ -17,6 +17,7 @@ extension AppViewModel {
         case collapsedActivity
         case volume
         case confirmation
+        case notification
         case expanded
         case drop
         case onboarding
@@ -32,6 +33,7 @@ extension AppViewModel {
             case .collapsedActivity: .collapsedActivity
             case .volume: .volume
             case .confirmation: .confirmation
+            case .notification: .notification
             case .expanded: .expanded
             case .drop: .dropTarget
             case .onboarding: .onboarding
@@ -451,6 +453,7 @@ extension AppViewModel {
         var onImport: () -> Void = {}
         var onExport: () -> Void = {}
         var onCheckForUpdates: () -> Void = {}
+        var onNotificationAction: (String, String) -> Void = { _, _ in }
         var onQuit: () -> Void = {}
     }
 }

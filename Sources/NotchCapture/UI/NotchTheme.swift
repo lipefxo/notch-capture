@@ -137,6 +137,7 @@ enum NotchMotion {
     static let surfaceContraction = NotchSpringProfile(perceptualDuration: 0.48, bounce: 0.12)
     static let surfaceHide = NotchSpringProfile(perceptualDuration: 0.44, bounce: 0.09)
     static let surfaceContent = NotchSpringProfile(perceptualDuration: 0.38, bounce: 0.07)
+    static let notificationContent = NotchSpringProfile(perceptualDuration: 0.28, bounce: 0)
     static let contentMorph = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
     static let selection = NotchSpringProfile(perceptualDuration: 0.22, bounce: 0)
     static let reorderDisplacement = NotchSpringProfile(perceptualDuration: 0.30, bounce: 0)
@@ -201,6 +202,7 @@ enum NotchMotion {
 
     static let content = contentMorph.animation
     static let surfaceContentReveal = surfaceContent.animation
+    static let notification = notificationContent.animation
     static let navigation = contentMorph.animation
     static let onboarding = onboardingSpring.animation
     static let confirmation = confirmationSpring.animation
