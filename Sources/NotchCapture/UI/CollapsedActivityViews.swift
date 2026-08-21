@@ -33,11 +33,11 @@ struct CollapsedActivityPillView: View {
     }
 
     /// Minimal full-screen presentation hugs the physical notch while keeping
-    /// the active music controls and mirror toggle inside the compact shell.
+    /// the active music controls and volume entry inside the compact shell.
     private var minimalNotchedLayout: some View {
         HStack(spacing: 4) {
             notchedMusicWing
-            compactTrailingControls
+            compactVolumeButton
         }
             .frame(
                 width: compactMetrics.contentSize.width,
@@ -90,21 +90,13 @@ struct CollapsedActivityPillView: View {
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 52)
-                compactTrailingControls
+                compactVolumeButton
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: 34)
         case nil:
             EmptyView()
         }
-    }
-
-    private var compactMirrorToggle: some View {
-        MirrorToggleButton(
-            viewModel: viewModel,
-            glyphSize: 11,
-            width: CompactSurfaceMetrics.mirrorToggleSlot - 6
-        )
     }
 
     private var compactVolumeButton: some View {
@@ -115,13 +107,6 @@ struct CollapsedActivityPillView: View {
         )
     }
 
-    private var compactTrailingControls: some View {
-        HStack(spacing: 0) {
-            compactVolumeButton
-            compactMirrorToggle
-        }
-    }
-
     @ViewBuilder
     private var extendedFallbackLayout: some View {
         switch viewModel.collapsedActivityContent {
@@ -129,7 +114,7 @@ struct CollapsedActivityPillView: View {
             HStack(spacing: 8) {
                 extendedMusicInfoView(snapshot)
                     .frame(maxWidth: .infinity)
-                extendedTrailingControls
+                CompactVolumeButton(viewModel: viewModel)
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
@@ -162,23 +147,8 @@ struct CollapsedActivityPillView: View {
         }
     }
 
-    private var extendedMirrorToggle: some View {
-        MirrorToggleButton(
-            viewModel: viewModel,
-            glyphSize: 13,
-            width: CompactSurfaceMetrics.mirrorToggleSlot
-        )
-    }
-
-    private var extendedTrailingControls: some View {
-        HStack(spacing: 0) {
-            CompactVolumeButton(viewModel: viewModel)
-            extendedMirrorToggle
-        }
-    }
-
     private var notchedTrailingWing: some View {
-        extendedTrailingControls
+        CompactVolumeButton(viewModel: viewModel)
             .frame(height: compactMetrics.contentSize.height)
     }
 

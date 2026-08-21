@@ -104,26 +104,25 @@ struct CompactSurfaceMetrics: Equatable {
     let bottomRadius: CGFloat
     let wingWidth: CGFloat?
 
-    /// Compact widths reserve fixed trailing slots for audio and mirror
-    /// controls, keeping capture and transport content at its established size.
+    /// Compact widths reserve a fixed trailing slot for audio, keeping capture
+    /// and transport content at its established size.
     static let audioControlSlot: CGFloat = 28
-    static let mirrorToggleSlot: CGFloat = 28
 
     static func capture(for presentationSize: CompactPresentationSize) -> Self {
         switch presentationSize {
         case .minimal:
-            Self(shellSize: CGSize(width: 254, height: 34), contentSize: CGSize(width: 234, height: 34), bottomRadius: 16, wingWidth: nil)
+            Self(shellSize: CGSize(width: 226, height: 34), contentSize: CGSize(width: 206, height: 34), bottomRadius: 16, wingWidth: nil)
         case .extended:
-            Self(shellSize: CGSize(width: 360, height: 50), contentSize: CGSize(width: 340, height: 50), bottomRadius: 22, wingWidth: nil)
+            Self(shellSize: CGSize(width: 332, height: 50), contentSize: CGSize(width: 312, height: 50), bottomRadius: 22, wingWidth: nil)
         }
     }
 
     static func externalActivity(for presentationSize: CompactPresentationSize) -> Self {
         switch presentationSize {
         case .minimal:
-            Self(shellSize: CGSize(width: 356, height: 34), contentSize: CGSize(width: 336, height: 34), bottomRadius: 16, wingWidth: nil)
+            Self(shellSize: CGSize(width: 328, height: 34), contentSize: CGSize(width: 308, height: 34), bottomRadius: 16, wingWidth: nil)
         case .extended:
-            Self(shellSize: CGSize(width: 500, height: 56), contentSize: CGSize(width: 480, height: 56), bottomRadius: 22, wingWidth: nil)
+            Self(shellSize: CGSize(width: 472, height: 56), contentSize: CGSize(width: 452, height: 56), bottomRadius: 22, wingWidth: nil)
         }
     }
 
