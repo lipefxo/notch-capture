@@ -34,6 +34,9 @@ jobs:
           # Full history is required for the monotonic commit-count build number.
           fetch-depth: 0
 
+      - name: Select Xcode 26.3
+        run: sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+
       - name: Derive release metadata
         run: |
           BUILD_NUMBER="$(git rev-list --count HEAD)"
