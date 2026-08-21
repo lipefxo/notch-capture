@@ -1,8 +1,7 @@
 import SwiftUI
 
-/// The single mirror affordance, shared by the expanded header and both
-/// compact pills so the glyph, hit target and press feel are identical
-/// wherever the toggle appears.
+/// The mirror affordance in the expanded header. Compact pills keep capture
+/// and now-playing chrome only; opening the camera is an expanded-session act.
 struct MirrorToggleButton: View {
     @ObservedObject var viewModel: AppViewModel
     var glyphSize: CGFloat = 13

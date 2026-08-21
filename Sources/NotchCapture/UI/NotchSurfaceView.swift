@@ -533,12 +533,10 @@ struct CollapsedPillView: View {
 
     private var isExtended: Bool { presentationSize == .extended }
 
-    /// Audio and mirror affordances each own a fixed trailing slot, keeping
-    /// the capture cluster at its established width.
+    /// The audio affordance owns a fixed trailing slot, keeping the capture
+    /// cluster at its established width.
     private var captureWidth: CGFloat {
-        metrics.contentSize.width
-            - CompactSurfaceMetrics.audioControlSlot
-            - CompactSurfaceMetrics.mirrorToggleSlot
+        metrics.contentSize.width - CompactSurfaceMetrics.audioControlSlot
     }
 
     var body: some View {
@@ -547,11 +545,6 @@ struct CollapsedPillView: View {
             CompactVolumeButton(
                 viewModel: viewModel,
                 glyphSize: isExtended ? 12 : 10.5
-            )
-            MirrorToggleButton(
-                viewModel: viewModel,
-                glyphSize: isExtended ? 13 : 11,
-                width: CompactSurfaceMetrics.mirrorToggleSlot
             )
         }
         .frame(width: metrics.contentSize.width, height: metrics.contentSize.height)

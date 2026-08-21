@@ -40,7 +40,7 @@ The integration uses Apple's Core Audio hardware properties directly. It does no
 
 ## Mirror
 
-A camera glyph in the notch — present on both compact pills and in the expanded header — opens a live webcam preview. It is a mirror only: nothing is recorded, captured, or sent anywhere. Unlike the inbox surfaces it never takes keyboard focus and does not close when you click elsewhere, so it stays put while you get ready for a call; the same glyph, the header's close button, or a click on the notch itself puts it away and turns the camera off. The first use asks for camera access (macOS ties that grant to the build's signature, so development builds re-prompt).
+A camera glyph in the expanded header opens a live webcam preview. It is a mirror only: nothing is recorded, captured, or sent anywhere. Unlike the inbox surfaces it never takes keyboard focus and does not close when you click elsewhere, so it stays put while you get ready for a call; the same glyph, the header's close button, or a click on the notch itself puts it away and turns the camera off. The first use asks for camera access (macOS ties that grant to the build's signature, so development builds re-prompt).
 
 Cameras that publish UVC controls also get zoom and a recenter button in the mirror's header, and gimbal cameras can be aimed by dragging the preview — the scene follows the pointer, and the throw scales with the zoom level so a magnified view still moves precisely. Three large, numbered controls below the mirror recall per-camera position presets containing pan, tilt, and zoom; the adjacent save control captures the current framing into a slot. The selected preset is restored whenever the mirror opens, while ordinary framing adjustments remain temporary until explicitly saved. AVFoundation exposes none of these controls on macOS, so they are read and written through CoreMediaIO, whose control objects hang off the capture device. Cameras without them (the built-in FaceTime camera) simply show no extra chrome. Gimbal webcams get two more accommodations: the mirror keeps its starting placeholder visible until the landscape rotation and saved framing have physically settled, preventing a portrait flash, and it restores each physical camera's last pan/tilt position after the camera wakes from Privacy Mode or the app restarts.
 
@@ -74,7 +74,7 @@ The first launch shows a three-step tour of the main features (capture, organizi
 
 ## Idle behavior
 
-Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. When a window fills the display hosting the pill — full screen or a maximized window — an Extended pill smoothly reduces to Minimal and returns to Extended once the display is no longer occupied; the saved preference does not change. Both pills carry the mirror toggle. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
+Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. When a window fills the display hosting the pill — full screen or a maximized window — an Extended pill smoothly reduces to Minimal and returns to Extended once the display is no longer occupied; the saved preference does not change. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
 
 ## Settings
 
