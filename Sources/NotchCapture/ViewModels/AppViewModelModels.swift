@@ -16,7 +16,6 @@ extension AppViewModel {
         case collapsed
         case collapsedActivity
         case confirmation
-        case pomodoroComplete
         case expanded
         case drop
         case onboarding
@@ -31,7 +30,6 @@ extension AppViewModel {
             case .collapsed: .collapsed
             case .collapsedActivity: .collapsedActivity
             case .confirmation: .confirmation
-            case .pomodoroComplete: .confirmation
             case .expanded: .expanded
             case .drop: .dropTarget
             case .onboarding: .onboarding
@@ -67,7 +65,6 @@ extension AppViewModel {
         case capture
         case organize
         case music
-        case pomodoro
 
         var id: Self { self }
 
@@ -106,15 +103,8 @@ extension AppViewModel {
         var notchBandHeight: CGFloat = 32
     }
 
-    enum UtilityFocus: Equatable {
-        case music
-        case pomodoro
-    }
-
     enum CollapsedActivityContent: Equatable {
         case musicOnly(NowPlayingSnapshot)
-        case pomodoroOnly(PomodoroState)
-        case both(NowPlayingSnapshot, PomodoroState)
     }
 
     enum BrowseLocation: Hashable {
@@ -451,10 +441,6 @@ extension AppViewModel {
         var onMoveCamera: (Double, Double) -> Void = { _, _ in }
         var onSaveCameraPreset: (CameraPresetSlot, CameraPreset) -> Void = { _, _ in }
         var onSelectCameraPreset: (CameraPresetSlot) -> Void = { _ in }
-        var onPomodoroToggle: () -> Void = {}
-        var onPomodoroReset: () -> Void = {}
-        var onPomodoroSetDuration: (TimeInterval) -> Void = { _ in }
-        var onPomodoroAcknowledge: () -> Void = {}
         var onOpenShortcutRecorder: (Shortcut.Action) -> Void = { _ in }
         var onCommitShortcutRecording: (Shortcut.Action, ShortcutRecording) -> String? = { _, _ in nil }
         var onCancelShortcutRecording: () -> Void = {}

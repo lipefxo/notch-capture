@@ -100,7 +100,6 @@ final class AppViewModel: ObservableObject {
     @Published var nowPlayingArtwork: NSImage?
     @Published var audioOutputState: AudioOutputViewState
     @Published var studioLightState: StudioLightViewState
-    @Published var pomodoro: PomodoroState
     @Published var cameraPreview: CameraService.PreviewState = .idle
     @Published var cameraControls: CameraControlService.Capabilities = .none
     /// In the device's own units, where 100 is 1x — the same scale as
@@ -113,7 +112,6 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var cameraPresets: [CameraPresetSlot: CameraPreset] = [:]
     @Published private(set) var selectedCameraPresetSlot: CameraPresetSlot?
     @Published var collapsedActivityLayout = CollapsedActivityLayout()
-    @Published var expandedUtilityFocus: UtilityFocus?
     @Published var onboardingStep: OnboardingStep = .capture
 
     /// True while the user has not finished onboarding; every attempt to open
@@ -164,7 +162,6 @@ final class AppViewModel: ObservableObject {
         nowPlayingArtwork: NSImage? = nil,
         audioOutputState: AudioOutputViewState = .empty,
         studioLightState: StudioLightViewState = .empty,
-        pomodoro: PomodoroState = PomodoroState(),
         shortcuts: [Shortcut] = [
             Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N")
         ],
@@ -187,8 +184,6 @@ final class AppViewModel: ObservableObject {
         self.nowPlayingArtwork = nowPlayingArtwork
         self.audioOutputState = audioOutputState
         self.studioLightState = studioLightState
-        self.pomodoro = pomodoro
-        self.expandedUtilityFocus = nil
         self.shortcuts = shortcuts
         self.hooks = hooks
         self.now = now
@@ -842,11 +837,6 @@ final class AppViewModel: ObservableObject {
     }
 
     func handleDismissalRequest(_ reason: PanelDismissalReason) {
-        if surfaceState == .pomodoroComplete {
-            acknowledgePomodoro()
-            surfaceState = isIdlePillHidden ? .dormant : idleSurfaceState
-            return
-        }
         switch reason {
         case .escape:
             if itemEditSession != nil {
@@ -1458,7 +1448,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var hasLiveActivity: Bool {
-        nowPlaying != nil || pomodoro.isActive
+        nowPlaying != nil
     }
 
     var idleSurfaceState: SurfaceState {
@@ -1466,12 +1456,7 @@ final class AppViewModel: ObservableObject {
     }
 
     var collapsedActivityContent: CollapsedActivityContent? {
-        switch (nowPlaying, pomodoro.isActive) {
-        case let (snapshot?, true): .both(snapshot, pomodoro)
-        case let (snapshot?, false): .musicOnly(snapshot)
-        case (nil, true): .pomodoroOnly(pomodoro)
-        case (nil, false): nil
-        }
+        nowPlaying.map(CollapsedActivityContent.musicOnly)
     }
 
     var isNowPlayingRecovering: Bool { nowPlayingPresentation?.isRecovery == true }
@@ -1509,21 +1494,6 @@ final class AppViewModel: ObservableObject {
     func refreshAudioOutputs() { hooks.onRefreshAudioOutputs() }
     func selectAudioOutput(_ target: AudioOutputTarget) {
         hooks.onSelectAudioOutput(target)
-    }
-
-    func togglePomodoro() {
-        hooks.onPomodoroToggle()
-    }
-
-    func resetPomodoro() { hooks.onPomodoroReset() }
-    func setPomodoroDuration(_ duration: TimeInterval) { hooks.onPomodoroSetDuration(duration) }
-
-    func presentPomodoroCompletion() {
-        surfaceState = .pomodoroComplete
-    }
-
-    func acknowledgePomodoro() {
-        hooks.onPomodoroAcknowledge()
     }
 
     private var normalizedComposerText: String {
@@ -1800,11 +1770,7 @@ extension AppViewModel {
                 artworkURL: nil
             ),
             nowPlayingArtwork: NSImage(contentsOf: thumbnailURL),
-            audioOutputState: .preview,
-            pomodoro: PomodoroState(
-                duration: 25 * 60,
-                phase: .running(endsAt: .now.addingTimeInterval(24 * 60 + 23))
-            )
+            audioOutputState: .preview
         )
         if let compactSizeArgument = CommandLine.arguments.first(where: {
             $0.hasPrefix("--preview-compact-size=")
@@ -1813,12 +1779,6 @@ extension AppViewModel {
             model.compactPresentationSize = CompactPresentationSize.fromStoredValue(value)
         }
         model.selectedItemID = selectedTask.id
-        if CommandLine.arguments.contains("--preview-music-only") {
-            model.pomodoro = PomodoroState(duration: 25 * 60)
-        } else if CommandLine.arguments.contains("--preview-pomodoro-only") {
-            model.nowPlaying = nil
-            model.nowPlayingArtwork = nil
-        }
         if CommandLine.arguments.contains("--preview-music-paused"),
            var snapshot = model.nowPlaying {
             snapshot.isPlaying = false
@@ -1832,9 +1792,6 @@ extension AppViewModel {
                 state: .disconnected,
                 snapshot: snapshot.frozen()
             )
-        }
-        if CommandLine.arguments.contains("--preview-pomodoro-paused") {
-            model.pomodoro.phase = .paused(remaining: 24 * 60 + 23)
         }
         if CommandLine.arguments.contains("--preview-completed-item"),
            let index = model.items.firstIndex(where: { $0.id == selectedTask.id }) {

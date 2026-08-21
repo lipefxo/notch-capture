@@ -30,7 +30,7 @@ struct SurfaceChromeMetrics: Equatable {
                 shadowRadius: 0,
                 shadowY: 0
             )
-        case .confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings, .mirror:
+        case .confirmation, .expanded, .drop, .onboarding, .settings, .mirror:
             return Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: NotchTheme.surfaceBottomRadius,
@@ -184,8 +184,6 @@ struct NotchSurfaceView: View {
             )
         case .confirmation:
             ConfirmationView(viewModel: viewModel)
-        case .pomodoroComplete:
-            PomodoroCompleteView(viewModel: viewModel)
         case .expanded, .drop:
             ExpandedInboxView(viewModel: viewModel)
         case .onboarding:
@@ -266,7 +264,7 @@ struct NotchSurfaceView: View {
             // blank text to be seen, and recreating a keyboard surface here
             // would risk resetting its focus.
             if initialCommitRepaint == 0,
-               [.collapsed, .collapsedActivity, .confirmation, .pomodoroComplete, .mirror]
+               [.collapsed, .collapsedActivity, .confirmation, .mirror]
                    .contains(viewModel.surfaceState) {
                 withoutAnimation { initialCommitRepaint = 1 }
             }
@@ -477,7 +475,6 @@ struct NotchSurfaceView: View {
         case .collapsed: "collapsed-\(displayedCompactPresentationSize.rawValue)"
         case .collapsedActivity: "collapsedActivity-\(displayedCompactPresentationSize.rawValue)"
         case .confirmation: "confirmation"
-        case .pomodoroComplete: "pomodoroComplete"
         case .onboarding: "onboarding"
         case .settings: "settings"
         case .mirror: "mirror"
@@ -507,7 +504,7 @@ struct NotchSurfaceView: View {
                 removal: .opacity.combined(with: .offset(x: 12))
             )
         }
-        if newState == .confirmation || newState == .pomodoroComplete {
+        if newState == .confirmation {
             return .asymmetric(
                 insertion: .opacity.combined(with: .scale(scale: 0.985, anchor: .top)),
                 removal: .opacity

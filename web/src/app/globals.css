@@ -186,8 +186,8 @@ kbd {
 .shelf div { min-width: 0; display: grid; text-align: left; }
 .shelf strong { font-size: 12px; }
 .shelf small { color: rgb(255 255 255 / 0.48); font-size: 9px; }
-.timer { margin-left: auto; padding: 10px 12px; border: 1px solid rgb(255 255 255 / 0.09); border-radius: 10px; font: 500 15px ui-rounded, "SF Mono", monospace; }
-.pause { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: rgb(255 255 255 / 0.08); }
+.shelfControls { margin-left: auto; display: flex; align-items: center; gap: 10px; color: rgb(255 255 255 / 0.62); }
+.shelfControl { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 50%; background: rgb(255 255 255 / 0.08); }
 
 .macBase { height: 22px; margin-top: -1px; border-radius: 2px 2px 35px 35px; background: linear-gradient(#c8c9cb, #f4f4f5 36%, #9b9c9f 100%); box-shadow: inset 0 1px 0 white; }
 .macBase span { width: 14%; height: 6px; display: block; margin: 0 auto; border-radius: 0 0 8px 8px; background: #aaaeb2; }
@@ -229,7 +229,9 @@ kbd {
 .musicPill b { font-size: 13px; }
 .musicPill small { color: rgb(255 255 255 / .48); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .musicPill > span:last-child { margin-left: auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: rgb(255 255 255 / .08); }
-.timerPill { padding: 20px 26px; border: 1px solid rgb(255 255 255 / .09); border-radius: 16px; color: var(--mint); background: #060607; box-shadow: 0 0 36px rgb(58 199 128 / .16); font: 500 34px ui-rounded, "SF Mono", monospace; }
+.audioOutputSelector { width: min(100%, 360px); padding: 10px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; border: 1px solid rgb(255 255 255 / .08); border-radius: 16px; background: #070708; }
+.audioOutputOption { min-width: 0; min-height: 92px; padding: 13px 5px 10px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 9px; border-radius: 11px; color: rgb(255 255 255 / .48); font-size: 10px; }
+.audioOutputOption.isSelected { color: #b6a8ff; background: rgb(255 255 255 / .08); box-shadow: inset 0 -2px 0 #9d8cff; }
 .shortcutKeys { display: flex; gap: 10px; }
 .shortcutKeys kbd { width: 48px; height: 48px; border-color: rgb(255 255 255 / .1); color: white; background: rgb(255 255 255 / .07); }
 .updateLine { width: min(100%, 300px); padding: 18px; display: flex; align-items: center; justify-content: space-between; border: 1px solid rgb(255 255 255 / .08); border-radius: 15px; background: #070708; }

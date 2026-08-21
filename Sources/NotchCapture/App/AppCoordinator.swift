@@ -11,7 +11,6 @@ final class AppCoordinator {
         static let autoHideExternalPill = "autoHideExternalPill"
         static let timeFormat = "timeFormat"
         static let compactPresentationSize = "compactPresentationSize"
-        static let pomodoroDuration = "pomodoroDuration"
 
         static func shortcut(_ action: GlobalHotKeyAction, field: String) -> String {
             "shortcut.\(action.rawValue).\(field)"
@@ -29,7 +28,6 @@ final class AppCoordinator {
     let nowPlayingService: NowPlayingService
     let audioOutputService: any AudioOutputControlling
     let studioLightService: any StudioLightControlling
-    let pomodoroService: PomodoroService
     let cameraService: CameraService
     let cameraControlService: CameraControlService
     let cameraAimStore: CameraAimStore
@@ -111,11 +109,6 @@ final class AppCoordinator {
         self.loginItemService = LoginItemService()
         self.updaterService = UpdaterService(previewMode: previewMode)
         self.displayLocator = DisplayLocator()
-        let storedPomodoroDuration = defaults.double(forKey: DefaultsKey.pomodoroDuration)
-        self.pomodoroService = PomodoroService(
-            duration: storedPomodoroDuration > 0 ? storedPomodoroDuration : PomodoroState.defaultDuration,
-            persistDuration: { duration in defaults.set(duration, forKey: DefaultsKey.pomodoroDuration) }
-        )
         self.nowPlayingService = NowPlayingService()
         self.audioOutputService = injectedAudioOutputService ?? AudioOutputService()
         self.studioLightService = injectedStudioLightService
@@ -443,7 +436,6 @@ final class AppCoordinator {
         switch argument.dropFirst("--preview-state=".count) {
         case "collapsed": return .collapsed
         case "activity": return .collapsedActivity
-        case "pomodoro-complete": return .pomodoroComplete
         case "confirmation": return .confirmation
         case "settings": return .settings
         case "onboarding": return .onboarding
@@ -463,7 +455,6 @@ final class AppCoordinator {
         case "capture": return .capture
         case "organize": return .organize
         case "music": return .music
-        case "pomodoro": return .pomodoro
         default: return .capture
         }
     }
@@ -736,10 +727,6 @@ final class AppCoordinator {
             guard let self, let uid = self.cameraService.activeDeviceUID else { return }
             self.cameraPresetStore.select(slot, for: uid)
         }
-        hooks.onPomodoroToggle = { [weak self] in self?.pomodoroService.toggle() }
-        hooks.onPomodoroReset = { [weak self] in self?.pomodoroService.reset() }
-        hooks.onPomodoroSetDuration = { [weak self] duration in self?.pomodoroService.setDuration(duration) }
-        hooks.onPomodoroAcknowledge = { [weak self] in self?.pomodoroService.reset() }
         hooks.onOpenShortcutRecorder = { [weak self] action in
             self?.beginShortcutRecording(for: action)
         }
@@ -788,7 +775,7 @@ final class AppCoordinator {
             .sink { [weak self] state in
                 Task { @MainActor in
                     guard let self else { return }
-                    if [.confirmation, .pomodoroComplete, .expanded, .drop, .onboarding, .settings, .mirror].contains(state) {
+                    if [.confirmation, .expanded, .drop, .onboarding, .settings, .mirror].contains(state) {
                         self.updateIdlePillVisibility()
                     }
                     self.updateMediaActivityLevel(for: state)

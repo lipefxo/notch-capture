@@ -39,15 +39,6 @@ extension AppCoordinator {
             self?.viewModel.mediaConnectionStates[source] = state
         }
 
-        pomodoroService.onChange = { [weak self] state in
-            guard let self else { return }
-            self.viewModel.pomodoro = state
-            self.refreshIdleActivitySurface()
-        }
-        pomodoroService.onCompleted = { [weak self] in
-            self?.handlePomodoroCompletion()
-        }
-        viewModel.pomodoro = pomodoroService.state
         for source in NowPlayingSource.allCases {
             viewModel.mediaConnectionStates[source] = nowPlayingService.connectionState(for: source)
         }
@@ -146,7 +137,7 @@ extension AppCoordinator {
         case .expanded, .settings: .full
         // The mirror shows no now-playing chrome, but closing it lands straight
         // back on the activity pill, so its data must not have gone stale.
-        case .collapsed, .collapsedActivity, .confirmation, .pomodoroComplete, .mirror: .compact
+        case .collapsed, .collapsedActivity, .confirmation, .mirror: .compact
         case .dormant, .drop, .onboarding: .hidden
         }
         nowPlayingService.setActivityLevel(level)
@@ -174,7 +165,4 @@ extension AppCoordinator {
         viewModel.surfaceState = targetState
     }
 
-    private func handlePomodoroCompletion() {
-        viewModel.presentPomodoroCompletion()
-    }
 }

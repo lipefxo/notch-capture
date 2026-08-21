@@ -114,39 +114,3 @@ enum MusicTimeFormatter {
         return string(from: duration)
     }
 }
-
-struct PomodoroState: Equatable, Sendable {
-    enum Phase: Equatable, Sendable {
-        case idle
-        case running(endsAt: Date)
-        case paused(remaining: TimeInterval)
-        case finished
-    }
-
-    static let defaultDuration: TimeInterval = 25 * 60
-    static let durationRange: ClosedRange<TimeInterval> = 60...(180 * 60)
-
-    var duration: TimeInterval = Self.defaultDuration
-    var phase: Phase = .idle
-
-    func remaining(at date: Date) -> TimeInterval {
-        switch phase {
-        case .idle: duration
-        case let .running(endsAt): max(0, endsAt.timeIntervalSince(date))
-        case let .paused(remaining): max(0, remaining)
-        case .finished: 0
-        }
-    }
-
-    func progress(at date: Date) -> Double {
-        guard duration > 0 else { return 0 }
-        return min(1, max(0, 1 - (remaining(at: date) / duration)))
-    }
-
-    var isActive: Bool {
-        switch phase {
-        case .idle: false
-        case .running, .paused, .finished: true
-        }
-    }
-}

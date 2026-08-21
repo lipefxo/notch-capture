@@ -22,14 +22,13 @@ The composer bar is a single field for both search and capture: typing filters t
 
 Items are notes or tasks. Tasks can be completed (with a short completion hold before they leave the main page), pinned to the top, and given due dates. The ledger offers All, Tasks, Due, Completed, Archive, and Trash filters plus folder and tag views. Rows can be reordered by dragging and dropped into folders; file and image attachments get QuickLook thumbnails.
 
-## Now playing and pomodoro
+## Now playing
 
 The expanded surface includes a utility shelf:
 
 - **Now playing** — shows and controls Apple Music and Spotify via Automation (AppleScript). The album art doubles as a play/pause button with a waveform overlay, and a draggable scrubber seeks within the track (rendered with Liquid Glass on macOS 26+).
-- **Pomodoro** — a focus timer with 15/25/45/60-minute presets (custom durations from 1 to 180 minutes), pause/resume, and a completion chime with a dedicated finish screen. It survives sleep and wake.
 
-While idle, active music or a running timer shows in a compact activity pill in the notch.
+While idle, active music shows in a compact activity pill in the notch.
 
 ## Audio output
 
@@ -69,7 +68,7 @@ Open `Package.swift` in Xcode for development. Run tests with:
 swift test
 ```
 
-The first launch shows a four-step tour of the main features (capture, organizing, music, pomodoro). It resumes where you left off until finished.
+The first launch shows a three-step tour of the main features (capture, organizing, music). It resumes where you left off until finished.
 
 ## Idle behavior
 

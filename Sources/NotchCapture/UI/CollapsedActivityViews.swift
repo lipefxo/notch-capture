@@ -32,16 +32,17 @@ struct CollapsedActivityPillView: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// Minimal full-screen presentation hugs the physical notch without live
-    /// activity wings. The shared clear overlay still makes the small shell a
-    /// target for reopening Notch Capture, while media remains active behind it.
+    /// Minimal full-screen presentation hugs the physical notch while keeping
+    /// the active music controls and mirror toggle inside the compact shell.
     private var minimalNotchedLayout: some View {
-        Color.clear
+        HStack(spacing: 4) {
+            notchedMusicWing
+            compactMirrorToggle
+        }
             .frame(
                 width: compactMetrics.contentSize.width,
                 height: compactMetrics.contentSize.height
             )
-            .allowsHitTesting(false)
     }
 
     private var notchedLayout: some View {
@@ -61,7 +62,7 @@ struct CollapsedActivityPillView: View {
             ZStack {
                 Color.clear
                     .allowsHitTesting(false)
-                notchedPomodoroWing
+                notchedTrailingWing
             }
                 .frame(
                     width: compactMetrics.wingWidth ?? NotchTheme.collapsedActivityWingWidth,
@@ -93,26 +94,6 @@ struct CollapsedActivityPillView: View {
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: 34)
-        case let .pomodoroOnly(state):
-            HStack(spacing: 6) {
-                CompactPomodoroButton(viewModel: viewModel, state: state)
-                    .frame(maxWidth: .infinity)
-                compactMirrorToggle
-            }
-            .padding(.horizontal, 12)
-            .frame(width: compactMetrics.contentSize.width, height: 34)
-        case let .both(snapshot, state):
-            HStack(spacing: 6) {
-                musicInfoView(snapshot, artworkSize: 22)
-                    .frame(maxWidth: .infinity)
-                CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
-                    .frame(width: 42)
-                compactPomodoroButton(state)
-                    .frame(width: 54)
-                compactMirrorToggle
-            }
-            .padding(.horizontal, 12)
-            .frame(width: compactMetrics.contentSize.width, height: 34)
         case nil:
             EmptyView()
         }
@@ -134,27 +115,6 @@ struct CollapsedActivityPillView: View {
                 extendedMusicInfoView(snapshot)
                     .frame(maxWidth: .infinity)
                 extendedMirrorToggle
-            }
-            .padding(.horizontal, 12)
-            .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
-        case let .pomodoroOnly(state):
-            HStack(spacing: 8) {
-                ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
-                    .frame(maxWidth: .infinity)
-                extendedMirrorToggle
-            }
-            .padding(.horizontal, 12)
-            .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
-        case let .both(snapshot, state):
-            HStack(spacing: 8) {
-                extendedMusicInfoView(snapshot)
-                    .frame(maxWidth: .infinity)
-                    .layoutPriority(1)
-                ExtendedCompactPomodoroButton(viewModel: viewModel, state: state)
-                    .frame(width: 72, height: compactMetrics.contentSize.height)
-                    .layoutPriority(2)
-                extendedMirrorToggle
-                    .layoutPriority(2)
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
@@ -195,19 +155,9 @@ struct CollapsedActivityPillView: View {
         )
     }
 
-    private var notchedPomodoroWing: some View {
-        HStack(spacing: 4) {
-            if viewModel.pomodoro.isActive {
-                compactPomodoroButton(viewModel.pomodoro)
-                    .frame(width: 54, height: compactMetrics.contentSize.height)
-            }
-            compactMirrorToggle
-        }
-        .frame(height: compactMetrics.contentSize.height)
-    }
-
-    private func compactPomodoroButton(_ state: PomodoroState) -> some View {
-        CompactPomodoroButton(viewModel: viewModel, state: state)
+    private var notchedTrailingWing: some View {
+        extendedMirrorToggle
+            .frame(height: compactMetrics.contentSize.height)
     }
 
     private func musicInfoView(
@@ -325,120 +275,6 @@ struct CollapsedActivityPillView: View {
     }
 }
 
-private struct CompactPomodoroButton: View {
-    @ObservedObject var viewModel: AppViewModel
-    let state: PomodoroState
-
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @FocusState private var isFocused: Bool
-    @State private var isHovered = false
-
-    private var isHighlighted: Bool {
-        isHovered
-            || isFocused
-            || CommandLine.arguments.contains("--preview-pomodoro-hover")
-            || CommandLine.arguments.contains("--preview-pomodoro-focus")
-    }
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = state.remaining(at: context.date)
-            Button(action: viewModel.togglePomodoro) {
-                PomodoroCountdownText(
-                    state: state,
-                    remaining: remaining,
-                    emphasized: isHighlighted
-                )
-            }
-            .buttonStyle(CompactPomodoroButtonStyle(
-                isHighlighted: isHighlighted,
-                isPreviewPressed: CommandLine.arguments.contains("--preview-pomodoro-pressed"),
-                reduceMotion: reduceMotion
-            ))
-            .focused($isFocused)
-            .focusEffectDisabled()
-            .onHover { isHovered = $0 }
-            .help(actionLabel)
-            .accessibilityLabel(actionLabel)
-            .accessibilityValue(PomodoroCountdownLabel.accessibilityValue(remaining))
-        }
-    }
-
-    private var actionLabel: String {
-        switch state.phase {
-        case .idle: "Start focus timer"
-        case .running: "Pause focus timer"
-        case .paused: "Resume focus timer"
-        case .finished: "Restart focus timer"
-        }
-    }
-}
-
-/// Extended Pomodoro deliberately remains a single, plain timer. The larger
-/// full-surface hit target preserves the compact timer's existing action.
-private struct ExtendedCompactPomodoroButton: View {
-    @ObservedObject var viewModel: AppViewModel
-    let state: PomodoroState
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = state.remaining(at: context.date)
-            Button(action: viewModel.togglePomodoro) {
-                Text(PomodoroCountdownLabel.format(remaining))
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    .monospacedDigit()
-                    .foregroundStyle(foregroundColor(remaining))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.9))
-            .notchHitTarget(Rectangle())
-            .help(actionLabel)
-            .accessibilityLabel(actionLabel)
-            .accessibilityValue(PomodoroCountdownLabel.accessibilityValue(remaining))
-        }
-    }
-
-    private var actionLabel: String {
-        switch state.phase {
-        case .idle: "Start focus timer"
-        case .running: "Pause focus timer"
-        case .paused: "Resume focus timer"
-        case .finished: "Restart focus timer"
-        }
-    }
-
-    private func foregroundColor(_ remaining: TimeInterval) -> Color {
-        if case .paused = state.phase { return NotchTheme.secondaryText }
-        return NotchTheme.pomodoroTimerColor(remaining: remaining, duration: state.duration).color
-    }
-}
-
-private struct CompactPomodoroButtonStyle: ButtonStyle {
-    let isHighlighted: Bool
-    let isPreviewPressed: Bool
-    let reduceMotion: Bool
-
-    func makeBody(configuration: Configuration) -> some View {
-        let isPressed = configuration.isPressed || isPreviewPressed
-        configuration.label
-            .frame(width: 54, height: 28)
-            .background(
-                RoundedRectangle(cornerRadius: 7, style: .continuous)
-                    .fill(backgroundColor(isPressed: isPressed))
-            )
-            .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-            .scaleEffect(isPressed && !reduceMotion ? 0.97 : 1)
-            .animation(reduceMotion ? nil : NotchMotion.hover, value: isHighlighted)
-            .animation(reduceMotion ? nil : NotchMotion.controlPress, value: isPressed)
-    }
-
-    private func backgroundColor(isPressed: Bool) -> Color {
-        if isPressed { return Color.white.opacity(0.10) }
-        return isHighlighted ? NotchTheme.control : .clear
-    }
-}
-
 /// Matches the opened player's control placement: transport lives beside the
 /// metadata, directly above the read-only progress strip.
 private struct ExtendedInlineTransportControls: View {
@@ -531,54 +367,5 @@ private struct CollapsedTransportButtonStyle: ButtonStyle {
             .notchHitTarget(RoundedRectangle(cornerRadius: 6, style: .continuous))
             .scaleEffect(configuration.isPressed && !reduceMotion ? 0.96 : 1)
             .animation(reduceMotion ? nil : NotchMotion.controlPress, value: configuration.isPressed)
-    }
-}
-
-struct PomodoroCountdownLabel: View {
-    let state: PomodoroState
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1)) { context in
-            let remaining = state.remaining(at: context.date)
-            PomodoroCountdownText(state: state, remaining: remaining)
-        }
-    }
-
-    static func format(_ seconds: TimeInterval) -> String {
-        let value = max(0, Int(ceil(seconds)))
-        return String(format: "%02d:%02d", value / 60, value % 60)
-    }
-
-    static func accessibilityValue(_ seconds: TimeInterval) -> String {
-        let value = max(0, Int(ceil(seconds)))
-        let minutes = value / 60
-        let seconds = value % 60
-        let minuteUnit = minutes == 1 ? "minute" : "minutes"
-        let secondUnit = seconds == 1 ? "second" : "seconds"
-        return "\(minutes) \(minuteUnit), \(seconds) \(secondUnit) remaining"
-    }
-}
-
-private struct PomodoroCountdownText: View {
-    let state: PomodoroState
-    let remaining: TimeInterval
-    var emphasized = false
-
-    var body: some View {
-        Text(PomodoroCountdownLabel.format(remaining))
-            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-            .monospacedDigit()
-            .foregroundStyle(foregroundColor)
-            .brightness(emphasized ? 0.08 : 0)
-    }
-
-    private var foregroundColor: Color {
-        if case .paused = state.phase {
-            return NotchTheme.secondaryText
-        }
-        return NotchTheme.pomodoroTimerColor(
-            remaining: remaining,
-            duration: state.duration
-        ).color
     }
 }

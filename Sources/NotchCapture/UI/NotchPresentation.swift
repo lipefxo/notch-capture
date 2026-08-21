@@ -84,41 +84,13 @@ struct NotchMenuItem: Identifiable {
     var action: () -> Void
 }
 
-enum PomodoroDurationPickerLayout {
-    /// Five monospaced digits plus the app's normal 10pt row padding and 4pt
-    /// card inset. Unlike a general action menu, this picker has no icon or
-    /// trailing checkmark to reserve space for.
-    static let contentWidth: CGFloat = 72
-    static let rowHeight: CGFloat = 30
-    static let cardPadding: CGFloat = 4
-    static let rowDividerHeight: CGFloat = 1
-    static let cornerRadius: CGFloat = 10
-
-    static func cardSize(itemCount: Int) -> CGSize {
-        let count = max(0, itemCount)
-        let dividers = max(0, count - 1)
-        return CGSize(
-            width: contentWidth + (cardPadding * 2),
-            height: (cardPadding * 2)
-                + (CGFloat(count) * rowHeight)
-                + (CGFloat(dividers) * rowDividerHeight)
-        )
-    }
-}
-
 struct NotchMenu {
-    enum Style {
-        case standard
-        case pomodoroDurationPicker
-    }
-
     let id = UUID()
     let title: String?
     /// Frame of the invoking control in `NotchPresentationLayer.coordinateSpace`,
     /// so the popover opens attached to the control instead of a fixed point.
     let anchor: CGRect
     let items: [NotchMenuItem]
-    var style: Style = .standard
 }
 
 struct StudioLightPopover {
@@ -261,20 +233,14 @@ private struct NotchPopoverMenu: View {
     var body: some View {
         GeometryReader { proxy in
             let bounds = proxy.frame(in: .local)
-            let isDurationPicker = menu.style == .pomodoroDurationPicker
-            let cardSize = isDurationPicker
-                ? PomodoroDurationPickerLayout.cardSize(itemCount: menu.items.count)
-                : nil
-            let contentWidth = isDurationPicker
-                ? cardSize!.width - (PomodoroDurationPickerLayout.cardPadding * 2)
-                : Self.width(for: menu.items)
+            let contentWidth = Self.width(for: menu.items)
             // The scroll area gets an explicit height: a bare maxHeight lets
             // the greedy ScrollView inflate the card with empty space and
             // desynchronizes the placement math from the rendered size.
             let dividerCount = max(0, menu.items.count - 1)
             let rowsHeight = max(30, CGFloat(menu.items.count) * 30 + CGFloat(dividerCount))
             let scrollHeight = min(min(rowsHeight, 270), max(60, bounds.height - 80))
-            let menuSize = cardSize ?? CGSize(width: contentWidth, height: scrollHeight + 8)
+            let menuSize = CGSize(width: contentWidth, height: scrollHeight + 8)
             let frame = NotchPopoverPlacement.frame(
                 anchor: menu.anchor,
                 menuSize: menuSize,
@@ -283,95 +249,53 @@ private struct NotchPopoverMenu: View {
             // The title is deliberately not rendered: the menu opens anchored
             // to its source row, so repeating the name is noise. It still
             // names the menu for accessibility below.
-            Group {
-                if isDurationPicker {
+            VStack(alignment: .leading, spacing: 0) {
+                ScrollView {
                     VStack(spacing: 0) {
                         ForEach(Array(menu.items.enumerated()), id: \.element.id) { index, item in
                             Button {
                                 activate(item)
                             } label: {
-                                Text(item.title)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .monospacedDigit()
-                                    .foregroundStyle(item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText)
-                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-                                    .padding(.horizontal, 10)
-                                    .background(
-                                        highlightedIndex == index ? NotchTheme.control : Color.clear,
-                                        in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                    )
-                                    .contentShape(Rectangle())
+                                HStack(spacing: 8) {
+                                    if let icon = item.icon { Image(systemName: icon).frame(width: 14) }
+                                    Text(item.title).lineLimit(1)
+                                    Spacer(minLength: 8)
+                                    if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.primaryAccent) }
+                                }
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(item.role == .destructive ? NotchTheme.destructive.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
+                                .padding(.horizontal, 10)
+                                .frame(height: 30)
+                                .background(
+                                    highlightedIndex == index ? NotchTheme.control : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                )
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
                             .disabled(!item.isEnabled)
-                            .frame(height: PomodoroDurationPickerLayout.rowHeight)
                             .onHover { updateHighlight(for: index, hovering: $0, isEnabled: item.isEnabled) }
-                            .accessibilityLabel("\(item.title) focus session")
+                            .accessibilityLabel(item.title)
                             .accessibilityAddTraits(item.isChecked ? .isSelected : [])
 
                             if index < menu.items.count - 1 {
                                 Rectangle()
                                     .fill(NotchTheme.hairline)
-                                    .frame(height: PomodoroDurationPickerLayout.rowDividerHeight)
+                                    .frame(height: 1)
                             }
                         }
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 0) {
-                        ScrollView {
-                            VStack(spacing: 0) {
-                                ForEach(Array(menu.items.enumerated()), id: \.element.id) { index, item in
-                                    Button {
-                                        activate(item)
-                                    } label: {
-                                        HStack(spacing: 8) {
-                                            if let icon = item.icon { Image(systemName: icon).frame(width: 14) }
-                                            Text(item.title).lineLimit(1)
-                                            Spacer(minLength: 8)
-                                            if item.isChecked { Image(systemName: "checkmark").foregroundStyle(NotchTheme.primaryAccent) }
-                                        }
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(item.role == .destructive ? NotchTheme.destructive.opacity(item.isEnabled ? 0.9 : 0.35) : (item.isEnabled ? NotchTheme.primaryText : NotchTheme.tertiaryText))
-                                        .padding(.horizontal, 10)
-                                        .frame(height: 30)
-                                        .background(
-                                            highlightedIndex == index ? NotchTheme.control : Color.clear,
-                                            in: RoundedRectangle(cornerRadius: 7, style: .continuous)
-                                        )
-                                        .contentShape(Rectangle())
-                                    }
-                                    .buttonStyle(.plain)
-                                    .disabled(!item.isEnabled)
-                                    .onHover { updateHighlight(for: index, hovering: $0, isEnabled: item.isEnabled) }
-                                    .accessibilityLabel(item.title)
-                                    .accessibilityAddTraits(item.isChecked ? .isSelected : [])
-
-                                    if index < menu.items.count - 1 {
-                                        Rectangle()
-                                            .fill(NotchTheme.hairline)
-                                            .frame(height: 1)
-                                    }
-                                }
-                            }
-                        }
-                        .frame(height: scrollHeight)
                     }
                 }
+                .frame(height: scrollHeight)
             }
             .frame(width: contentWidth)
             .padding(4)
             .background(NotchTheme.raisedGraphite)
             .overlay {
-                RoundedRectangle(
-                    cornerRadius: isDurationPicker ? PomodoroDurationPickerLayout.cornerRadius : 10,
-                    style: .continuous
-                )
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .stroke(NotchTheme.controlStroke)
             }
-            .clipShape(RoundedRectangle(
-                cornerRadius: isDurationPicker ? PomodoroDurationPickerLayout.cornerRadius : 10,
-                style: .continuous
-            ))
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .shadow(color: .black.opacity(0.45), radius: 16, y: 8)
             .position(x: frame.midX, y: frame.midY)
             .focusable()
