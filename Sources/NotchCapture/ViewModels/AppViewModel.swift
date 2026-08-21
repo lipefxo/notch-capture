@@ -98,6 +98,7 @@ final class AppViewModel: ObservableObject {
     @Published var nowPlayingPresentation: NowPlayingPresentation?
     @Published var mediaConnectionStates: [NowPlayingSource: NowPlayingConnectionState] = [:]
     @Published var nowPlayingArtwork: NSImage?
+    @Published var audioOutputState: AudioOutputViewState
     @Published var studioLightState: StudioLightViewState
     @Published var pomodoro: PomodoroState
     @Published var cameraPreview: CameraService.PreviewState = .idle
@@ -161,6 +162,7 @@ final class AppViewModel: ObservableObject {
         nowPlaying: NowPlayingSnapshot? = nil,
         nowPlayingPresentation: NowPlayingPresentation? = nil,
         nowPlayingArtwork: NSImage? = nil,
+        audioOutputState: AudioOutputViewState = .empty,
         studioLightState: StudioLightViewState = .empty,
         pomodoro: PomodoroState = PomodoroState(),
         shortcuts: [Shortcut] = [
@@ -183,6 +185,7 @@ final class AppViewModel: ObservableObject {
         self.nowPlaying = nowPlaying
         self.nowPlayingPresentation = nowPlayingPresentation
         self.nowPlayingArtwork = nowPlayingArtwork
+        self.audioOutputState = audioOutputState
         self.studioLightState = studioLightState
         self.pomodoro = pomodoro
         self.expandedUtilityFocus = nil
@@ -1503,6 +1506,11 @@ final class AppViewModel: ObservableObject {
     }
     func openBluetoothSettings() { hooks.onOpenBluetoothSettings() }
 
+    func refreshAudioOutputs() { hooks.onRefreshAudioOutputs() }
+    func selectAudioOutput(_ target: AudioOutputTarget) {
+        hooks.onSelectAudioOutput(target)
+    }
+
     func togglePomodoro() {
         hooks.onPomodoroToggle()
     }
@@ -1792,6 +1800,7 @@ extension AppViewModel {
                 artworkURL: nil
             ),
             nowPlayingArtwork: NSImage(contentsOf: thumbnailURL),
+            audioOutputState: .preview,
             pomodoro: PomodoroState(
                 duration: 25 * 60,
                 phase: .running(endsAt: .now.addingTimeInterval(24 * 60 + 23))

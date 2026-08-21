@@ -196,6 +196,7 @@ struct ExpandedInboxView: View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
+                AudioOutputStrip(viewModel: viewModel)
                 UtilityShelfView(viewModel: viewModel)
                 navigationViewport
                     .opacity(ledgerAppearance)
@@ -1199,6 +1200,10 @@ struct ExpandedInboxView: View {
     }
 
     private func focusComposer() {
+        guard !CommandLine.arguments.contains("--preview-audio-output-strip") else {
+            focusedField = nil
+            return
+        }
         guard viewModel.saveEditing() else { return }
         viewModel.focusComposer()
         Task { @MainActor in

@@ -27,6 +27,7 @@ final class AppCoordinator {
     private let updaterService: UpdaterService
     let displayLocator: DisplayLocator
     let nowPlayingService: NowPlayingService
+    let audioOutputService: any AudioOutputControlling
     let studioLightService: any StudioLightControlling
     let pomodoroService: PomodoroService
     let cameraService: CameraService
@@ -54,6 +55,7 @@ final class AppCoordinator {
 
     init(
         defaults: UserDefaults = .standard,
+        audioOutputService injectedAudioOutputService: (any AudioOutputControlling)? = nil,
         studioLightService injectedStudioLightService: (any StudioLightControlling)? = nil
     ) throws {
         self.defaults = defaults
@@ -115,6 +117,7 @@ final class AppCoordinator {
             persistDuration: { duration in defaults.set(duration, forKey: DefaultsKey.pomodoroDuration) }
         )
         self.nowPlayingService = NowPlayingService()
+        self.audioOutputService = injectedAudioOutputService ?? AudioOutputService()
         self.studioLightService = injectedStudioLightService
             ?? StudioLightService(
                 defaults: defaults,
@@ -200,6 +203,7 @@ final class AppCoordinator {
                 launchAtLogin: loginItemService.isEnabled,
                 timeFormat: timeFormat,
                 compactPresentationSize: compactPresentationSize,
+                audioOutputState: audioOutputService.state,
                 studioLightState: studioLightService.state
             )
         }
@@ -227,6 +231,7 @@ final class AppCoordinator {
 
         configureHooks()
         configureMedia()
+        configureAudioOutput()
         configureStudioLight()
         configureCamera()
         configureStateSynchronization()
@@ -466,6 +471,7 @@ final class AppCoordinator {
     func start() {
         if !previewMode {
             nowPlayingService.setActivityLevel(.compact)
+            audioOutputService.start()
             studioLightService.start()
             do {
                 let manager = try GlobalHotKeyManager { [weak self] action in
@@ -519,6 +525,7 @@ final class AppCoordinator {
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
         nowPlayingService.stop()
+        audioOutputService.stop()
         studioLightService.stop()
         cameraService.stop()
         cameraControlService.detach()
@@ -648,6 +655,28 @@ final class AppCoordinator {
         hooks.onOpenMediaAutomationSettings = {
             guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation") else { return }
             NSWorkspace.shared.open(url)
+        }
+        if previewMode {
+            hooks.onSelectAudioOutput = { [weak self] target in
+                guard let self,
+                      self.viewModel.audioOutputState.isAvailable(target) else { return }
+                self.viewModel.audioOutputState.mediaTarget = target
+                self.viewModel.audioOutputState.systemTarget = target
+                self.viewModel.audioOutputState.mediaDeviceName = target.systemDeviceName
+                self.viewModel.audioOutputState.systemDeviceName = target.systemDeviceName
+            }
+        } else {
+            hooks.onRefreshAudioOutputs = { [weak self] in
+                self?.audioOutputService.refresh()
+            }
+            hooks.onSelectAudioOutput = { [weak self] target in
+                guard let self else { return }
+                do {
+                    try self.audioOutputService.select(target)
+                } catch {
+                    self.show(error)
+                }
+            }
         }
         hooks.onStartStudioLightPairing = { [weak self] in
             self?.studioLightService.startPairing()
