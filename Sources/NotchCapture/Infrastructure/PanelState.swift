@@ -23,6 +23,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
     case dormant
     case collapsed
     case collapsedActivity
+    case volume
     case confirmation
     case expanded
     case dropTarget
@@ -39,7 +40,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
     /// the Escape/outside-click dismissal monitors and closes only on request.
     public var isExplicitSession: Bool {
         switch self {
-        case .confirmation, .expanded, .dropTarget, .onboarding, .settings:
+        case .volume, .confirmation, .expanded, .dropTarget, .onboarding, .settings:
             return true
         case .dormant, .collapsed, .collapsedActivity, .mirror:
             return false
@@ -50,7 +51,7 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         switch self {
         case .expanded, .dropTarget, .onboarding, .settings:
             return true
-        case .dormant, .collapsed, .collapsedActivity, .confirmation, .mirror:
+        case .dormant, .collapsed, .collapsedActivity, .volume, .confirmation, .mirror:
             return false
         }
     }
@@ -69,6 +70,8 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
             CompactSurfaceMetrics.capture(for: compactPresentationSize).shellSize
         case .collapsedActivity:
             CompactSurfaceMetrics.externalActivity(for: compactPresentationSize).shellSize
+        case .volume:
+            CGSize(width: 340, height: 56)
         case .confirmation:
             CGSize(width: 300, height: 56)
         case .expanded, .dropTarget, .settings:
@@ -101,26 +104,26 @@ struct CompactSurfaceMetrics: Equatable {
     let bottomRadius: CGFloat
     let wingWidth: CGFloat?
 
-    /// The compact widths carry a trailing `mirrorToggleSlot` beyond the
-    /// content they used to hold, so adding the mirror toggle did not squeeze
-    /// the capture cluster or the transport controls.
+    /// Compact widths reserve fixed trailing slots for audio and mirror
+    /// controls, keeping capture and transport content at its established size.
+    static let audioControlSlot: CGFloat = 28
     static let mirrorToggleSlot: CGFloat = 28
 
     static func capture(for presentationSize: CompactPresentationSize) -> Self {
         switch presentationSize {
         case .minimal:
-            Self(shellSize: CGSize(width: 226, height: 34), contentSize: CGSize(width: 206, height: 34), bottomRadius: 16, wingWidth: nil)
+            Self(shellSize: CGSize(width: 254, height: 34), contentSize: CGSize(width: 234, height: 34), bottomRadius: 16, wingWidth: nil)
         case .extended:
-            Self(shellSize: CGSize(width: 332, height: 50), contentSize: CGSize(width: 312, height: 50), bottomRadius: 22, wingWidth: nil)
+            Self(shellSize: CGSize(width: 360, height: 50), contentSize: CGSize(width: 340, height: 50), bottomRadius: 22, wingWidth: nil)
         }
     }
 
     static func externalActivity(for presentationSize: CompactPresentationSize) -> Self {
         switch presentationSize {
         case .minimal:
-            Self(shellSize: CGSize(width: 328, height: 34), contentSize: CGSize(width: 308, height: 34), bottomRadius: 16, wingWidth: nil)
+            Self(shellSize: CGSize(width: 356, height: 34), contentSize: CGSize(width: 336, height: 34), bottomRadius: 16, wingWidth: nil)
         case .extended:
-            Self(shellSize: CGSize(width: 472, height: 56), contentSize: CGSize(width: 452, height: 56), bottomRadius: 22, wingWidth: nil)
+            Self(shellSize: CGSize(width: 500, height: 56), contentSize: CGSize(width: 480, height: 56), bottomRadius: 22, wingWidth: nil)
         }
     }
 

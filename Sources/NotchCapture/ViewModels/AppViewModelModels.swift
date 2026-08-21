@@ -15,6 +15,7 @@ extension AppViewModel {
         case dormant
         case collapsed
         case collapsedActivity
+        case volume
         case confirmation
         case expanded
         case drop
@@ -29,6 +30,7 @@ extension AppViewModel {
             case .dormant: .dormant
             case .collapsed: .collapsed
             case .collapsedActivity: .collapsedActivity
+            case .volume: .volume
             case .confirmation: .confirmation
             case .expanded: .expanded
             case .drop: .dropTarget
@@ -425,6 +427,8 @@ extension AppViewModel {
         var onOpenMediaAutomationSettings: () -> Void = {}
         var onRefreshAudioOutputs: () -> Void = {}
         var onSelectAudioOutput: (AudioOutputTarget) -> Void = { _ in }
+        var onSetOutputVolume: (Double) -> Void = { _ in }
+        var onSetOutputMuted: (Bool) -> Void = { _ in }
         var onStartStudioLightPairing: () -> Void = {}
         var onCancelStudioLightPairing: () -> Void = {}
         var onPairStudioLight: (UUID) -> Void = { _ in }

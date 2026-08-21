@@ -196,6 +196,10 @@ struct ExpandedInboxView: View {
             VStack(spacing: 0) {
                 header
                 AudioOutputStrip(viewModel: viewModel)
+                AudioVolumeControlRow(viewModel: viewModel, height: 44)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(NotchTheme.hairline).frame(height: 1)
+                    }
                 UtilityShelfView(viewModel: viewModel)
                 navigationViewport
                     .opacity(ledgerAppearance)

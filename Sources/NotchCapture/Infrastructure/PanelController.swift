@@ -848,7 +848,7 @@ public final class PanelController: NSObject, ObservableObject {
                 ).shellSize
             }
         }
-        if [.expanded, .dropTarget, .onboarding, .settings, .mirror].contains(state) {
+        if [.volume, .expanded, .dropTarget, .onboarding, .settings, .mirror].contains(state) {
             size.height = min(size.height, geometry.screenFrame.height - 28)
         }
         return size

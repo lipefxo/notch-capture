@@ -436,6 +436,7 @@ final class AppCoordinator {
         switch argument.dropFirst("--preview-state=".count) {
         case "collapsed": return .collapsed
         case "activity": return .collapsedActivity
+        case "volume": return .volume
         case "confirmation": return .confirmation
         case "settings": return .settings
         case "onboarding": return .onboarding
@@ -655,6 +656,13 @@ final class AppCoordinator {
                 self.viewModel.audioOutputState.systemTarget = target
                 self.viewModel.audioOutputState.mediaDeviceName = target.systemDeviceName
                 self.viewModel.audioOutputState.systemDeviceName = target.systemDeviceName
+                self.viewModel.audioOutputState.volume.deviceName = target.systemDeviceName
+            }
+            hooks.onSetOutputVolume = { [weak self] volume in
+                self?.viewModel.audioOutputState.volume.value = min(1, max(0, volume))
+            }
+            hooks.onSetOutputMuted = { [weak self] isMuted in
+                self?.viewModel.audioOutputState.volume.isMuted = isMuted
             }
         } else {
             hooks.onRefreshAudioOutputs = { [weak self] in
@@ -664,6 +672,22 @@ final class AppCoordinator {
                 guard let self else { return }
                 do {
                     try self.audioOutputService.select(target)
+                } catch {
+                    self.show(error)
+                }
+            }
+            hooks.onSetOutputVolume = { [weak self] volume in
+                guard let self else { return }
+                do {
+                    try self.audioOutputService.setVolume(volume)
+                } catch {
+                    self.show(error)
+                }
+            }
+            hooks.onSetOutputMuted = { [weak self] isMuted in
+                guard let self else { return }
+                do {
+                    try self.audioOutputService.setMuted(isMuted)
                 } catch {
                     self.show(error)
                 }
@@ -775,7 +799,7 @@ final class AppCoordinator {
             .sink { [weak self] state in
                 Task { @MainActor in
                     guard let self else { return }
-                    if [.confirmation, .expanded, .drop, .onboarding, .settings, .mirror].contains(state) {
+                    if [.volume, .confirmation, .expanded, .drop, .onboarding, .settings, .mirror].contains(state) {
                         self.updateIdlePillVisibility()
                     }
                     self.updateMediaActivityLevel(for: state)

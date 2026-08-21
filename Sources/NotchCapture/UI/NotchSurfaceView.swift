@@ -30,7 +30,7 @@ struct SurfaceChromeMetrics: Equatable {
                 shadowRadius: 0,
                 shadowY: 0
             )
-        case .confirmation, .expanded, .drop, .onboarding, .settings, .mirror:
+        case .volume, .confirmation, .expanded, .drop, .onboarding, .settings, .mirror:
             return Self(
                 size: state.panelState.nominalSize,
                 bottomRadius: NotchTheme.surfaceBottomRadius,
@@ -182,6 +182,8 @@ struct NotchSurfaceView: View {
                 viewModel: viewModel,
                 presentationSize: displayedCompactPresentationSize
             )
+        case .volume:
+            VolumeControlSurfaceView(viewModel: viewModel)
         case .confirmation:
             ConfirmationView(viewModel: viewModel)
         case .expanded, .drop:
@@ -259,13 +261,16 @@ struct NotchSurfaceView: View {
             beginMorph(request)
         case .settled:
             // Repainting mid-morph re-drops the glyphs, so the rebuild waits
-            // for the first settled transition. Scoped to the collapsed pill:
-            // it is the only surface that idles unattended long enough for the
-            // blank text to be seen, and recreating a keyboard surface here
-            // would risk resetting its focus.
-            if initialCommitRepaint == 0,
-               [.collapsed, .collapsedActivity, .confirmation, .mirror]
-                   .contains(viewModel.surfaceState) {
+            // for the first settled transition. Scope the repair to non-key
+            // surfaces that can remain visible unattended; recreating a
+            // keyboard surface here would risk resetting its focus.
+            if viewModel.surfaceState == .volume {
+                // The focused row is a newly mounted compact subtree each
+                // time it opens, so give each settled presentation one repair.
+                withoutAnimation { initialCommitRepaint += 1 }
+            } else if initialCommitRepaint == 0,
+                      [.collapsed, .collapsedActivity, .confirmation, .mirror]
+                          .contains(viewModel.surfaceState) {
                 withoutAnimation { initialCommitRepaint = 1 }
             }
         }
@@ -474,6 +479,7 @@ struct NotchSurfaceView: View {
         case .dormant: "dormant"
         case .collapsed: "collapsed-\(displayedCompactPresentationSize.rawValue)"
         case .collapsedActivity: "collapsedActivity-\(displayedCompactPresentationSize.rawValue)"
+        case .volume: "volume"
         case .confirmation: "confirmation"
         case .onboarding: "onboarding"
         case .settings: "settings"
@@ -527,15 +533,21 @@ struct CollapsedPillView: View {
 
     private var isExtended: Bool { presentationSize == .extended }
 
-    /// The pill was widened by exactly this slot when the mirror toggle was
-    /// added, so the capture cluster keeps the width it has always had.
+    /// Audio and mirror affordances each own a fixed trailing slot, keeping
+    /// the capture cluster at its established width.
     private var captureWidth: CGFloat {
-        metrics.contentSize.width - CompactSurfaceMetrics.mirrorToggleSlot
+        metrics.contentSize.width
+            - CompactSurfaceMetrics.audioControlSlot
+            - CompactSurfaceMetrics.mirrorToggleSlot
     }
 
     var body: some View {
         HStack(spacing: 0) {
             captureButton
+            CompactVolumeButton(
+                viewModel: viewModel,
+                glyphSize: isExtended ? 12 : 10.5
+            )
             MirrorToggleButton(
                 viewModel: viewModel,
                 glyphSize: isExtended ? 13 : 11,
