@@ -865,6 +865,15 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(viewModel.surfaceState, .expanded)
     }
 
+    func testOpeningExpandedFromTheRestingNotchFocusesTheComposer() {
+        let viewModel = AppViewModel(surfaceState: .collapsed)
+
+        viewModel.openExpanded()
+
+        XCTAssertEqual(viewModel.surfaceState, .expanded)
+        XCTAssertEqual(viewModel.keyboardFocus, .composer)
+    }
+
     func testFinishingOnboardingPersistsOnceAndOpensInbox() {
         var completionCount = 0
         var hooks = AppViewModel.Hooks()

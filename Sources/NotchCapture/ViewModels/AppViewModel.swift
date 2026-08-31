@@ -112,7 +112,7 @@ final class AppViewModel: ObservableObject {
     @Published var cameraTilt: Double = 0
     @Published private(set) var cameraPresets: [CameraPresetSlot: CameraPreset] = [:]
     @Published private(set) var selectedCameraPresetSlot: CameraPresetSlot?
-    @Published var collapsedActivityLayout = CollapsedActivityLayout()
+    @Published var compactSurfaceLayout = CompactSurfaceLayout.external
     @Published var onboardingStep: OnboardingStep = .capture
 
     /// True while the user has not finished onboarding; every attempt to open

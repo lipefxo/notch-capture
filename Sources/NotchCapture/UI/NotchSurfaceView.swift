@@ -12,7 +12,7 @@ struct SurfaceChromeMetrics: Equatable {
     static func resolve(
         for state: AppViewModel.SurfaceState,
         compactPresentationSize: CompactPresentationSize = .minimal,
-        activityLayout: AppViewModel.CollapsedActivityLayout? = nil
+        layout: CompactSurfaceLayout? = nil
     ) -> Self? {
         switch state {
         case .dormant:
@@ -21,7 +21,7 @@ struct SurfaceChromeMetrics: Equatable {
             let compactMetrics = CompactSurfaceMetrics.resolve(
                 state: state.panelState,
                 presentationSize: compactPresentationSize,
-                activityLayout: activityLayout
+                layout: layout
             )!
             return Self(
                 size: compactMetrics.shellSize,
@@ -76,11 +76,10 @@ struct NotchSurfaceView: View {
     @State private var contentOffsetY: CGFloat = 0
     @State private var contentScale = 1.0
     @State private var morphTask: Task<Void, Never>?
-    // The hosting view's very first commit reliably fails to paint the final
-    // glyph run of the scene (the collapsed pill's trailing shortcut hint
-    // renders blank) even though layout is correct; only recreating the content
-    // subtree repaints it. Bumped once shortly after launch, the id change
-    // rebuilds the content with fresh layers. See PanelController's present
+    // The hosting view's very first commit can fail to paint the final glyph
+    // run of a compact scene even though layout is correct; recreating the
+    // content subtree repaints it. Bumped once shortly after launch, the id
+    // change rebuilds content with fresh layers. See PanelController's present
     // pipeline for the launch ordering.
     @State private var initialCommitRepaint = 0
 
@@ -108,20 +107,12 @@ struct NotchSurfaceView: View {
                         shadowY: metrics.shadowY
                     )
 
-                    if displayedState == .collapsedActivity,
-                       viewModel.collapsedActivityLayout.hasHardwareNotch {
-                        Button {
-                            guard viewModel.surfaceState == .collapsedActivity else { return }
-                            viewModel.openExpanded()
-                        } label: {
-                            Color.clear
-                                .contentShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
-                        }
-                        .buttonStyle(.plain)
-                        .frame(width: metrics.size.width, height: metrics.size.height)
-                        .disabled(presentation.hasModal)
-                        .help("Open Notch Capture")
-                        .accessibilityLabel("Open Notch Capture")
+                    if displayedState == .collapsed {
+                        backgroundExpansionTarget(for: displayedState, metrics: metrics)
+                    } else if displayedState == .collapsedActivity,
+                              viewModel.compactSurfaceLayout.hasHardwareNotch {
+                        backgroundExpansionTarget(for: displayedState, metrics: metrics)
+                            .help("Open Notch Capture")
                     }
 
                     ZStack {
@@ -154,7 +145,7 @@ struct NotchSurfaceView: View {
         .onChange(of: viewModel.surfaceState) { oldState, newState in
             handleSurfaceStateChange(from: oldState, to: newState)
         }
-        .onChange(of: viewModel.collapsedActivityLayout) { _, _ in
+        .onChange(of: viewModel.compactSurfaceLayout) { _, _ in
             refreshCompactChrome()
         }
         .onChange(of: morphCoordinator.request) { _, request in
@@ -167,16 +158,32 @@ struct NotchSurfaceView: View {
         .preferredColorScheme(.dark)
     }
 
+    private func backgroundExpansionTarget(
+        for state: AppViewModel.SurfaceState,
+        metrics: SurfaceChromeMetrics
+    ) -> some View {
+        Button {
+            guard viewModel.surfaceState == state else { return }
+            viewModel.openExpanded()
+        } label: {
+            Color.clear
+                .contentShape(NotchHugShape(bottomRadius: metrics.bottomRadius))
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .frame(width: metrics.size.width, height: metrics.size.height)
+        .disabled(presentation.hasModal)
+        .accessibilityLabel("Open Notch Capture")
+        .accessibilityHint("Opens the capture composer and inbox")
+    }
+
     @ViewBuilder
     private func surfaceContent(for state: AppViewModel.SurfaceState) -> some View {
         switch state {
         case .dormant:
             EmptyView()
         case .collapsed:
-            CollapsedPillView(
-                viewModel: viewModel,
-                presentationSize: displayedCompactPresentationSize
-            )
+            EmptyView()
         case .collapsedActivity:
             CollapsedActivityPillView(
                 viewModel: viewModel,
@@ -271,7 +278,7 @@ struct NotchSurfaceView: View {
                 // time it opens, so give each settled presentation one repair.
                 withoutAnimation { initialCommitRepaint += 1 }
             } else if initialCommitRepaint == 0,
-                      [.collapsed, .collapsedActivity, .confirmation, .notification, .mirror]
+                      [.collapsedActivity, .confirmation, .notification, .mirror]
                           .contains(viewModel.surfaceState) {
                 withoutAnimation { initialCommitRepaint = 1 }
             }
@@ -443,7 +450,7 @@ struct NotchSurfaceView: View {
         SurfaceChromeMetrics.resolve(
             for: state ?? viewModel.surfaceState,
             compactPresentationSize: viewModel.effectiveCompactPresentationSize,
-            activityLayout: viewModel.collapsedActivityLayout
+            layout: viewModel.compactSurfaceLayout
         )
     }
 
@@ -523,71 +530,6 @@ struct NotchSurfaceView: View {
         return .opacity.combined(with: .offset(y: -4))
     }
 
-}
-
-struct CollapsedPillView: View {
-    @ObservedObject var viewModel: AppViewModel
-    let presentationSize: CompactPresentationSize
-    @State private var isHovered = false
-
-    private var metrics: CompactSurfaceMetrics {
-        CompactSurfaceMetrics.capture(for: presentationSize)
-    }
-
-    private var isExtended: Bool { presentationSize == .extended }
-
-    /// The audio affordance owns a fixed trailing slot, keeping the capture
-    /// cluster at its established width.
-    private var captureWidth: CGFloat {
-        metrics.contentSize.width - CompactSurfaceMetrics.audioControlSlot
-    }
-
-    var body: some View {
-        HStack(spacing: 0) {
-            captureButton
-            CompactVolumeButton(
-                viewModel: viewModel,
-                glyphSize: isExtended ? 12 : 10.5
-            )
-        }
-        .frame(width: metrics.contentSize.width, height: metrics.contentSize.height)
-    }
-
-    private var captureButton: some View {
-        Button {
-            viewModel.openExpanded()
-        } label: {
-            HStack(spacing: isExtended ? 12 : 8) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: isExtended ? 16 : 11, weight: .semibold))
-                    .foregroundStyle(NotchTheme.primaryAccent)
-                Text("Capture")
-                    .font(.system(size: isExtended ? 14 : 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.82))
-                Text(viewModel.shortcutDisplayValue(for: .openComposer))
-                    .font(.system(size: isExtended ? 11 : 9, weight: .medium, design: .rounded))
-                    .foregroundStyle(NotchTheme.tertiaryText)
-            }
-            .frame(width: captureWidth, height: metrics.contentSize.height)
-            .overlay(alignment: .bottom) {
-                if !isExtended {
-                    Capsule()
-                        .fill(isHovered ? NotchTheme.primaryAccent.opacity(0.65) : Color.white.opacity(0.1))
-                        .frame(width: 38, height: 1)
-                        .scaleEffect(x: isHovered ? 1 : 22 / 38)
-                        .padding(.bottom, 3)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.985, pressedOpacity: 0.94))
-        .notchHitTarget(Rectangle())
-        .onHover { isHovered = $0 }
-        .animation(NotchMotion.hover, value: isHovered)
-        .help("Open Notch Capture")
-        .accessibilityLabel("Open Notch Capture")
-        .accessibilityHint("Opens the capture composer and inbox")
-    }
 }
 
 #if DEBUG

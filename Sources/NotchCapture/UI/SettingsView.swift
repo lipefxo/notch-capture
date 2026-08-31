@@ -79,18 +79,18 @@ struct SettingsView: View {
             )
             SettingsDivider()
             SettingsToggleRow(
-                title: "Hide pill on external displays",
+                title: "Hide notch on external displays",
                 detail: "Shortcuts still open Notch Capture",
                 isOn: $viewModel.autoHideExternalPill
             )
             SettingsDivider()
-            SettingsControlRow(title: "Compact size", detail: "Minimal or Extended") {
+            SettingsControlRow(title: "Media activity size", detail: "Minimal or Extended") {
                 NotchSegmentedControl(
                     options: CompactPresentationSize.allCases,
                     selection: $viewModel.compactPresentationSize
                 )
                 .frame(width: 164)
-                .accessibilityLabel("Compact size")
+                .accessibilityLabel("Media activity size")
             }
             SettingsDivider()
             SettingsControlRow(title: "Time format", detail: "Capture timestamps") {

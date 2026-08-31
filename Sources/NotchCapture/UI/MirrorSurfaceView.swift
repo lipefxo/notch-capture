@@ -118,7 +118,7 @@ struct MirrorSurfaceView: View {
                 Rectangle()
                     .fill(Color.black.opacity(0.001))
                     .frame(
-                        width: max(0, viewModel.collapsedActivityLayout.notchWidth),
+                        width: max(0, viewModel.compactSurfaceLayout.notchWidth),
                         height: 54
                     )
                     .contentShape(Rectangle())
