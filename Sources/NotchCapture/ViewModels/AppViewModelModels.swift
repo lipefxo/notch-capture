@@ -101,12 +101,6 @@ extension AppViewModel {
         case none
     }
 
-    struct CollapsedActivityLayout: Equatable {
-        var hasHardwareNotch = false
-        var notchWidth: CGFloat = 156
-        var notchBandHeight: CGFloat = 32
-    }
-
     enum CollapsedActivityContent: Equatable {
         case musicOnly(NowPlayingSnapshot)
     }

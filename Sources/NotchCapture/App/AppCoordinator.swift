@@ -929,7 +929,7 @@ final class AppCoordinator {
                 guard let self, [.collapsed, .collapsedActivity].contains(self.viewModel.surfaceState) else { return }
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    self.updateCollapsedActivityLayout()
+                    self.updateCompactSurfaceLayout()
                     self.panelController.refreshCompactPresentation()
                 }
             }
@@ -937,7 +937,7 @@ final class AppCoordinator {
     }
 
     func synchronizePanel(with state: AppViewModel.SurfaceState) {
-        updateCollapsedActivityLayout()
+        updateCompactSurfaceLayout()
         let panelState = state.panelState
         panelController.present(panelState, activate: panelState.acceptsKeyboardInput)
         applyFullScreenCompactOverride()

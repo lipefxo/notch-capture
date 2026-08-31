@@ -1,8 +1,9 @@
 import Foundation
 
-/// The density preset used by the passive compact surfaces.  Keep this type
+/// The density preset used by active compact surfaces. Keep this type
 /// independent of SwiftUI so AppKit geometry and preference restoration can
-/// share it without pulling UI code into the window layer.
+/// share it without pulling UI code into the window layer. The content-free
+/// resting notch always follows display geometry instead of this preference.
 public enum CompactPresentationSize: String, CaseIterable, Identifiable, Sendable {
     case minimal
     case extended
@@ -11,6 +12,36 @@ public enum CompactPresentationSize: String, CaseIterable, Identifiable, Sendabl
 
     static func fromStoredValue(_ value: String?) -> Self {
         Self(rawValue: value ?? "") ?? .minimal
+    }
+}
+
+/// Display geometry shared by every compact surface. Resolving this once keeps
+/// the AppKit window and SwiftUI chrome in agreement, including design previews.
+struct CompactSurfaceLayout: Equatable {
+    var hasHardwareNotch = false
+    var notchWidth: CGFloat = PanelMorphGeometry.virtualNotchSize.width
+    var notchBandHeight: CGFloat = 0
+
+    static let external = Self()
+
+    static func resolve(
+        geometry: NotchGeometry,
+        simulatesHardwareNotch: Bool = false,
+        simulatesExternalDisplay: Bool = false
+    ) -> Self {
+        if simulatesHardwareNotch {
+            return Self(hasHardwareNotch: true, notchWidth: 156, notchBandHeight: 32)
+        }
+        guard !simulatesExternalDisplay,
+              geometry.hasHardwareNotch,
+              let notchRect = geometry.notchRect else {
+            return .external
+        }
+        return Self(
+            hasHardwareNotch: true,
+            notchWidth: notchRect.width,
+            notchBandHeight: max(notchRect.height, geometry.safeAreaInsets.top)
+        )
     }
 }
 
@@ -63,12 +94,12 @@ public enum PanelState: String, CaseIterable, Hashable, Sendable {
         nominalSize(compactPresentationSize: .minimal)
     }
 
-    /// The static compact sizes. Hardware-notch activity is resolved through
-    /// `CompactSurfaceMetrics`, because its width depends on the display.
+    /// Default compact sizes used when display geometry is unavailable. The
+    /// resting notch and hardware activity are re-resolved for the live display.
     func nominalSize(compactPresentationSize: CompactPresentationSize) -> CGSize {
         switch self {
         case .collapsed:
-            CompactSurfaceMetrics.capture(for: compactPresentationSize).shellSize
+            CompactSurfaceMetrics.restingNotch(for: .external).shellSize
         case .collapsedActivity:
             CompactSurfaceMetrics.externalActivity(for: compactPresentationSize).shellSize
         case .volume:
@@ -107,17 +138,21 @@ struct CompactSurfaceMetrics: Equatable {
     let bottomRadius: CGFloat
     let wingWidth: CGFloat?
 
-    /// Compact widths reserve a fixed trailing slot for audio, keeping capture
-    /// and transport content at its established size.
+    /// Active compact widths reserve a fixed trailing slot for audio, keeping
+    /// transport content at its established size.
     static let audioControlSlot: CGFloat = 28
 
-    static func capture(for presentationSize: CompactPresentationSize) -> Self {
-        switch presentationSize {
-        case .minimal:
-            Self(shellSize: CGSize(width: 226, height: 34), contentSize: CGSize(width: 206, height: 34), bottomRadius: 16, wingWidth: nil)
-        case .extended:
-            Self(shellSize: CGSize(width: 332, height: 50), contentSize: CGSize(width: 312, height: 50), bottomRadius: 22, wingWidth: nil)
-        }
+    static func restingNotch(for layout: CompactSurfaceLayout) -> Self {
+        let height = max(34, layout.notchBandHeight + 4)
+        return Self(
+            shellSize: CGSize(
+                width: layout.notchWidth + (NotchTheme.topFlare * 2),
+                height: height
+            ),
+            contentSize: CGSize(width: layout.notchWidth, height: height),
+            bottomRadius: 16,
+            wingWidth: nil
+        )
     }
 
     static func externalActivity(for presentationSize: CompactPresentationSize) -> Self {
@@ -150,17 +185,17 @@ struct CompactSurfaceMetrics: Equatable {
     static func resolve(
         state: PanelState,
         presentationSize: CompactPresentationSize,
-        activityLayout: AppViewModel.CollapsedActivityLayout? = nil
+        layout: CompactSurfaceLayout? = nil
     ) -> Self? {
         switch state {
         case .collapsed:
-            capture(for: presentationSize)
+            restingNotch(for: layout ?? .external)
         case .collapsedActivity:
-            if let activityLayout, activityLayout.hasHardwareNotch {
+            if let layout, layout.hasHardwareNotch {
                 hardwareActivity(
                     for: presentationSize,
-                    notchWidth: activityLayout.notchWidth,
-                    notchBandHeight: activityLayout.notchBandHeight
+                    notchWidth: layout.notchWidth,
+                    notchBandHeight: layout.notchBandHeight
                 )
             } else {
                 externalActivity(for: presentationSize)

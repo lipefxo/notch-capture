@@ -144,17 +144,16 @@ extension AppCoordinator {
         if level != .hidden { nowPlayingService.refresh() }
     }
 
-    func updateCollapsedActivityLayout() {
+    func updateCompactSurfaceLayout() {
         guard let screen = displayLocator.pointerScreen,
               let geometry = displayLocator.geometry(for: screen) else { return }
         let simulatesNotch = previewMode && CommandLine.arguments.contains("--preview-hardware-notch")
         let simulatesExternalDisplay = previewMode
             && CommandLine.arguments.contains("--preview-external-display")
-        viewModel.collapsedActivityLayout = AppViewModel.CollapsedActivityLayout(
-            hasHardwareNotch: !simulatesExternalDisplay
-                && (simulatesNotch || (geometry.notchRect != nil && geometry.safeAreaInsets.top > 0)),
-            notchWidth: simulatesNotch ? 156 : (geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width),
-            notchBandHeight: simulatesNotch ? 32 : max(geometry.notchRect?.height ?? 0, geometry.safeAreaInsets.top)
+        viewModel.compactSurfaceLayout = CompactSurfaceLayout.resolve(
+            geometry: geometry,
+            simulatesHardwareNotch: simulatesNotch,
+            simulatesExternalDisplay: simulatesExternalDisplay
         )
     }
 

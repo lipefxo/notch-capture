@@ -12,13 +12,13 @@ struct CollapsedActivityPillView: View {
         CompactSurfaceMetrics.resolve(
             state: .collapsedActivity,
             presentationSize: presentationSize,
-            activityLayout: viewModel.collapsedActivityLayout
+            layout: viewModel.compactSurfaceLayout
         )!
     }
 
     var body: some View {
         Group {
-            if viewModel.collapsedActivityLayout.hasHardwareNotch {
+            if viewModel.compactSurfaceLayout.hasHardwareNotch {
                 if isExtended {
                     notchedLayout
                 } else {
@@ -57,7 +57,7 @@ struct CollapsedActivityPillView: View {
                     height: compactMetrics.contentSize.height
                 )
             Color.clear
-                .frame(width: max(0, viewModel.collapsedActivityLayout.notchWidth))
+                .frame(width: max(0, viewModel.compactSurfaceLayout.notchWidth))
                 .allowsHitTesting(false)
             ZStack {
                 Color.clear

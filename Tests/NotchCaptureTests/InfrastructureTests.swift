@@ -487,12 +487,12 @@ final class PanelTransitionPolicyTests: XCTestCase {
     }
 
     func testCompactDensityChangesUseDirectionalSurfaceSprings() {
-        let extended = CompactSurfaceMetrics.capture(for: .extended).shellSize
-        let minimal = CompactSurfaceMetrics.capture(for: .minimal).shellSize
+        let extended = CompactSurfaceMetrics.externalActivity(for: .extended).shellSize
+        let minimal = CompactSurfaceMetrics.externalActivity(for: .minimal).shellSize
 
         let contraction = PanelTransitionPolicy.resolve(
-            from: .collapsed,
-            to: .collapsed,
+            from: .collapsedActivity,
+            to: .collapsedActivity,
             wasVisible: true,
             reduceMotion: false,
             sourceSize: extended,
@@ -502,8 +502,8 @@ final class PanelTransitionPolicyTests: XCTestCase {
         XCTAssertEqual(contraction.spring, NotchMotion.surfaceContraction)
 
         let expansion = PanelTransitionPolicy.resolve(
-            from: .collapsed,
-            to: .collapsed,
+            from: .collapsedActivity,
+            to: .collapsedActivity,
             wasVisible: true,
             reduceMotion: false,
             sourceSize: minimal,
@@ -515,12 +515,12 @@ final class PanelTransitionPolicyTests: XCTestCase {
 
     func testCompactDensityChangeUsesReducedMotionFade() {
         let policy = PanelTransitionPolicy.resolve(
-            from: .collapsed,
-            to: .collapsed,
+            from: .collapsedActivity,
+            to: .collapsedActivity,
             wasVisible: true,
             reduceMotion: true,
-            sourceSize: CompactSurfaceMetrics.capture(for: .extended).shellSize,
-            targetSize: CompactSurfaceMetrics.capture(for: .minimal).shellSize
+            sourceSize: CompactSurfaceMetrics.externalActivity(for: .extended).shellSize,
+            targetSize: CompactSurfaceMetrics.externalActivity(for: .minimal).shellSize
         )
 
         XCTAssertEqual(policy.kind, .reducedFade)
@@ -900,7 +900,7 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         // the single table against accidental changes.
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .collapsed)).size,
-            CGSize(width: 226, height: 34)
+            CGSize(width: 176, height: 34)
         )
         XCTAssertEqual(
             try XCTUnwrap(SurfaceChromeMetrics.resolve(for: .volume)).size,
@@ -988,24 +988,77 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         XCTAssertLessThanOrEqual(anchored.bottomRadius, 19)
     }
 
-    func testExtendedCompactChromeUsesTheSharedPresetGeometry() throws {
-        let capture = try XCTUnwrap(
+    func testRestingChromeIgnoresMediaActivitySize() throws {
+        let minimalResting = try XCTUnwrap(
+            SurfaceChromeMetrics.resolve(for: .collapsed, compactPresentationSize: .minimal)
+        )
+        let extendedResting = try XCTUnwrap(
             SurfaceChromeMetrics.resolve(for: .collapsed, compactPresentationSize: .extended)
         )
         let activity = try XCTUnwrap(
             SurfaceChromeMetrics.resolve(for: .collapsedActivity, compactPresentationSize: .extended)
         )
 
-        XCTAssertEqual(capture.size, CGSize(width: 332, height: 50))
+        XCTAssertEqual(minimalResting.size, CGSize(width: 176, height: 34))
+        XCTAssertEqual(extendedResting.size, minimalResting.size)
         XCTAssertEqual(activity.size, CGSize(width: 472, height: 56))
-        XCTAssertEqual(capture.bottomRadius, 22)
+        XCTAssertEqual(extendedResting.bottomRadius, 16)
         XCTAssertEqual(activity.bottomRadius, 22)
-        XCTAssertEqual(capture.shadowOpacity, 0)
+        XCTAssertEqual(extendedResting.shadowOpacity, 0)
         XCTAssertEqual(activity.shadowOpacity, 0)
     }
 
+    func testHardwareRestingMetricsMatchChromeAndDisplayGeometry() throws {
+        let layout = CompactSurfaceLayout(
+            hasHardwareNotch: true,
+            notchWidth: 188,
+            notchBandHeight: 32
+        )
+        let panelMetrics = try XCTUnwrap(
+            CompactSurfaceMetrics.resolve(
+                state: .collapsed,
+                presentationSize: .extended,
+                layout: layout
+            )
+        )
+        let chrome = try XCTUnwrap(
+            SurfaceChromeMetrics.resolve(
+                for: .collapsed,
+                compactPresentationSize: .extended,
+                layout: layout
+            )
+        )
+
+        XCTAssertEqual(panelMetrics.contentSize, CGSize(width: 188, height: 36))
+        XCTAssertEqual(panelMetrics.shellSize, CGSize(width: 208, height: 36))
+        XCTAssertEqual(chrome.size, panelMetrics.shellSize)
+        XCTAssertEqual(chrome.bottomRadius, 16)
+    }
+
+    func testCompactSurfaceLayoutResolvesHardwareAndExternalDisplays() {
+        let hardwareGeometry = NotchGeometry(
+            displayID: 1,
+            screenFrame: CGRect(x: 0, y: 0, width: 1_512, height: 982),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1_512, height: 944),
+            safeAreaInsets: NSEdgeInsets(top: 32, left: 0, bottom: 0, right: 0),
+            notchRect: CGRect(x: 662, y: 950, width: 188, height: 32)
+        )
+
+        XCTAssertEqual(
+            CompactSurfaceLayout.resolve(geometry: hardwareGeometry),
+            CompactSurfaceLayout(hasHardwareNotch: true, notchWidth: 188, notchBandHeight: 32)
+        )
+        XCTAssertEqual(
+            CompactSurfaceLayout.resolve(
+                geometry: hardwareGeometry,
+                simulatesExternalDisplay: true
+            ),
+            .external
+        )
+    }
+
     func testHardwareNotchActivityHonorsCompactPresentationSize() {
-        let layout = AppViewModel.CollapsedActivityLayout(
+        let layout = CompactSurfaceLayout(
             hasHardwareNotch: true,
             notchWidth: 188,
             notchBandHeight: 32
@@ -1013,12 +1066,12 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         let minimal = CompactSurfaceMetrics.resolve(
             state: .collapsedActivity,
             presentationSize: .minimal,
-            activityLayout: layout
+            layout: layout
         )
         let extended = CompactSurfaceMetrics.resolve(
             state: .collapsedActivity,
             presentationSize: .extended,
-            activityLayout: layout
+            layout: layout
         )
 
         XCTAssertEqual(minimal?.contentSize.width, 188)
@@ -1031,7 +1084,7 @@ final class SurfaceChromeMetricsTests: XCTestCase {
     }
 
     func testHardwareNotchActivityHeightTracksTheNotchBand() {
-        let layout = AppViewModel.CollapsedActivityLayout(
+        let layout = CompactSurfaceLayout(
             hasHardwareNotch: true,
             notchWidth: 188,
             notchBandHeight: 40
@@ -1040,7 +1093,7 @@ final class SurfaceChromeMetricsTests: XCTestCase {
         let activity = CompactSurfaceMetrics.resolve(
             state: .collapsedActivity,
             presentationSize: .extended,
-            activityLayout: layout
+            layout: layout
         )
 
         XCTAssertEqual(activity?.shellSize.height, 44)
@@ -1571,10 +1624,10 @@ final class PanelWindowInteractionPolicyTests: XCTestCase {
     func testCompactResizeSuspendsHitTestingUntilTheCanvasSettles() {
         XCTAssertTrue(
             PanelWindowInteractionPolicy.suspendsHitTestingForCompactResize(
-                state: .collapsed,
+                state: .collapsedActivity,
                 wasVisible: true,
-                sourceSize: CompactSurfaceMetrics.capture(for: .extended).shellSize,
-                targetSize: CompactSurfaceMetrics.capture(for: .minimal).shellSize
+                sourceSize: CompactSurfaceMetrics.externalActivity(for: .extended).shellSize,
+                targetSize: CompactSurfaceMetrics.externalActivity(for: .minimal).shellSize
             )
         )
         XCTAssertFalse(

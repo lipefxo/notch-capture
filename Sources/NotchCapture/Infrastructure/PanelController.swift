@@ -806,16 +806,11 @@ public final class PanelController: NSObject, ObservableObject {
         geometry: NotchGeometry,
         compactPresentationSize: CompactPresentationSize? = nil
     ) -> CGRect? {
-        var size = surfaceSize(
+        let size = surfaceSize(
             for: state,
             geometry: geometry,
             compactPresentationSize: compactPresentationSize
         )
-        if [.collapsed, .collapsedActivity].contains(state) {
-            let notchWidth = geometry.notchRect?.width ?? PanelMorphGeometry.virtualNotchSize.width
-            size.width = max(size.width, notchWidth + 24)
-            size.height = max(size.height, geometry.safeAreaInsets.top + 6)
-        }
         guard size.width > 0, size.height > 0 else { return nil }
         return geometry.panelFrame(for: size)
     }
@@ -827,26 +822,21 @@ public final class PanelController: NSObject, ObservableObject {
     ) -> CGSize {
         let presentationSize = compactPresentationSize ?? compactPresentationSizeProvider()
         var size = state.nominalSize(compactPresentationSize: presentationSize)
-        if state == .collapsedActivity {
+        if [.collapsed, .collapsedActivity].contains(state) {
             let simulatedNotch = CommandLine.arguments.contains("--design-preview")
                 && CommandLine.arguments.contains("--preview-hardware-notch")
             let simulatedExternalDisplay = CommandLine.arguments.contains("--design-preview")
                 && CommandLine.arguments.contains("--preview-external-display")
-            if simulatedNotch {
-                size = CompactSurfaceMetrics.hardwareActivity(
-                    for: presentationSize,
-                    notchWidth: 156,
-                    notchBandHeight: 32
-                ).shellSize
-            } else if !simulatedExternalDisplay,
-                      let notchRect = geometry.notchRect,
-                      geometry.safeAreaInsets.top > 0 {
-                size = CompactSurfaceMetrics.hardwareActivity(
-                    for: presentationSize,
-                    notchWidth: notchRect.width,
-                    notchBandHeight: max(notchRect.height, geometry.safeAreaInsets.top)
-                ).shellSize
-            }
+            let layout = CompactSurfaceLayout.resolve(
+                geometry: geometry,
+                simulatesHardwareNotch: simulatedNotch,
+                simulatesExternalDisplay: simulatedExternalDisplay
+            )
+            size = CompactSurfaceMetrics.resolve(
+                state: state,
+                presentationSize: presentationSize,
+                layout: layout
+            )!.shellSize
         }
         if [.volume, .expanded, .dropTarget, .onboarding, .settings, .mirror].contains(state) {
             size.height = min(size.height, geometry.screenFrame.height - 28)

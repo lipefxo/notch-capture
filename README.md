@@ -34,7 +34,7 @@ While idle, active music shows in a compact activity pill in the notch.
 
 The expanded surface includes a persistent three-way output strip for this Mac's AirPods, EDIFIER M60 speakers, and the headphones connected through the `fifine Ampli1` interface. Available devices switch both normal app audio and system sounds with one click; disconnected devices remain visible but disabled so each target stays in a predictable position. The strip follows changes made in Control Center and updates automatically when Bluetooth or USB devices appear or disappear.
 
-A volume row below the output strip controls the current default output and toggles mute. The compact capture and music pills expose the same control through a speaker button that morphs into a focused volume surface without taking keyboard focus; Back or a click elsewhere returns to the current idle pill. Outputs with physical-only controls stay visible and explain that their device controls should be used instead.
+A volume row below the output strip controls the current default output and toggles mute. The compact media activity pill exposes the same control through a speaker button that morphs into a focused volume surface without taking keyboard focus; Back or a click elsewhere returns to the current idle notch. Outputs with physical-only controls stay visible and explain that their device controls should be used instead.
 
 The integration uses Apple's Core Audio hardware properties directly. It does not record audio, request microphone access, initiate Bluetooth connections, or install an audio driver.
 
@@ -74,11 +74,11 @@ The first launch shows a three-step tour of the main features (capture, organizi
 
 ## Idle behavior
 
-Notch Capture keeps a compact pill available in the notch while idle. Its size is configurable (Minimal or Extended) in Settings. When a window fills the display hosting the pill — full screen or a maximized window — an Extended pill smoothly reduces to Minimal and returns to Extended once the display is no longer occupied; the saved preference does not change. The optional external-display setting hides that pill on displays without a hardware notch; the global shortcut still opens the composer.
+Notch Capture keeps a content-free notch silhouette available while idle. It matches the physical notch on supported Mac displays and uses a compact virtual notch on external displays; clicking it or using the global shortcut opens the composer. Active media uses the configurable Minimal or Extended activity size. When a window fills the display hosting the activity — full screen or maximized — an Extended activity smoothly reduces to Minimal and returns to Extended once the display is no longer occupied; the saved preference does not change. The optional external-display setting hides the resting notch on displays without a hardware notch; the global shortcut still opens the composer.
 
 ## Settings
 
-The Settings surface (opened from the expanded inbox) covers launch at login, the external-display pill behavior, pill size, 12/24-hour timestamps, MOLUS G60 Bluetooth pairing, the composer shortcut, library import/export, update checks, and quitting the app.
+The Settings surface (opened from the expanded inbox) covers launch at login, the external-display notch behavior, media activity size, 12/24-hour timestamps, MOLUS G60 Bluetooth pairing, the composer shortcut, library import/export, update checks, and quitting the app.
 
 ## Updating
 
