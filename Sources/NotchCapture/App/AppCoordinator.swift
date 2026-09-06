@@ -19,6 +19,7 @@ final class AppCoordinator {
 
     let modelContainer: ModelContainer
     let repository: ItemRepository
+    let companionSyncService: CompanionSyncService
     let attachmentStore: AttachmentStore
     let packageService: CapturePackageService
     let linkMetadataFetcher: any LinkMetadataFetching
@@ -100,6 +101,10 @@ final class AppCoordinator {
         self.repository = ItemRepository(
             modelContext: modelContainer.mainContext,
             attachmentStore: attachmentStore
+        )
+        self.companionSyncService = CompanionSyncService(
+            modelContext: modelContainer.mainContext,
+            resetDeletionBaseline: storeRecoveryBackupURL != nil
         )
         self.packageService = CapturePackageService(
             modelContext: modelContainer.mainContext,
@@ -561,6 +566,11 @@ final class AppCoordinator {
             }
         }
         reloadFromStore()
+        if !previewMode {
+            companionSyncService.start { [weak self] in
+                self?.reloadFromStore()
+            }
+        }
         synchronizePanel(with: viewModel.surfaceState)
 #if DEBUG
         if CommandLine.arguments.contains("--modal-probe") {
@@ -582,6 +592,7 @@ final class AppCoordinator {
     }
 
     func stop() {
+        companionSyncService.stop()
         updaterService.stop()
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil

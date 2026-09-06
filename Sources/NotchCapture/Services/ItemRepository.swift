@@ -264,7 +264,7 @@ final class ItemRepository {
         return list
     }
 
-    func renameList(_ list: ItemList, to name: String) throws {
+    func renameList(_ list: ItemList, to name: String, now: Date = .now) throws {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ItemRepositoryError.emptyListName }
         let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
@@ -274,13 +274,14 @@ final class ItemRepository {
             throw ItemRepositoryError.duplicateListName
         }
         list.name = trimmed
-        list.updatedAt = .now
+        list.updatedAt = now
+        list.items.forEach { $0.touch(at: now) }
         try modelContext.save()
     }
 
     /// Deletes the folder but returns every contained item to Inbox.
     @discardableResult
-    func deleteList(_ list: ItemList) throws -> Int {
+    func deleteList(_ list: ItemList, now: Date = .now) throws -> Int {
         let containedItems = list.items
         do {
             for isPinned in [true, false] {
@@ -291,6 +292,7 @@ final class ItemRepository {
                 for (index, item) in ordered.enumerated() {
                     item.list = nil
                     item.sortOrder = inboxTop - ordered.count + index
+                    item.touch(at: now)
                 }
             }
             modelContext.delete(list)

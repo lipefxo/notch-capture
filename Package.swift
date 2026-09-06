@@ -4,18 +4,26 @@ import PackageDescription
 let package = Package(
     name: "NotchCapture",
     platforms: [
-        .macOS(.v14)
+        .macOS(.v14),
+        .iOS(.v17),
+        .watchOS(.v10)
     ],
     products: [
-        .executable(name: "NotchCapture", targets: ["NotchCapture"])
+        .executable(name: "NotchCapture", targets: ["NotchCapture"]),
+        .library(name: "NotchCaptureSync", targets: ["NotchCaptureSync"])
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.4")
     ],
     targets: [
+        .target(
+            name: "NotchCaptureSync",
+            path: "Sources/NotchCaptureSync"
+        ),
         .executableTarget(
             name: "NotchCapture",
             dependencies: [
+                "NotchCaptureSync",
                 .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/NotchCapture",
@@ -29,6 +37,11 @@ let package = Package(
             name: "NotchCaptureTests",
             dependencies: ["NotchCapture"],
             path: "Tests/NotchCaptureTests"
+        ),
+        .testTarget(
+            name: "NotchCaptureSyncTests",
+            dependencies: ["NotchCaptureSync"],
+            path: "Tests/NotchCaptureSyncTests"
         )
     ]
 )
