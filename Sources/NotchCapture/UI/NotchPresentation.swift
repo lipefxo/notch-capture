@@ -467,25 +467,49 @@ private struct NotchModalCard: View {
 struct NotchSegmentedControl<Option: Hashable & Identifiable & RawRepresentable>: View where Option.RawValue == String {
     let options: [Option]
     @Binding var selection: Option
+    let groupLabel: String?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    init(
+        options: [Option],
+        selection: Binding<Option>,
+        groupLabel: String? = nil
+    ) {
+        self.options = options
+        self._selection = selection
+        self.groupLabel = groupLabel
+    }
 
     var body: some View {
         HStack(spacing: 3) {
             ForEach(options, id: \.id) { option in
-                Button(option.rawValue.capitalized) { selection = option }
+                let optionTitle = option.rawValue.capitalized
+                let isSelected = selection == option
+
+                Button(optionTitle) { selection = option }
                     .buttonStyle(.plain)
                     .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(selection == option ? Color.black.opacity(0.8) : NotchTheme.secondaryText)
+                    .foregroundStyle(isSelected ? Color.black.opacity(0.8) : NotchTheme.secondaryText)
                     .frame(maxWidth: .infinity, minHeight: 28)
-                    .background(selection == option ? NotchTheme.primaryAccent : NotchTheme.control)
+                    .background(isSelected ? NotchTheme.primaryAccent : NotchTheme.control)
                     .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
                     .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .accessibilityAddTraits(selection == option ? .isSelected : [])
+                    .accessibilityLabel(
+                        groupLabel.map {
+                            "\($0): \(optionTitle)"
+                        } ?? optionTitle
+                    )
+                    .accessibilityValue(isSelected ? "Selected" : "Not selected")
+                    .accessibilityHint(isSelected ? "" : "Select \(optionTitle)")
+                    .accessibilityAddTraits(isSelected ? .isSelected : [])
             }
         }
         .padding(3)
         .background(NotchTheme.field)
         .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(groupLabel ?? "Options")
+        .accessibilityValue(selection.rawValue.capitalized)
         .animation(reduceMotion ? nil : NotchMotion.filter, value: selection)
     }
 }

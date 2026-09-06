@@ -18,15 +18,25 @@ The composer bar is a single field for both search and capture: typing filters t
 - **`@` tags** — write `@tag` anywhere in a capture; tags autocomplete while typing and get their own color.
 - **Slash commands** — `/folder <name>` creates a folder, `/clear` moves all completed tasks to Trash. Suggestions appear as soon as the text starts with `/`.
 
+The composer shows the current search scope and the available Return actions. At the root it searches across every folder; inside a folder it searches that folder by default, and the scope control can broaden the query to all items while keeping the folder as the capture destination. When matches exist, the visible hints explain that Return opens the first result and `⌘Return` adds a new item anyway. With no matches, Return adds the thought to the current destination. `Shift–Return` inserts a line break in the composer and in inline item editing.
+
+A leading `/` opens the command suggestions, where Return runs the selected action. Type `//` when the slash is part of a literal search or capture instead of a command.
+
+Drops keep the providers that succeed and report partial failures with the items that need a manual retry; if every provider fails, the composer reports that nothing was captured.
+
 ## Organizing
 
-Items are notes or tasks. Tasks can be completed (with a short completion hold before they leave the main page), pinned to the top, and given due dates. The ledger offers All, Tasks, Due, Completed, Archive, and Trash filters plus folder and tag views. Rows can be reordered by dragging and dropped into folders; file and image attachments get QuickLook thumbnails.
+Items are notes or tasks. Tasks can be completed (with a short completion hold before they leave the main page), pinned to the top, and given due dates. The Inbox title opens a view selector with Inbox, Tasks, Due, Completed, Archive, and Trash. The filtered views include matching items from every folder, so archived and trashed captures remain reachable for recovery. Rows in Archive and Trash offer Restore, while permanent deletion requires confirmation and cannot be undone. After archiving, moving an item to Trash, or clearing completed tasks, an Undo banner appears for the latest ledger change.
+
+The Utilities shelf and Folders section start collapsed so the ledger has more room. Click Utilities to reveal audio and playback controls, or click Folders to reveal folder rows and their drop targets. Their expanded or collapsed state is remembered.
+
+Rows can be reordered by dragging and dropped into folders; file and image attachments get QuickLook thumbnails. With keyboard navigation, Return activates the selected row (opening a link-only capture or entering editing), while Space completes or reopens a task. F2 edits a selected capture, and Shift–F10 opens its action menu. Arrow keys move the selection and Escape returns focus to the composer.
 
 ## Now playing
 
-The expanded surface includes a utility shelf:
+The expanded surface includes a collapsible utility shelf:
 
-- **Now playing** — shows and controls Apple Music and Spotify via Automation (AppleScript). The album art doubles as a play/pause button with a waveform overlay, and a draggable scrubber seeks within the track (rendered with Liquid Glass on macOS 26+).
+- **Now playing** — click Utilities to show controls for Apple Music and Spotify via Automation (AppleScript). The album art doubles as a play/pause button with a waveform overlay, and a draggable scrubber seeks within the track (rendered with Liquid Glass on macOS 26+).
 
 While idle, active music shows in a compact activity pill in the notch.
 
@@ -35,6 +45,8 @@ While idle, active music shows in a compact activity pill in the notch.
 The expanded surface includes a persistent three-way output strip for this Mac's AirPods, EDIFIER M60 speakers, and the headphones connected through the `fifine Ampli1` interface. Available devices switch both normal app audio and system sounds with one click; disconnected devices remain visible but disabled so each target stays in a predictable position. The strip follows changes made in Control Center and updates automatically when Bluetooth or USB devices appear or disappear.
 
 A volume row below the output strip controls the current default output and toggles mute. The compact media activity pill exposes the same control through a speaker button that morphs into a focused volume surface without taking keyboard focus; Back or a click elsewhere returns to the current idle notch. Outputs with physical-only controls stay visible and explain that their device controls should be used instead.
+
+Switching output reads both the media and system defaults first. If the second route fails, Notch Capture restores the previous routes when readback confirms success; if the outputs remain split, it directs you to Control Center before retrying.
 
 The integration uses Apple's Core Audio hardware properties directly. It does not record audio, request microphone access, initiate Bluetooth connections, or install an audio driver.
 

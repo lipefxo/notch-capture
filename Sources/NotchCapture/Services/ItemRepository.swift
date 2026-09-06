@@ -12,10 +12,16 @@ struct ImageAttachmentPayload: Sendable, Equatable {
 final class ItemRepository {
     let modelContext: ModelContext
     private let attachmentStore: AttachmentStore?
+    private let saveHandler: () throws -> Void
 
-    init(modelContext: ModelContext, attachmentStore: AttachmentStore? = nil) {
+    init(
+        modelContext: ModelContext,
+        attachmentStore: AttachmentStore? = nil,
+        saveHandler: (() throws -> Void)? = nil
+    ) {
         self.modelContext = modelContext
         self.attachmentStore = attachmentStore
+        self.saveHandler = saveHandler ?? { try modelContext.save() }
     }
 
     @discardableResult
@@ -462,48 +468,99 @@ final class ItemRepository {
     }
 
     func archive(_ item: CaptureItem, at date: Date = .now) throws {
-        item.archivedAt = date
-        item.trashedAt = nil
-        item.touch(at: date)
-        try modelContext.save()
+        let originalArchivedAt = item.archivedAt
+        let originalTrashedAt = item.trashedAt
+        let originalUpdatedAt = item.updatedAt
+        do {
+            item.archivedAt = date
+            item.trashedAt = nil
+            item.touch(at: date)
+            try saveHandler()
+        } catch {
+            item.archivedAt = originalArchivedAt
+            item.trashedAt = originalTrashedAt
+            item.updatedAt = originalUpdatedAt
+            modelContext.rollback()
+            throw error
+        }
     }
 
     func trash(_ item: CaptureItem, at date: Date = .now) throws {
-        item.trashedAt = date
-        item.touch(at: date)
-        try modelContext.save()
+        let originalTrashedAt = item.trashedAt
+        let originalUpdatedAt = item.updatedAt
+        do {
+            item.trashedAt = date
+            item.touch(at: date)
+            try saveHandler()
+        } catch {
+            item.trashedAt = originalTrashedAt
+            item.updatedAt = originalUpdatedAt
+            modelContext.rollback()
+            throw error
+        }
     }
 
     @discardableResult
     func trashCompletedTasks(at date: Date = .now) throws -> Int {
         let items = try fetch(scope: .completed)
         guard !items.isEmpty else { return 0 }
+        let originalStates = items.map { item in
+            (item: item, trashedAt: item.trashedAt, updatedAt: item.updatedAt)
+        }
         do {
             for item in items {
                 item.trashedAt = date
                 item.touch(at: date)
             }
-            try modelContext.save()
+            try saveHandler()
             return items.count
         } catch {
+            for original in originalStates {
+                original.item.trashedAt = original.trashedAt
+                original.item.updatedAt = original.updatedAt
+            }
             modelContext.rollback()
             throw error
         }
     }
 
-    func restore(_ item: CaptureItem) throws {
-        item.archivedAt = nil
-        item.trashedAt = nil
-        item.touch()
-        try modelContext.save()
+    func restore(_ item: CaptureItem, markIncomplete: Bool = false) throws {
+        let originalArchivedAt = item.archivedAt
+        let originalTrashedAt = item.trashedAt
+        let originalIsCompleted = item.isCompleted
+        let originalCompletedAt = item.completedAt
+        let originalUpdatedAt = item.updatedAt
+        do {
+            item.archivedAt = nil
+            item.trashedAt = nil
+            if markIncomplete {
+                item.isCompleted = false
+                item.completedAt = nil
+            }
+            item.touch()
+            try saveHandler()
+        } catch {
+            item.archivedAt = originalArchivedAt
+            item.trashedAt = originalTrashedAt
+            item.isCompleted = originalIsCompleted
+            item.completedAt = originalCompletedAt
+            item.updatedAt = originalUpdatedAt
+            modelContext.rollback()
+            throw error
+        }
     }
 
     func deletePermanently(_ item: CaptureItem) throws {
         let storedPaths = item.attachments.flatMap { attachment in
             [attachment.relativePath, attachment.faviconRelativePath].compactMap { $0 }
         }
-        modelContext.delete(item)
-        try modelContext.save()
+        do {
+            modelContext.delete(item)
+            try saveHandler()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
         // Best-effort: the delete already committed, so a failed unlink must not
         // surface as an error or abort removal of the remaining files. Stragglers
         // are reclaimed by removeOrphanedAttachmentFiles() on the next launch.

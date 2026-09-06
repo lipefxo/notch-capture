@@ -123,7 +123,10 @@ struct ExpandedInboxView: View {
     @State private var appearanceTask: Task<Void, Never>?
     @State private var ledgerScrollTask: Task<Void, Never>?
     @State private var folderHeaderMenuAnchor: CGRect = .zero
+    @State private var viewSelectorMenuAnchor: CGRect = .zero
     @State private var studioLightPopoverAnchor: CGRect = .zero
+    @AppStorage(InboxRefinementPreferences.folderSectionExpandedKey)
+    private var isFolderSectionExpanded = InboxRefinementPreferences.folderSectionStartsExpanded
 
     // The composer shares the same 20-point content column as the header,
     // playback shelf, and ledger. Keeping the bottom inset in step also
@@ -187,6 +190,46 @@ struct ExpandedInboxView: View {
         return nil
     }
 
+    /// Return opens the first folder match before it opens an item match. Keep
+    /// that same target visible while the composer owns focus so keyboard
+    /// users can see exactly what the contextual hint will activate.
+    private var firstComposerFolderTargetID: UUID? {
+        guard viewModel.keyboardFocus == .composer,
+              viewModel.composerHasMatches,
+              !viewModel.isComposerCommandMode else { return nil }
+        return viewModel.visibleFolders.first?.id
+    }
+
+    private var firstComposerItemTargetID: UUID? {
+        guard firstComposerFolderTargetID == nil,
+              viewModel.keyboardFocus == .composer,
+              viewModel.composerHasMatches,
+              !viewModel.isComposerCommandMode else { return nil }
+        return viewModel.visibleItems.first?.id
+    }
+
+    private var firstComposerResultHighlight: some View {
+        ZStack(alignment: .leading) {
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .strokeBorder(NotchTheme.primaryAccent.opacity(0.72), lineWidth: 1)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+
+            Capsule()
+                .fill(NotchTheme.primaryAccent)
+                .frame(width: 3, height: 28)
+                .padding(.leading, 4)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+
+    private var isComposerActionMode: Bool {
+        viewModel.isComposerCommandMode
+            || viewModel.isFolderCommandActive
+            || viewModel.isClearCommandActive
+    }
+
     private var navigationPlan: FolderNavigationMotionPlan {
         .resolve(for: viewModel.browseLocation, reduceMotion: reduceMotion)
     }
@@ -195,11 +238,6 @@ struct ExpandedInboxView: View {
         ZStack(alignment: .bottom) {
             VStack(spacing: 0) {
                 header
-                AudioOutputStrip(viewModel: viewModel)
-                AudioVolumeControlRow(viewModel: viewModel, height: 44)
-                    .overlay(alignment: .bottom) {
-                        Rectangle().fill(NotchTheme.hairline).frame(height: 1)
-                    }
                 UtilityShelfView(viewModel: viewModel)
                 navigationViewport
                     .opacity(ledgerAppearance)
@@ -250,6 +288,7 @@ struct ExpandedInboxView: View {
             }
         }
         .onAppear {
+            synchronizeFolderRows()
             handleAppearanceRequest(morphCoordinator.request)
             guard CommandLine.arguments.contains(
                 "--preview-studio-light-popover"
@@ -281,6 +320,9 @@ struct ExpandedInboxView: View {
             // `/folder`, deleting the open folder, or reconciliation). Keep
             // drag state and the next route's scroll position deterministic.
             resetReorderState()
+        }
+        .onChange(of: isFolderSectionExpanded) { _, _ in
+            synchronizeFolderRows()
         }
         .onChange(of: focusedField) { _, field in
             if field == .unifiedInput {
@@ -470,10 +512,14 @@ struct ExpandedInboxView: View {
                     .accessibilityLabel("Back to Inbox")
                 }
 
-                Text(viewModel.navigationTitle)
-                    .font(.system(size: 18, weight: .medium))
-                    .foregroundStyle(NotchTheme.primaryText)
-                    .lineLimit(1)
+                if viewModel.isAtRoot {
+                    rootViewSelector
+                } else {
+                    Text(viewModel.currentFolder?.name ?? viewModel.navigationTitle)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundStyle(NotchTheme.primaryText)
+                        .lineLimit(1)
+                }
 
                 if let folder = viewModel.currentFolder {
                     Button {
@@ -493,6 +539,39 @@ struct ExpandedInboxView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .clipped()
+    }
+
+    private var rootViewSelector: some View {
+        Button {
+            presentViewSelector()
+        } label: {
+            HStack(spacing: 5) {
+                Text(rootViewTitle)
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(NotchTheme.primaryText)
+                    .lineLimit(1)
+
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 18, height: 22)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.98, pressedOpacity: 0.82))
+        .menuAnchor($viewSelectorMenuAnchor)
+        .help("Choose inbox view")
+        .accessibilityLabel("Inbox view")
+        .accessibilityValue(rootViewTitle)
+        .accessibilityHint("Shows Inbox, Tasks, Due, Completed, Archive, and Trash")
+    }
+
+    private var rootViewTitle: String {
+        inboxFilterTitle(viewModel.filter)
+    }
+
+    private func inboxFilterTitle(_ filter: AppViewModel.InboxFilter) -> String {
+        filter == .all ? "Inbox" : filter.rawValue
     }
 
     private var routeHeaderTrailingAction: some View {
@@ -516,6 +595,26 @@ struct ExpandedInboxView: View {
         // root-only action comes and goes.
         .frame(width: 28, height: 28)
         .clipped()
+    }
+
+    private func presentViewSelector() {
+        presentation.present(
+            NotchMenu(
+                title: "Inbox views",
+                anchor: viewSelectorMenuAnchor,
+                items: AppViewModel.InboxFilter.allCases.map { filter in
+                    NotchMenuItem(
+                        title: inboxFilterTitle(filter),
+                        icon: filter.systemImage,
+                        isChecked: filter == viewModel.filter
+                    ) {
+                        guard viewModel.selectInboxFilter(filter) else { return }
+                        resetReorderState()
+                        focusComposer()
+                    }
+                }
+            )
+        )
     }
 
     private var studioLightControl: some View {
@@ -650,7 +749,7 @@ struct ExpandedInboxView: View {
     }
 
     private var captureTextRow: some View {
-        HStack(spacing: 13) {
+        HStack(spacing: 10) {
             if focusedField != .unifiedInput {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 15, weight: .light))
@@ -660,7 +759,7 @@ struct ExpandedInboxView: View {
             }
 
             TextField(
-                "Search, add an item, or / to see actions",
+                composerPlaceholder,
                 text: $viewModel.composerText,
                 axis: .vertical
             )
@@ -673,6 +772,9 @@ struct ExpandedInboxView: View {
                     _ = viewModel.acceptPastedImages(providers)
                 }
                 .onKeyPress(keys: [.return], phases: .down) { press in
+                    if press.modifiers.contains(.shift) {
+                        return insertComposerNewline()
+                    }
                     if viewModel.isClearCommandActive {
                         presentClearCompletedTasks()
                     } else if press.modifiers.contains(.command) {
@@ -707,10 +809,22 @@ struct ExpandedInboxView: View {
                     // Enter the ledger with the keyboard from the composer.
                     return viewModel.moveLedgerSelection(by: 1) ? .handled : .ignored
                 }
-                .accessibilityLabel("Search, add an item, or / to see actions")
+                .accessibilityLabel(
+                    InboxComposerPresentationPolicy.accessibilityLabel(
+                        destination: viewModel.captureDestinationName,
+                        isAtRoot: viewModel.isAtRoot,
+                        searchesAllFolders: viewModel.composerSearchesAllFolders
+                    )
+                )
                 .accessibilityHint(unifiedInputHint)
 
-            if viewModel.canSubmitComposer {
+            if !viewModel.isAtRoot, !viewModel.composerHasImages {
+                folderScopeButton
+            }
+
+            if !viewModel.composerCommandSuggestions.isEmpty {
+                commandHintSummary
+            } else if viewModel.canSubmitComposer {
                 Button {
                     if viewModel.isClearCommandActive {
                         presentClearCompletedTasks()
@@ -752,16 +866,117 @@ struct ExpandedInboxView: View {
                             : "Add thought to \(viewModel.captureDestinationName)"
                 )
             } else if viewModel.composerHasMatches {
-                Text("\(viewModel.searchMatchCount) \(viewModel.searchMatchCount == 1 ? "match" : "matches")")
-                    .font(.system(size: 10.5, weight: .regular))
-                    .foregroundStyle(NotchTheme.tertiaryText)
-                    .lineLimit(1)
-                    .help("Return opens the first match · ⌘Return adds a new item anyway")
+                searchResultSummary
             }
         }
         .padding(.horizontal, 16)
         .frame(height: composerTextRowHeight)
         .animation(composerFocusAnimation, value: focusedField)
+    }
+
+    /// SwiftUI's multiline TextField currently treats Shift-Return as a
+    /// handled editing command on this macOS deployment, so returning
+    /// `.ignored` lets it select the whole field instead of inserting a line.
+    /// Apply the edit to its AppKit field editor while retaining the current
+    /// selection, then mirror the result into the model binding.
+    private func insertComposerNewline() -> KeyPress.Result {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else {
+            // The composer is only keyable through this field editor. Keep the
+            // event handled if AppKit has momentarily moved focus so Return
+            // cannot submit or clear a draft unexpectedly.
+            return .handled
+        }
+
+        _ = InboxNativeTextEditing.insertNewline(into: editor) {
+            viewModel.composerText = $0
+        }
+        return .handled
+    }
+
+    private var composerPlaceholder: String {
+        InboxComposerPresentationPolicy.placeholder(
+            destination: viewModel.captureDestinationName,
+            isAtRoot: viewModel.isAtRoot,
+            searchesAllFolders: viewModel.composerSearchesAllFolders
+        )
+    }
+
+    private var folderScopeButton: some View {
+        Button(action: toggleSearchScope) {
+            HStack(spacing: 4) {
+                Image(systemName: viewModel.composerSearchesAllFolders ? "folder" : "tray.full")
+                    .font(.system(size: 9.5, weight: .medium))
+                Text(viewModel.composerSearchesAllFolders ? "Folder" : "All items")
+                    .font(.system(size: 9.5, weight: .medium))
+            }
+            .foregroundStyle(NotchTheme.secondaryText)
+            .padding(.horizontal, 6)
+            .frame(height: 24)
+            .background(NotchTheme.control)
+            .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.97, pressedOpacity: 0.80))
+        .help(
+            viewModel.composerSearchesAllFolders
+                ? "Search only \(viewModel.captureDestinationName)"
+                : "Search all items"
+        )
+        .accessibilityLabel(
+            viewModel.composerSearchesAllFolders
+                ? "Search this folder"
+                : "Search all items"
+        )
+        .accessibilityValue(
+            viewModel.composerSearchesAllFolders
+                ? "Searching all items"
+                : "Searching \(viewModel.captureDestinationName)"
+        )
+        .accessibilityHint("Keeps the current search text")
+    }
+
+    private func toggleSearchScope() {
+        guard !viewModel.isAtRoot else { return }
+        guard viewModel.saveEditing() else { return }
+        // Folder browsing remains the capture destination. This explicit
+        // action only changes the live query's search scope.
+        viewModel.composerSearchesAllFolders.toggle()
+        focusComposer()
+    }
+
+    private var commandHintSummary: some View {
+        HStack(spacing: 6) {
+            Text("\(viewModel.composerCommandSuggestions.count) \(viewModel.composerCommandSuggestions.count == 1 ? "action" : "actions")")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(NotchTheme.tertiaryText)
+                .lineLimit(1)
+            InlineKeyboardHint(shortcut: "↵", action: "run", spokenShortcut: "Return")
+        }
+        .help("Return runs the selected action. Type // to search for a literal slash.")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            "\(viewModel.composerCommandSuggestions.count) \(viewModel.composerCommandSuggestions.count == 1 ? "action" : "actions"). Return runs the selected action."
+        )
+    }
+
+    private var searchResultSummary: some View {
+        HStack(spacing: 6) {
+            Text("\(viewModel.searchMatchCount) \(viewModel.searchMatchCount == 1 ? "match" : "matches")")
+                .font(.system(size: 9, weight: .medium))
+                .foregroundStyle(NotchTheme.tertiaryText)
+                .lineLimit(1)
+
+            InlineKeyboardHint(shortcut: "↵", action: "open", spokenShortcut: "Return")
+            InlineKeyboardHint(shortcut: "⌘↵", action: "add", spokenShortcut: "Command-Return")
+        }
+        .help("Return opens the first result. Command-Return adds a new item anyway.")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(
+            InboxComposerPresentationPolicy.matchingSearchHint(
+                destination: viewModel.captureDestinationName,
+                count: viewModel.searchMatchCount
+            )
+        )
     }
 
     private var composerImageStrip: some View {
@@ -911,6 +1126,25 @@ struct ExpandedInboxView: View {
                 }
                 .buttonStyle(.plain)
             }
+
+            Rectangle()
+                .fill(NotchTheme.hairline)
+                .frame(height: 1)
+
+            HStack(spacing: 6) {
+                Text("\(viewModel.composerCommandSuggestions.count) \(viewModel.composerCommandSuggestions.count == 1 ? "action" : "actions")")
+                Spacer(minLength: 4)
+                Text("↵ runs")
+                Text("·")
+                    .foregroundStyle(NotchTheme.tertiaryText)
+                Text("// searches slash")
+            }
+            .font(.system(size: 8.5, weight: .medium))
+            .foregroundStyle(NotchTheme.tertiaryText)
+            .padding(.horizontal, 12)
+            .frame(height: 26)
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel("Return runs the selected action. Type two slashes to search for a literal slash.")
         }
         .background(NotchTheme.raisedGraphite.opacity(0.98))
         .overlay {
@@ -1026,6 +1260,10 @@ struct ExpandedInboxView: View {
     }
 
     private var unifiedInputHint: String {
+        if !viewModel.composerCommandSuggestions.isEmpty {
+            let count = viewModel.composerCommandSuggestions.count
+            return "\(count) \(count == 1 ? "action" : "actions"). Use the arrow keys to choose, Return to run, or type // to search for a literal slash."
+        }
         if viewModel.composerHasImages {
             let count = viewModel.composerImages.count
             return "\(count) \(count == 1 ? "image is" : "images are") attached. Press Return to add this capture to \(viewModel.captureDestinationName)."
@@ -1037,10 +1275,15 @@ struct ExpandedInboxView: View {
             return "This tag exists, but no items in the current filter use it."
         }
         if viewModel.canAddComposerText {
-            return "No matching items. Press Return to add this thought to \(viewModel.captureDestinationName)."
+            return InboxComposerPresentationPolicy.emptySearchHint(
+                destination: viewModel.captureDestinationName
+            )
         }
         if viewModel.composerHasMatches {
-            return "Matching items are shown below."
+            return InboxComposerPresentationPolicy.matchingSearchHint(
+                destination: viewModel.captureDestinationName,
+                count: viewModel.searchMatchCount
+            )
         }
         return "Type to search \(viewModel.isAtRoot ? "all items" : viewModel.captureDestinationName). If no item matches, press Return to add a new thought."
     }
@@ -1150,6 +1393,10 @@ struct ExpandedInboxView: View {
         }
     }
 
+    private func synchronizeFolderRows() {
+        viewModel.setFolderRowsExpanded(isFolderSectionExpanded)
+    }
+
     /// The two route trees share one bounded viewport while SwiftUI retains
     /// the outgoing identity for its removal transition. The shelf and
     /// composer deliberately sit outside this stack so they never move.
@@ -1169,8 +1416,16 @@ struct ExpandedInboxView: View {
 
     private var ledgerBody: some View {
         VStack(spacing: 0) {
+            if viewModel.canUndoLedgerAction {
+                ledgerUndoBanner
+            }
+
             Group {
-                if let error = viewModel.errorMessage {
+                if isComposerActionMode {
+                    Color.clear
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .accessibilityHidden(true)
+                } else if let error = viewModel.errorMessage {
                     VStack(spacing: 0) {
                         InlineErrorView(message: error) {
                             viewModel.errorMessage = nil
@@ -1275,8 +1530,15 @@ struct ExpandedInboxView: View {
         }
 
         if !previewFolders.isEmpty {
-            ForEach(previewFolders) { folder in
-                folderRow(folder)
+            folderSectionHeader(count: previewFolders.count)
+
+            if InboxFolderSectionPolicy.visibleFolderCount(
+                folderCount: previewFolders.count,
+                isExpanded: isFolderSectionExpanded
+            ) > 0 {
+                ForEach(previewFolders) { folder in
+                    folderRow(folder)
+                }
             }
         }
 
@@ -1295,6 +1557,98 @@ struct ExpandedInboxView: View {
 
         if draggedItemID != nil, reorderTarget != nil, previewUnpinnedItems.isEmpty {
             emptyGroupDropTarget(title: "Drop to unpin", isPinned: false)
+        }
+    }
+
+    private var ledgerUndoBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.uturn.backward")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(NotchTheme.primaryAccent)
+                .frame(width: 18, height: 18)
+
+            Text(viewModel.undoLedgerActionTitle ?? "Undo last change")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(NotchTheme.primaryText)
+                .lineLimit(1)
+
+            Spacer(minLength: 8)
+
+            Button("Undo") {
+                _ = viewModel.undoLastLedgerAction()
+            }
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(NotchTheme.primaryAccent)
+            .buttonStyle(CompactTextButtonStyle())
+            .notchHitTarget(Rectangle())
+            .help("Undo the last ledger change")
+            .accessibilityLabel("Undo")
+            .accessibilityHint(viewModel.undoLedgerActionTitle ?? "Undo the last ledger change")
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 36)
+        .background(NotchTheme.primaryAccent.opacity(0.06))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchTheme.hairline)
+                .frame(height: 1)
+                .accessibilityHidden(true)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(viewModel.undoLedgerActionTitle ?? "Undo last ledger change")
+        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -4)))
+    }
+
+    private func folderSectionHeader(count: Int) -> some View {
+        Button {
+            if reduceMotion {
+                isFolderSectionExpanded.toggle()
+            } else {
+                withAnimation(NotchMotion.filter) {
+                    isFolderSectionExpanded.toggle()
+                }
+            }
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 18, height: 18)
+
+                Text("Folders")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(NotchTheme.primaryText)
+
+                Text(InboxFolderSectionPolicy.countLabel(for: count))
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundStyle(NotchTheme.tertiaryText)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: isFolderSectionExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 24, height: 24)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 34)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.84))
+        .help(isFolderSectionExpanded ? "Collapse folders" : "Expand folders")
+        .accessibilityLabel("Folders, \(InboxFolderSectionPolicy.countLabel(for: count))")
+        .accessibilityValue(isFolderSectionExpanded ? "Expanded" : "Collapsed")
+        .accessibilityHint(isFolderSectionExpanded ? "Hides folder rows" : "Shows folder rows and drop targets")
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchTheme.hairline)
+                .frame(height: 1)
+                .accessibilityHidden(true)
+        }
+        .overlay {
+            if firstComposerFolderTargetID != nil, !isFolderSectionExpanded {
+                firstComposerResultHighlight
+            }
         }
     }
 
@@ -1369,6 +1723,11 @@ struct ExpandedInboxView: View {
                 placement: folderReorderSession?.targetID == folder.id ? folderReorderSession?.placement : nil
             )
         }
+        .overlay {
+            if firstComposerFolderTargetID == folder.id {
+                firstComposerResultHighlight
+            }
+        }
         .ledgerDragRegion(.folder(folder.id))
         .id(LedgerScrollTarget.folder(folder.id))
     }
@@ -1388,6 +1747,11 @@ struct ExpandedInboxView: View {
             .opacity(isDragSource ? 0.18 : 1)
             .overlay {
                 LedgerInsertionIndicator(placement: target?.placement)
+            }
+            .overlay {
+                if firstComposerItemTargetID == item.id {
+                    firstComposerResultHighlight
+                }
             }
             .ledgerDragRegion(.row(item.id))
             .id(LedgerScrollTarget.item(item.id))

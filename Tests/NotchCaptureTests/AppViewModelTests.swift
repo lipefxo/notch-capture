@@ -1090,7 +1090,8 @@ final class AppViewModelTests: XCTestCase {
         let viewModel = AppViewModel(
             surfaceState: .expanded,
             items: [item],
-            folders: [folder]
+            folders: [folder],
+            isFolderSectionExpanded: true
         )
 
         // Folders render above items, so ↓ selects the folder first.
@@ -1105,7 +1106,8 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertTrue(viewModel.moveLedgerSelection(by: -1))
         XCTAssertEqual(viewModel.selectedFolderID, folder.id)
 
-        // Return (toggleCompletion key command) opens the selected folder.
+        // Folder activation opens the selected folder; completion remains a
+        // separate Space command for item rows.
         XCTAssertTrue(viewModel.performSelectedRowKeyboardCommand(.toggleCompletion))
         XCTAssertEqual(viewModel.browseLocation, .folder(folder.id))
         XCTAssertNil(viewModel.selectedFolderID)
@@ -1117,7 +1119,12 @@ final class AppViewModelTests: XCTestCase {
         var trashed: [UUID] = []
         var hooks = AppViewModel.Hooks()
         hooks.onTrash = { trashed.append($0) }
-        let viewModel = AppViewModel(surfaceState: .expanded, folders: [folder], hooks: hooks)
+        let viewModel = AppViewModel(
+            surfaceState: .expanded,
+            folders: [folder],
+            isFolderSectionExpanded: true,
+            hooks: hooks
+        )
 
         viewModel.moveLedgerSelection(by: 1)
         XCTAssertEqual(viewModel.selectedFolderID, folder.id)
@@ -1185,7 +1192,7 @@ final class AppViewModelTests: XCTestCase {
         viewModel.filter = .tasks
 
         XCTAssertEqual(viewModel.visibleFolders.map(\.id), [work.id])
-        XCTAssertTrue(viewModel.visibleItems.isEmpty)
+        XCTAssertEqual(viewModel.visibleItems.map(\.id), [workTask.id])
 
         viewModel.filter = .all
         viewModel.composerText = "compact"

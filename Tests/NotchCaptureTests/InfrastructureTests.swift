@@ -1816,8 +1816,8 @@ final class ApplicationMenuTests: XCTestCase {
         let delete = try XCTUnwrap(makeKeyEvent(characters: "\u{8}", keyCode: 51))
         let forwardDelete = try XCTUnwrap(makeKeyEvent(characters: "\u{7F}", keyCode: 117))
 
-        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: returnKey), .toggleCompletion)
-        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: keypadEnter), .toggleCompletion)
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: returnKey), .activateSelection)
+        XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: keypadEnter), .activateSelection)
         XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: space), .toggleCompletion)
         XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: delete), .moveToTrash)
         XCTAssertEqual(NotchPanel.ledgerRowKeyboardCommand(for: forwardDelete), .moveToTrash)

@@ -154,41 +154,72 @@ extension AppCoordinator {
     func handleDrop(_ providers: [NSItemProvider]) {
         Task { @MainActor [weak self] in
             guard let self else { return }
-            var urls: [URL] = []
+            let batch = await DropCaptureProcessor.process(providers) { [weak self] provider, index in
+                guard let self else {
+                    return .failure(
+                        DropCaptureFailure(
+                            kind: .unreadable,
+                            providerIndex: index,
+                            label: provider.suggestedName
+                        )
+                    )
+                }
+                return await self.loadDropPayload(from: provider, index: index)
+            }
+
+            guard !batch.payloads.isEmpty else {
+                if let message = batch.feedbackMessage {
+                    showDropFeedback(message)
+                }
+                return
+            }
+
+            // Keep the existing materialization order: URL/file attachments,
+            // then image attachments, with all text providers joined into the
+            // item caption. Provider accounting remains in batch, so a retry
+            // can target only failures instead of duplicating these successes.
+            var urls: [(url: URL, isFile: Bool)] = []
             var textParts: [String] = []
-            var imagePayloads: [(Data, UTType)] = []
+            var imagePayloads: [(data: Data, typeIdentifier: String, filename: String)] = []
             var storedPaths: [String] = []
 
-            for provider in providers {
-                if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier),
-                   let url = await loadURL(from: provider, type: .fileURL) {
-                    urls.append(url)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier),
-                          let url = await loadURL(from: provider, type: .url) {
-                    urls.append(url)
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier),
-                          let data = await loadData(from: provider, type: .image) {
-                    imagePayloads.append((data, .png))
-                } else if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier),
-                          let text = await loadText(from: provider) {
+            for payload in batch.payloads {
+                switch payload {
+                case let .file(url):
+                    urls.append((url, true))
+                case let .url(url):
+                    urls.append((url, false))
+                case let .image(data, typeIdentifier, filename):
+                    imagePayloads.append((data, typeIdentifier, filename))
+                case let .text(text):
                     textParts.append(text)
                 }
             }
 
             do {
-                var attachments = try urls.enumerated().map { index, url in
-                    url.isFileURL ? try fileAttachment(url, order: index) : linkAttachment(url, order: index)
+                var attachments: [Attachment] = []
+                for (index, url) in urls.enumerated() {
+                    let attachment = url.isFile
+                        ? try fileAttachment(url.url, order: index)
+                        : linkAttachment(url.url, order: index)
+                    attachments.append(attachment)
+                    if let relativePath = attachment.relativePath {
+                        storedPaths.append(relativePath)
+                    }
                 }
-                for (offset, payload) in imagePayloads.enumerated() {
-                    attachments.append(try dataAttachment(
-                        payload.0,
-                        filename: "Dropped Image \(offset + 1).png",
-                        type: payload.1,
+                for payload in imagePayloads {
+                    let attachment = try dataAttachment(
+                        payload.data,
+                        filename: payload.filename,
+                        type: UTType(payload.typeIdentifier) ?? .data,
                         kind: .image,
                         order: attachments.count
-                    ))
+                    )
+                    attachments.append(attachment)
+                    if let relativePath = attachment.relativePath {
+                        storedPaths.append(relativePath)
+                    }
                 }
-                storedPaths = attachments.compactMap(\.relativePath)
                 let text = textParts.joined(separator: "\n")
                 let item: CaptureItem
                 if attachments.isEmpty, let url = CaptureURLParser.url(from: text) {
@@ -196,12 +227,83 @@ extension AppCoordinator {
                 } else {
                     item = try repository.createItem(text: text, origin: .drop, attachments: attachments)
                 }
-                presentConfirmation(for: item)
+                if let message = batch.feedbackMessage {
+                    presentCaptureFeedback(for: item, feedback: .stayExpanded)
+                    viewModel.errorMessage = message
+                } else {
+                    presentConfirmation(for: item)
+                }
             } catch {
                 storedPaths.forEach { try? attachmentStore.remove(relativePath: $0) }
                 show(error)
             }
         }
+    }
+
+    private func loadDropPayload(
+        from provider: NSItemProvider,
+        index: Int
+    ) async -> Result<DropCapturePayload, DropCaptureFailure> {
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            guard let url = await loadURL(from: provider, type: .fileURL) else {
+                return .failure(dropFailure(.unreadable, provider: provider, index: index))
+            }
+            return .success(url.isFileURL ? .file(url) : .url(url))
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) {
+            guard let url = await loadURL(from: provider, type: .url) else {
+                return .failure(dropFailure(.unreadable, provider: provider, index: index))
+            }
+            return .success(url.isFileURL ? .file(url) : .url(url))
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            let type = preferredImageType(for: provider)
+            guard let data = await loadData(from: provider, type: type),
+                  let image = DropCaptureImageRepresentation.materialize(
+                      data: data,
+                      declaredType: type,
+                      suggestedName: provider.suggestedName,
+                      index: index + 1
+                  ) else {
+                return .failure(dropFailure(.unreadable, provider: provider, index: index))
+            }
+            return .success(
+                .image(
+                    data: image.data,
+                    typeIdentifier: image.typeIdentifier,
+                    filename: image.filename
+                )
+            )
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.plainText.identifier) {
+            guard let text = await loadText(from: provider),
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .failure(dropFailure(.unreadable, provider: provider, index: index))
+            }
+            return .success(.text(text))
+        }
+
+        return .failure(dropFailure(.unsupported, provider: provider, index: index))
+    }
+
+    private func dropFailure(
+        _ kind: DropCaptureFailure.Kind,
+        provider: NSItemProvider,
+        index: Int
+    ) -> DropCaptureFailure {
+        DropCaptureFailure(
+            kind: kind,
+            providerIndex: index,
+            label: provider.suggestedName
+        )
+    }
+
+    private func showDropFeedback(_ message: String) {
+        viewModel.openExpanded()
+        viewModel.errorMessage = message
     }
 
     func loadPastedImages(from providers: [NSItemProvider], forComposerDraft draftID: UUID) {
@@ -270,12 +372,7 @@ extension AppCoordinator {
     }
 
     private func preferredImageType(for provider: NSItemProvider) -> UTType {
-        let registeredTypes = provider.registeredTypeIdentifiers.compactMap(UTType.init)
-        let preferredTypes: [UTType] = [.png, .jpeg, .heic, .tiff, .gif]
-        if let preferred = preferredTypes.first(where: { registeredTypes.contains($0) }) {
-            return preferred
-        }
-        return registeredTypes.first(where: { $0 != .image && $0.conforms(to: .image) }) ?? .image
+        DropCaptureImageRepresentation.preferredType(from: provider.registeredTypeIdentifiers)
     }
 
     private static func pastedImageFilename(

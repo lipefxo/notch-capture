@@ -1,6 +1,15 @@
 import AppKit
 import Foundation
 
+extension Notification.Name {
+    /// Posted by the panel when keyboard focus asks the selected ledger row to
+    /// open its existing More Actions menu. Rows subscribe to this narrow
+    /// event instead of observing every composer keystroke.
+    static let notchLedgerRowActionsRequested = Notification.Name(
+        "NotchCapture.ledgerRowActionsRequested"
+    )
+}
+
 enum IdlePillVisibilityPolicy {
     static func shouldHide(
         autoHideExternalPill: Bool,
@@ -99,6 +108,57 @@ extension AppViewModel {
         case selectedRow
         case itemEditor
         case none
+    }
+
+    /// The small portion of an item that archive/trash operations own. Keeping
+    /// this separate from `LedgerItem` prevents Undo from replacing a row and
+    /// accidentally erasing edits made after the action.
+    struct LedgerStatusSnapshot: Equatable, Hashable, Sendable {
+        let id: UUID
+        let isArchived: Bool
+        let isTrashed: Bool
+        let resultingIsArchived: Bool
+        let resultingIsTrashed: Bool
+
+        init(
+            id: UUID,
+            isArchived: Bool,
+            isTrashed: Bool,
+            resultingIsArchived: Bool? = nil,
+            resultingIsTrashed: Bool? = nil
+        ) {
+            self.id = id
+            self.isArchived = isArchived
+            self.isTrashed = isTrashed
+            self.resultingIsArchived = resultingIsArchived ?? isArchived
+            self.resultingIsTrashed = resultingIsTrashed ?? isTrashed
+        }
+    }
+
+    /// One most-recent reversible ledger action. The snapshots carry only
+    /// status fields and the post-action guard needed to avoid undoing a later
+    /// archive/trash decision for the same item.
+    enum LedgerUndoAction: Equatable, Sendable {
+        case archive(LedgerStatusSnapshot)
+        case trash(LedgerStatusSnapshot)
+        case clear([LedgerStatusSnapshot])
+
+        var itemIDs: Set<UUID> {
+            switch self {
+            case let .archive(snapshot), let .trash(snapshot):
+                return [snapshot.id]
+            case let .clear(snapshots):
+                return Set(snapshots.map(\.id))
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .archive: "Undo archive"
+            case .trash: "Undo move to Trash"
+            case .clear: "Undo clear completed tasks"
+            }
+        }
     }
 
     enum CollapsedActivityContent: Equatable {
@@ -389,10 +449,14 @@ extension AppViewModel {
         var onCaptureText: (String, UUID?) -> Void = { _, _ in }
         var onCaptureComposerImages: (String, [ComposerImage], UUID?) -> String? = { _, _, _ in nil }
         var onPastedImageProviders: ([NSItemProvider], UUID) -> Void = { _, _ in }
-        var onUndoCapture: (UUID?) -> Void = { _ in }
+        /// Returns a user-facing error when the just-captured item cannot be
+        /// moved to Trash. The confirmation remains available so the user can
+        /// retry instead of losing the recovery action.
+        var onUndoCapture: (UUID?) -> String? = { _ in nil }
         var onConfirmationPauseChanged: (Bool, TimeInterval) -> Void = { _, _ in }
         var onToggleComplete: (UUID) -> Void = { _ in }
         var onUpdateText: (UUID, String) -> String? = { _, _ in nil }
+        var onOpenLink: (URL) -> Void = { _ in }
         var onTogglePin: (UUID) -> Void = { _ in }
         var onReorder: ([ItemOrderAssignment]) -> Void = { _ in }
         var onReorderFolders: ([FolderOrderAssignment]) -> Void = { _ in }
@@ -410,6 +474,10 @@ extension AppViewModel {
         var onDeletePermanently: (UUID) -> Void = { _ in }
         var onEmptyTrash: () -> Void = {}
         var onClearCompletedTasks: () -> Void = {}
+        /// Returns a user-facing error when persistence cannot apply the
+        /// operation. The view model keeps the action available in that case
+        /// so a transient failure cannot silently lose the undo path.
+        var onUndoLedgerAction: (LedgerUndoAction) -> String? = { _ in nil }
         var onDroppedProviders: ([NSItemProvider]) -> Void = { _ in }
         var onCompleteOnboarding: () -> Void = {}
         var onSetLaunchAtLogin: (Bool) -> Void = { _ in }

@@ -403,7 +403,9 @@ struct LedgerRowView: View, Equatable {
             && lhs.showsSearchLocation == rhs.showsSearchLocation
     }
     private var isSingleAttachmentOnly: Bool {
-        item.text.isEmpty && item.attachments.count == 1 && item.tags.isEmpty
+        item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && item.attachments.count == 1
+            && item.tags.isEmpty
     }
 
     private var isLinkOnlyItem: Bool {
@@ -452,6 +454,16 @@ struct LedgerRowView: View, Equatable {
         }
         .contentShape(Rectangle())
         .onHover { isHovered = $0 }
+        .onReceive(
+            NotificationCenter.default.publisher(
+                for: .notchLedgerRowActionsRequested
+            )
+        ) { notification in
+            guard let requestedItemID = notification.object as? UUID,
+                  requestedItemID == item.id,
+                  isSelected else { return }
+            presentActionsMenu()
+        }
         .onChange(of: item.isCompleted) { _, isCompleted in
             completionLayerCleanupTask?.cancel()
             completionLayerCleanupTask = nil
@@ -516,12 +528,22 @@ struct LedgerRowView: View, Equatable {
             completionEnergyTask = nil
             completionLayerLifecycle.energy = 0
         }
+        .help(rowAccessibilityHint)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
+        .accessibilityHint(rowAccessibilityHint)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityActions {
             if !item.text.isEmpty || !item.attachments.isEmpty {
                 Button("Edit") { viewModel.beginEditing(item) }
+            }
+            Button(item.isCompleted ? "Mark incomplete" : "Complete") {
+                viewModel.toggleComplete(item)
+            }
+            if item.isTrashed {
+                Button("Restore") { viewModel.restore(item) }
+            } else {
+                Button("Move to Trash") { viewModel.trash(item) }
             }
         }
     }
@@ -802,7 +824,9 @@ struct LedgerRowView: View, Equatable {
             .lineLimit(1...4)
             .focused($isEditorFocused)
             .onKeyPress(.return, phases: .down) { press in
-                guard !press.modifiers.contains(.shift) else { return .ignored }
+                if press.modifiers.contains(.shift) {
+                    return insertInlineEditorNewline()
+                }
                 _ = viewModel.saveEditing()
                 return .handled
             }
@@ -811,6 +835,19 @@ struct LedgerRowView: View, Equatable {
             }
             .accessibilityLabel("Edit item content")
             .accessibilityHint("Press Return to save, Shift-Return for a new line, or Escape to cancel")
+    }
+
+    private func insertInlineEditorNewline() -> KeyPress.Result {
+        guard let editor = NSApp.keyWindow?.firstResponder as? NSTextView else {
+            return .ignored
+        }
+        guard InboxNativeTextEditing.insertNewline(
+            into: editor,
+            updateText: { viewModel.updateEditingDraft($0) }
+        ) else {
+            return .ignored
+        }
+        return .handled
     }
 
     private var editingDraft: Binding<String> {
@@ -988,7 +1025,7 @@ struct LedgerRowView: View, Equatable {
 
     private var inlineActions: some View {
         Button {
-            presentation.present(NotchMenu(title: item.title, anchor: actionsAnchor, items: appMenuItems))
+            presentActionsMenu()
         } label: {
             // "ellipsis.vertical" is not a real SF Symbol; rotate the real one.
             Image(systemName: "ellipsis")
@@ -1010,8 +1047,44 @@ struct LedgerRowView: View, Equatable {
         .frame(width: 36, height: 38)
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .menuAnchor($actionsAnchor)
-        .help("More actions")
+        .help("More actions (Shift-F10)")
         .accessibilityLabel("More actions for \(item.title)")
+        .accessibilityHint("Press Shift-F10 to open this menu")
+    }
+
+    private var rowAccessibilityHint: String {
+        if isEditing {
+            return "Press Return to save, Shift-Return for a new line, or Escape to cancel."
+        }
+        if isLinkOnlyItem {
+            return "Press Return to open the link, F2 to edit, or Space to complete."
+        }
+        return "Press Return or F2 to edit. Press Space to complete."
+    }
+
+    private func presentActionsMenu() {
+        presentation.present(
+            NotchMenu(title: item.title, anchor: actionsAnchor, items: appMenuItems)
+        )
+    }
+
+    private func presentPermanentDeleteConfirmation() {
+        presentation.present(
+            NotchModal(
+                kind: .destructive,
+                title: "Delete permanently?",
+                message: "This permanently deletes the capture and its attachments. It cannot be undone.",
+                textFieldLabel: nil,
+                draft: "",
+                primaryTitle: "Delete Permanently",
+                cancelTitle: "Cancel",
+                onSubmit: { _ in
+                    viewModel.deletePermanently(item)
+                    return nil
+                },
+                onCancel: {}
+            )
+        )
     }
 
     private var appMenuItems: [NotchMenuItem] {
@@ -1028,12 +1101,12 @@ struct LedgerRowView: View, Equatable {
         }
         if item.isTrashed {
             items.append(NotchMenuItem(title: "Restore", icon: "arrow.uturn.backward") { viewModel.restore(item) })
-            items.append(NotchMenuItem(title: "Delete permanently", icon: "trash.slash", role: .destructive) { viewModel.deletePermanently(item) })
+            items.append(NotchMenuItem(title: "Delete permanently", icon: "trash.slash", role: .destructive) { presentPermanentDeleteConfirmation() })
         } else {
-            items.append(NotchMenuItem(title: item.isArchived ? "Restore to Inbox" : "Archive", icon: item.isArchived ? "arrow.uturn.backward" : "archivebox") {
+            items.append(NotchMenuItem(title: item.isArchived ? "Restore" : "Archive", icon: item.isArchived ? "arrow.uturn.backward" : "archivebox") {
                 item.isArchived ? viewModel.restore(item) : viewModel.archive(item)
             })
-            items.append(NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { viewModel.trash(item) })
+            items.append(NotchMenuItem(title: "Move to Trash", icon: "trash", role: .destructive) { viewModel.trash(item) })
         }
         return items
     }

@@ -60,7 +60,7 @@ struct OnboardingMusicPage: View {
     var body: some View {
         OnboardingFeaturePage(
             headline: "Keep the tunes going",
-            subtitle: "Control your songs from Spotify or Apple Music"
+            subtitle: "Control your songs from Spotify or Apple Music. Optional Automation access is requested only when you first use music controls."
         ) {
             OnboardingMusicIllustration()
         }

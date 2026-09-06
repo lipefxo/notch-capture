@@ -7,6 +7,8 @@ struct ConfirmationView: View {
     @State private var contentIsVisible = false
     @State private var stagingGeneration = 0
 
+    private var hasUndoError: Bool { viewModel.errorMessage != nil }
+
     var body: some View {
         TimelineView(
             .animation(
@@ -24,7 +26,7 @@ struct ConfirmationView: View {
                         .trim(from: 0, to: progress)
                         .stroke(NotchTheme.primaryAccent, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                    Image(systemName: "checkmark")
+                    Image(systemName: hasUndoError ? "exclamationmark" : "checkmark")
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(NotchTheme.primaryAccent)
                 }
@@ -37,17 +39,18 @@ struct ConfirmationView: View {
                 )
                 .accessibilityHidden(true)
 
-                Text("Saved to \(viewModel.confirmation?.destination ?? "Inbox")")
+                Text(hasUndoError ? "Couldn’t undo" : "Saved to \(viewModel.confirmation?.destination ?? "Inbox")")
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(NotchTheme.primaryText)
                     .lineLimit(1)
                     .opacity(contentIsVisible ? 1 : 0)
                     .offset(y: reduceMotion || contentIsVisible ? 0 : 2)
                     .animation(supportingAnimation, value: contentIsVisible)
+                    .help(viewModel.errorMessage ?? "Your capture was saved")
 
                 Spacer(minLength: 8)
 
-                Button("Undo") {
+                Button(hasUndoError ? "Retry" : "Undo") {
                     viewModel.undoConfirmation()
                 }
                 .font(.system(size: 11.5, weight: .medium))
@@ -60,15 +63,18 @@ struct ConfirmationView: View {
                 .offset(y: reduceMotion || contentIsVisible ? 0 : 2)
                 .animation(supportingAnimation, value: contentIsVisible)
                 .accessibilityHint("Removes the item that was just captured")
+                .help(viewModel.errorMessage ?? "Move this capture to Trash")
             }
             .padding(.horizontal, 14)
             .frame(width: 280, height: 56)
             .accessibilityElement(children: .contain)
-            .accessibilityLabel("Captured. Saved to \(viewModel.confirmation?.destination ?? "Inbox")")
+            .accessibilityLabel(hasUndoError
+                ? "Undo failed. \(viewModel.errorMessage ?? "Try again.")"
+                : "Captured. Saved to \(viewModel.confirmation?.destination ?? "Inbox")")
         }
         .onHover { hovered in
             isHovered = hovered
-            viewModel.setConfirmationPaused(hovered)
+            viewModel.setConfirmationPaused(hovered || hasUndoError)
         }
         .onAppear { stageContent() }
         .onChange(of: viewModel.confirmation?.itemID) { _, _ in

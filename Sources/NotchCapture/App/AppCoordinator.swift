@@ -618,7 +618,8 @@ final class AppCoordinator {
             self?.loadPastedImages(from: providers, forComposerDraft: draftID)
         }
         hooks.onUndoCapture = { [weak self] id in
-            self?.undoCapture(id: id)
+            guard let self, !self.previewMode else { return nil }
+            return self.undoCapture(id: id)
         }
         hooks.onConfirmationPauseChanged = { [weak self] paused, remaining in
             self?.panelController.setConfirmationDismissalPaused(paused, remaining: remaining)
@@ -627,7 +628,11 @@ final class AppCoordinator {
             self?.toggleComplete(id: id)
         }
         hooks.onUpdateText = { [weak self] id, text in
-            self?.updateText(text, for: id)
+            guard let self, !self.previewMode else { return nil }
+            return self.updateText(text, for: id)
+        }
+        hooks.onOpenLink = { url in
+            NSWorkspace.shared.open(url)
         }
         hooks.onTogglePin = { [weak self] id in
             self?.togglePin(id: id)
@@ -678,6 +683,10 @@ final class AppCoordinator {
             guard let self else { return }
             do {
                 try self.repository.emptyTrash()
+                // Empty Trash permanently removes every trashed row, so a
+                // pending single-item trash/clear Undo cannot remain pointing
+                // at an item that no longer exists.
+                self.viewModel.discardPendingLedgerUndo()
                 self.reloadFromStore()
             } catch {
                 self.show(error)
@@ -690,8 +699,13 @@ final class AppCoordinator {
                 self.reloadFromStore()
             } catch {
                 self.reloadFromStore()
+                self.viewModel.discardPendingLedgerUndo()
                 self.show(error)
             }
+        }
+        hooks.onUndoLedgerAction = { [weak self] action in
+            guard let self, !self.previewMode else { return nil }
+            return self.undoLedgerAction(action)
         }
         hooks.onDroppedProviders = { [weak self] providers in
             self?.handleDrop(providers)

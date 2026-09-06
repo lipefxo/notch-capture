@@ -3,6 +3,13 @@ import Foundation
 import SwiftData
 import UniformTypeIdentifiers
 
+private struct UndoLedgerStatusState {
+    let item: CaptureItem
+    let archivedAt: Date?
+    let trashedAt: Date?
+    let updatedAt: Date
+}
+
 extension AppCoordinator {
     func presentConfirmation(for item: CaptureItem) {
         presentCaptureFeedback(for: item, feedback: .transientConfirmation)
@@ -103,15 +110,20 @@ extension AppCoordinator {
         }
     }
 
-    func undoCapture(id: UUID?) {
-        guard let id, let item = findItem(id) else { return }
+    func undoCapture(id: UUID?) -> String? {
+        guard let id else { return nil }
+        guard let item = findItem(id) else {
+            return ItemRepositoryError.itemNotFound(id).localizedDescription
+        }
         do {
             // Trash, not permanent delete: a mis-click on the confirmation toast
             // must never destroy a capture (or its attachment files).
             try repository.trash(item)
             reloadItem(id)
+            return nil
         } catch {
-            show(error)
+            reloadFromStore()
+            return error.localizedDescription
         }
     }
 
@@ -171,7 +183,11 @@ extension AppCoordinator {
         do {
             try repository.archive(item)
             reloadItem(id)
-        } catch { show(error) }
+        } catch {
+            reloadFromStore()
+            viewModel.discardPendingLedgerUndo(for: id)
+            show(error)
+        }
     }
 
     func setDueDate(_ date: Date?, for id: UUID) {
@@ -255,7 +271,11 @@ extension AppCoordinator {
         do {
             try repository.trash(item)
             reloadItem(id)
-        } catch { show(error) }
+        } catch {
+            reloadFromStore()
+            viewModel.discardPendingLedgerUndo(for: id)
+            show(error)
+        }
     }
 
     func restore(id: UUID) {
@@ -263,7 +283,10 @@ extension AppCoordinator {
         do {
             try repository.restore(item)
             reloadItem(id)
-        } catch { show(error) }
+        } catch {
+            reloadFromStore()
+            show(error)
+        }
     }
 
     func deletePermanently(id: UUID) {
@@ -271,7 +294,86 @@ extension AppCoordinator {
         do {
             try repository.deletePermanently(item)
             reloadFromStore()
-        } catch { show(error) }
+        } catch {
+            // The row is removed optimistically before this hook. Reload the
+            // rollback-restored model before showing the failure so Trash does
+            // not falsely appear empty.
+            reloadFromStore()
+            show(error)
+        }
+    }
+
+    /// Applies the latest view-model undo as a status-only persistence
+    /// transaction. Replaying a complete `LedgerItem` would overwrite text,
+    /// folder, tags, or ordering edits made after the original action, so the
+    /// operation carries only the archive/trash bits it owns.
+    func undoLedgerAction(_ action: AppViewModel.LedgerUndoAction) -> String? {
+        var previousStates: [UUID: UndoLedgerStatusState] = [:]
+        do {
+            switch action {
+            case let .archive(snapshot):
+                guard let item = findItem(snapshot.id) else {
+                    throw ItemRepositoryError.itemNotFound(snapshot.id)
+                }
+                guard item.isArchived == snapshot.resultingIsArchived,
+                      item.isTrashed == snapshot.resultingIsTrashed else {
+                    // A later status decision superseded this undo. Consume it
+                    // without touching the newer state.
+                    return nil
+                }
+                previousStates[item.id] = UndoLedgerStatusState(
+                    item: item,
+                    archivedAt: item.archivedAt,
+                    trashedAt: item.trashedAt,
+                    updatedAt: item.updatedAt
+                )
+                item.archivedAt = snapshot.isArchived ? item.archivedAt ?? .now : nil
+                item.trashedAt = snapshot.isTrashed ? item.trashedAt ?? .now : nil
+                item.touch()
+            case let .trash(snapshot):
+                guard let item = findItem(snapshot.id) else {
+                    throw ItemRepositoryError.itemNotFound(snapshot.id)
+                }
+                guard item.isTrashed == snapshot.resultingIsTrashed else { return nil }
+                previousStates[item.id] = UndoLedgerStatusState(
+                    item: item,
+                    archivedAt: item.archivedAt,
+                    trashedAt: item.trashedAt,
+                    updatedAt: item.updatedAt
+                )
+                item.trashedAt = snapshot.isTrashed ? item.trashedAt ?? .now : nil
+                item.touch()
+            case let .clear(snapshots):
+                for snapshot in snapshots {
+                    guard let item = findItem(snapshot.id) else { continue }
+                    guard item.isTrashed == snapshot.resultingIsTrashed else { continue }
+                    previousStates[item.id] = UndoLedgerStatusState(
+                        item: item,
+                        archivedAt: item.archivedAt,
+                        trashedAt: item.trashedAt,
+                        updatedAt: item.updatedAt
+                    )
+                    item.trashedAt = snapshot.isTrashed ? item.trashedAt ?? .now : nil
+                    item.touch()
+                }
+            }
+            try modelContainer.mainContext.save()
+            reloadFromStore()
+            return nil
+        } catch {
+            // SwiftData may leave failed scalar writes on the registered
+            // objects until rollback. Restore the pre-undo status and update
+            // timestamp first so rollback cannot expose a stale half-undo to
+            // the live view model.
+            for state in previousStates.values {
+                state.item.archivedAt = state.archivedAt
+                state.item.trashedAt = state.trashedAt
+                state.item.updatedAt = state.updatedAt
+            }
+            modelContainer.mainContext.rollback()
+            reloadFromStore()
+            return error.localizedDescription
+        }
     }
 
     private func findItem(_ id: UUID) -> CaptureItem? {
