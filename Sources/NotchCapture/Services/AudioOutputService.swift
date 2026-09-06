@@ -66,6 +66,16 @@ final class AudioOutputService: AudioOutputControlling {
         let outputDeviceID: UInt32?
     }
 
+    private struct DefaultRoutingBaseline {
+        let mediaID: UInt32?
+        let systemID: UInt32?
+    }
+
+    private enum DefaultReadResult {
+        case value(UInt32?)
+        case unreadable
+    }
+
     private let hardware: any CoreAudioHardwareAccessing
     private var outputDeviceID: UInt32?
     private(set) var state: AudioOutputViewState = .empty
@@ -106,21 +116,101 @@ final class AudioOutputService: AudioOutputControlling {
             throw AudioOutputServiceError.unavailable(target)
         }
 
+        let baseline: DefaultRoutingBaseline
         do {
-            try hardware.setDefaultOutputDeviceID(device.id)
-            try hardware.setDefaultSystemOutputDeviceID(device.id)
+            // Read both defaults before the first write. The two values may
+            // already be intentionally split, so they must be retained
+            // independently for a later rollback.
+            baseline = DefaultRoutingBaseline(
+                mediaID: try hardware.defaultOutputDeviceID(),
+                systemID: try hardware.defaultSystemOutputDeviceID()
+            )
         } catch {
             refresh()
-            throw AudioOutputServiceError.switchFailed(target, error.localizedDescription)
+            throw AudioOutputServiceError.switchFailed(
+                target,
+                "Couldn’t read the current outputs. No changes were made. Try again."
+            )
+        }
+
+        do {
+            try hardware.setDefaultOutputDeviceID(device.id)
+        } catch {
+            refresh()
+            throw AudioOutputServiceError.switchFailed(
+                target,
+                "Media output couldn’t switch. System output was left unchanged. Try again."
+            )
+        }
+
+        do {
+            try hardware.setDefaultSystemOutputDeviceID(device.id)
+        } catch {
+            let rollbackSucceeded = restoreDefaults(from: baseline)
+            refresh()
+            let reason: String
+            if rollbackSucceeded {
+                reason = "System sounds couldn’t switch. Your previous outputs were restored. Try again."
+            } else {
+                reason = "Some audio may use a different output. Check Control Center and try again."
+            }
+            throw AudioOutputServiceError.switchFailed(target, reason)
         }
 
         let refreshed: ResolvedState
         do {
             refreshed = try makeState()
         } catch {
+            refresh()
             throw AudioOutputServiceError.switchFailed(target, error.localizedDescription)
         }
         adopt(refreshed)
+    }
+
+    /// Best-effort restoration after the media write has succeeded but the
+    /// system-default write has failed. Each route is read back independently
+    /// before writing, and the final readback decides whether restoration was
+    /// complete. This handles setters that throw after mutating the device.
+    private func restoreDefaults(from baseline: DefaultRoutingBaseline) -> Bool {
+        switch readDefaultOutputID() {
+        case let .value(currentMediaID) where currentMediaID != baseline.mediaID:
+            if let mediaID = baseline.mediaID {
+                try? hardware.setDefaultOutputDeviceID(mediaID)
+            }
+        case .value, .unreadable:
+            break
+        }
+
+        switch readDefaultSystemOutputID() {
+        case let .value(currentSystemID) where currentSystemID != baseline.systemID:
+            if let systemID = baseline.systemID {
+                try? hardware.setDefaultSystemOutputDeviceID(systemID)
+            }
+        case .value, .unreadable:
+            break
+        }
+
+        guard case let .value(mediaID) = readDefaultOutputID(),
+              case let .value(systemID) = readDefaultSystemOutputID() else {
+            return false
+        }
+        return mediaID == baseline.mediaID && systemID == baseline.systemID
+    }
+
+    private func readDefaultOutputID() -> DefaultReadResult {
+        do {
+            return .value(try hardware.defaultOutputDeviceID())
+        } catch {
+            return .unreadable
+        }
+    }
+
+    private func readDefaultSystemOutputID() -> DefaultReadResult {
+        do {
+            return .value(try hardware.defaultSystemOutputDeviceID())
+        } catch {
+            return .unreadable
+        }
     }
 
     func setVolume(_ volume: Double) throws {

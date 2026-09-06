@@ -3,13 +3,184 @@ import SwiftUI
 struct UtilityShelfView: View {
     @ObservedObject var viewModel: AppViewModel
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage(InboxRefinementPreferences.utilityShelfExpandedKey)
+    private var isExpanded = InboxRefinementPreferences.utilityShelfStartsExpanded
 
     var body: some View {
-        if let presentation = viewModel.nowPlayingPresentation {
-            MusicPlayerBand(viewModel: viewModel, presentation: presentation)
-                .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -4)))
-                .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content, value: presentation.state)
+        VStack(spacing: 0) {
+            compactSummary
+
+            if isExpanded {
+                expandedControls
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .offset(y: -4))
+                    )
+            }
         }
+        .background(NotchTheme.ink)
+        .animation(
+            reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content,
+            value: isExpanded
+        )
+    }
+
+    private var compactSummary: some View {
+        Button {
+            if reduceMotion {
+                isExpanded.toggle()
+            } else {
+                withAnimation(NotchMotion.content) {
+                    isExpanded.toggle()
+                }
+            }
+        } label: {
+            HStack(spacing: 9) {
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 18, height: 18)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Utilities")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(NotchTheme.primaryText)
+
+                    HStack(spacing: 5) {
+                        Image(systemName: AudioVolumePresentation.symbolName(for: viewModel.audioOutputState.volume))
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundStyle(NotchTheme.secondaryText)
+                        Text(compactOutputTitle)
+                            .lineLimit(1)
+
+                        if let playbackSummary {
+                            Text("·")
+                                .foregroundStyle(NotchTheme.tertiaryText)
+                            Image(systemName: playbackSummary.icon)
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(playbackSummary.isRecovery ? NotchTheme.warning : NotchTheme.secondaryText)
+                            Text(playbackSummary.title)
+                                .lineLimit(1)
+                        }
+                    }
+                    .font(.system(size: 9.5, weight: .regular))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(NotchTheme.secondaryText)
+                    .frame(width: 22, height: 22)
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.84))
+        .help(
+            isSplitOutput
+                ? "Media and system sounds use different outputs. \(isExpanded ? "Collapse" : "Expand") utility controls for details."
+                : (isExpanded ? "Collapse utility controls" : "Expand utility controls")
+        )
+        .accessibilityLabel("Utility shelf")
+        .accessibilityValue("\(isExpanded ? "Expanded" : "Collapsed"). \(compactAccessibilitySummary)")
+        .accessibilityHint(isExpanded ? "Hides output and playback controls" : "Shows output and playback controls")
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(NotchTheme.hairline)
+                .frame(height: 1)
+                .accessibilityHidden(true)
+        }
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(NotchTheme.hairline)
+                .frame(height: 1)
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var expandedControls: some View {
+        VStack(spacing: 0) {
+            AudioOutputStrip(viewModel: viewModel)
+            AudioVolumeControlRow(viewModel: viewModel, height: 44)
+
+            if let presentation = viewModel.nowPlayingPresentation {
+                MusicPlayerBand(viewModel: viewModel, presentation: presentation)
+                    .transition(
+                        reduceMotion
+                            ? .opacity
+                            : .opacity.combined(with: .offset(y: -4))
+                    )
+                    .animation(
+                        reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content,
+                        value: presentation.state
+                    )
+            }
+        }
+    }
+
+    private var compactOutputTitle: String {
+        let state = viewModel.audioOutputState
+        if isSplitOutput {
+            return "Split outputs"
+        }
+        if let mediaTarget = state.mediaTarget,
+           mediaTarget == state.systemTarget {
+            return mediaTarget.displayName
+        }
+        return state.systemTarget?.displayName
+            ?? state.systemDeviceName
+            ?? state.mediaTarget?.displayName
+            ?? state.mediaDeviceName
+            ?? "Audio output"
+    }
+
+    private var isSplitOutput: Bool {
+        let state = viewModel.audioOutputState
+        if let mediaTarget = state.mediaTarget,
+           let systemTarget = state.systemTarget {
+            return mediaTarget != systemTarget
+        }
+        if let mediaDeviceName = state.mediaDeviceName,
+           let systemDeviceName = state.systemDeviceName {
+            return AudioOutputTarget.normalized(mediaDeviceName)
+                != AudioOutputTarget.normalized(systemDeviceName)
+        }
+        return false
+    }
+
+    private struct PlaybackSummary {
+        let title: String
+        let icon: String
+        let isRecovery: Bool
+    }
+
+    private var playbackSummary: PlaybackSummary? {
+        guard let presentation = viewModel.nowPlayingPresentation else { return nil }
+        return PlaybackSummary(
+            title: presentation.isRecovery
+                ? presentation.state.statusText
+                : presentation.snapshot.title,
+            icon: presentation.isRecovery
+                ? "exclamationmark.triangle.fill"
+                : (presentation.snapshot.isPlaying ? "waveform" : "pause.fill"),
+            isRecovery: presentation.isRecovery
+        )
+    }
+
+    private var compactAccessibilitySummary: String {
+        var parts = [
+            isSplitOutput
+                ? "\(compactOutputTitle). \(viewModel.audioOutputState.accessibilityCurrentOutput)"
+                : compactOutputTitle,
+            viewModel.audioOutputState.volume.accessibilityValue,
+        ]
+        if let playbackSummary {
+            parts.append(playbackSummary.title)
+        }
+        return parts.joined(separator: ", ")
     }
 }
 

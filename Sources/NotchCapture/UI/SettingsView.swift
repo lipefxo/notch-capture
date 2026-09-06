@@ -87,19 +87,19 @@ struct SettingsView: View {
             SettingsControlRow(title: "Media activity size", detail: "Minimal or Extended") {
                 NotchSegmentedControl(
                     options: CompactPresentationSize.allCases,
-                    selection: $viewModel.compactPresentationSize
+                    selection: $viewModel.compactPresentationSize,
+                    groupLabel: "Media activity size"
                 )
                 .frame(width: 164)
-                .accessibilityLabel("Media activity size")
             }
             SettingsDivider()
             SettingsControlRow(title: "Time format", detail: "Capture timestamps") {
                 NotchSegmentedControl(
                     options: AppViewModel.TimeFormat.allCases,
-                    selection: $viewModel.timeFormat
+                    selection: $viewModel.timeFormat,
+                    groupLabel: "Time format"
                 )
                 .frame(width: 142)
-                .accessibilityLabel("Time format")
             }
         }
     }
@@ -281,7 +281,7 @@ struct SettingsView: View {
     }
 
     private var privacyAndDataSection: some View {
-        SettingsGroup(title: "Privacy & Data", subtitle: "Everything is stored only on this Mac") {
+        SettingsGroup(title: "Privacy & Data", subtitle: "Your library stays on this Mac") {
             HStack(spacing: 8) {
                 SettingsRowIcon(symbol: "externaldrive")
                 VStack(alignment: .leading, spacing: 2) {
@@ -300,6 +300,16 @@ struct SettingsView: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 46)
+
+            SettingsDivider()
+            Text(
+                "Link metadata and music artwork are requested only when needed. Update checks contact the app’s update service."
+            )
+            .font(.system(size: 9))
+            .foregroundStyle(NotchTheme.tertiaryText)
+            .fixedSize(horizontal: false, vertical: true)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
 
             SettingsDivider()
             HStack(spacing: 8) {

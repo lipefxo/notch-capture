@@ -48,26 +48,62 @@ final class AppViewModel: ObservableObject {
 
     @Published var surfaceState: SurfaceState
     @Published var items: [LedgerItem] {
-        didSet { invalidateDerivedLedger() }
+        didSet {
+            invalidateDerivedLedger()
+            reconcileSelectionForCurrentView()
+        }
     }
     @Published var selectedItemID: UUID?
     @Published var selectedFolderID: UUID?
     @Published private(set) var keyboardFocus: KeyboardFocus = .composer
     @Published var browseLocation: BrowseLocation = .root {
-        didSet { invalidateDerivedLedger() }
+        didSet {
+            invalidateDerivedLedger()
+            reconcileSelectionForCurrentView()
+        }
     }
     @Published var filter: InboxFilter = .all {
-        didSet { invalidateDerivedLedger() }
+        didSet {
+            invalidateDerivedLedger()
+            guard oldValue != filter else { return }
+            reconcileSelectionForCurrentView()
+        }
     }
     @Published var composerText = "" {
-        didSet { invalidateDerivedLedger() }
+        didSet {
+            invalidateDerivedLedger()
+            reconcileSelectionForCurrentView()
+        }
+    }
+    /// Search scope is intentionally session state. Root and global filter
+    /// routes search every folder; entering a folder resets the composer to
+    /// that folder until the user explicitly broadens the scope.
+    @Published var composerSearchesAllFolders: Bool {
+        didSet {
+            invalidateDerivedLedger()
+            reconcileSelectionForCurrentView()
+        }
+    }
+    /// Shared with the expanded inbox's folder disclosure state so keyboard
+    /// navigation follows the rows that are actually rendered. The UI may
+    /// persist its preference separately; this value is the current session
+    /// snapshot used by the navigation model.
+    @Published var isFolderSectionExpanded: Bool {
+        didSet {
+            guard oldValue != isFolderSectionExpanded else { return }
+            invalidateDerivedLedger()
+            reconcileSelectionForCurrentView()
+        }
     }
     @Published private(set) var composerImages: [ComposerImage] = []
     @Published var confirmation: Confirmation?
     @Published var itemEditSession: ItemEditSession?
     @Published var errorMessage: String?
     @Published var folders: [FolderSummary] {
-        didSet { invalidateDerivedLedger() }
+        didSet {
+            invalidateDerivedLedger()
+            reconcileSelectionForCurrentView()
+        }
     }
     @Published var tags: [TagSummary] {
         didSet { invalidateDerivedLedger() }
@@ -130,6 +166,7 @@ final class AppViewModel: ObservableObject {
         didSet { invalidateDerivedLedger() }
     }
     private var completionHoldTasks: [UUID: Task<Void, Never>] = [:]
+    @Published private(set) var pendingLedgerUndoAction: LedgerUndoAction?
 
     var hooks: Hooks
     private let now: () -> Date
@@ -170,6 +207,8 @@ final class AppViewModel: ObservableObject {
         nowPlayingArtwork: NSImage? = nil,
         audioOutputState: AudioOutputViewState = .empty,
         studioLightState: StudioLightViewState = .empty,
+        composerSearchesAllFolders: Bool = true,
+        isFolderSectionExpanded: Bool = false,
         shortcuts: [Shortcut] = [
             Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N")
         ],
@@ -192,9 +231,12 @@ final class AppViewModel: ObservableObject {
         self.nowPlayingArtwork = nowPlayingArtwork
         self.audioOutputState = audioOutputState
         self.studioLightState = studioLightState
+        self.composerSearchesAllFolders = composerSearchesAllFolders
+        self.isFolderSectionExpanded = isFolderSectionExpanded
         self.shortcuts = shortcuts
         self.hooks = hooks
         self.now = now
+        self.pendingLedgerUndoAction = nil
     }
 
     var visibleItems: [LedgerItem] {
@@ -250,7 +292,9 @@ final class AppViewModel: ObservableObject {
     var captureDestinationID: UUID? { currentFolder?.id }
     var captureDestinationName: String { currentFolder?.name ?? "Inbox" }
     var isAtRoot: Bool { browseLocation == .root }
-    var isShowingGlobalSearchResults: Bool { isAtRoot && composerHasQuery }
+    var isShowingGlobalSearchResults: Bool {
+        composerHasQuery && (isAtRoot || composerSearchesAllFolders)
+    }
     var canReorderVisibleItems: Bool {
         !isShowingGlobalSearchResults && itemEditSession == nil
     }
@@ -258,6 +302,12 @@ final class AppViewModel: ObservableObject {
         !visibleTagGroups.isEmpty || !visibleFolders.isEmpty || !visibleItems.isEmpty
     }
     var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
+
+    /// Whether the current inbox mutation has a reversible action available.
+    /// Only one operation is retained; unrelated edits can happen while it is
+    /// available because undo applies status fields to the current row.
+    var canUndoLedgerAction: Bool { pendingLedgerUndoAction != nil }
+    var undoLedgerActionTitle: String? { pendingLedgerUndoAction?.title }
 
     /// `/folder` is deliberately a complete command rather than search text.
     /// It must begin the composer text and be followed by whitespace or end of input,
@@ -273,11 +323,28 @@ final class AppViewModel: ObservableObject {
         return String(remainder)
     }
 
+    /// A recognized leading slash starts command mode. Two leading slashes are
+    /// an escape for a literal slash query, so `//foo` searches for `/foo` and
+    /// can still be captured as `/foo` when there are no matches.
+    private var isEscapedSlashQuery: Bool {
+        normalizedComposerText.hasPrefix("//")
+    }
+
     private var slashCommandQuery: String? {
-        guard composerText.first == "/" else { return nil }
+        guard composerText.first == "/", !isEscapedSlashQuery else { return nil }
         let query = String(composerText.dropFirst())
         guard !query.contains(where: \.isWhitespace) else { return nil }
         return query
+    }
+
+    /// True while the composer is offering slash commands. Keeping this
+    /// separate from the query parser prevents `/folder` and `/clear` from
+    /// accidentally becoming ordinary ledger searches while they are typed.
+    var isComposerCommandMode: Bool {
+        guard let query = slashCommandQuery else { return false }
+        return query.isEmpty || ComposerCommand.allCases.contains {
+            $0.rawValue.hasPrefix(query.lowercased())
+        }
     }
 
     var isFolderCommandActive: Bool { folderCommandName != nil }
@@ -295,7 +362,10 @@ final class AppViewModel: ObservableObject {
         }
     }
     var composerHasQuery: Bool {
-        !isFolderCommandActive && !isClearCommandActive && !normalizedComposerText.isEmpty
+        !isFolderCommandActive
+            && !isClearCommandActive
+            && !isComposerCommandMode
+            && !normalizedComposerText.isEmpty
     }
     var composerHasImages: Bool { !composerImages.isEmpty }
     var composerHasDraft: Bool {
@@ -687,7 +757,7 @@ final class AppViewModel: ObservableObject {
             return
         }
 
-        let text = normalizedComposerText
+        let text = composerCaptureText
         if composerHasImages {
             errorMessage = nil
             if let persistenceError = hooks.onCaptureComposerImages(
@@ -833,6 +903,8 @@ final class AppViewModel: ObservableObject {
     func search(for tag: TagSummary) {
         clearSelection()
         browseLocation = .root
+        composerSearchesAllFolders = true
+        filter = .all
         resetComposerDraft()
         composerText = "@\(tag.name) "
         isTagAutocompleteDismissed = true
@@ -857,9 +929,12 @@ final class AppViewModel: ObservableObject {
     }
 
     func openFolder(_ folder: FolderSummary) {
+        guard saveEditing() else { return }
         clearSelection()
         resetComposerDraft()
         errorMessage = nil
+        filter = .all
+        composerSearchesAllFolders = false
         browseLocation = .folder(folder.id)
     }
 
@@ -869,15 +944,36 @@ final class AppViewModel: ObservableObject {
         clearSelection()
         composerText = ""
         errorMessage = nil
+        filter = .all
+        composerSearchesAllFolders = false
         browseLocation = .folder(id)
         keyboardFocus = .composer
     }
 
     func openRoot() {
+        guard saveEditing() else { return }
         clearSelection()
         resetComposerDraft()
         errorMessage = nil
+        filter = .all
+        composerSearchesAllFolders = true
         browseLocation = .root
+    }
+
+    /// Selects one of the six global inbox routes and reconciles all state
+    /// owned by the previous route. Returning false means an active edit could
+    /// not be saved, so callers can leave the user on the current page.
+    @discardableResult
+    func selectInboxFilter(_ newFilter: InboxFilter) -> Bool {
+        guard saveEditing() else { return false }
+        clearSelection()
+        resetComposerDraft()
+        errorMessage = nil
+        filter = newFilter
+        browseLocation = .root
+        composerSearchesAllFolders = true
+        keyboardFocus = .composer
+        return true
     }
 
     func reconcileBrowsingLocation() {
@@ -888,6 +984,13 @@ final class AppViewModel: ObservableObject {
 
     func focusComposer() {
         keyboardFocus = .composer
+    }
+
+    /// Mirrors the expanded inbox disclosure state into the keyboard model.
+    /// Collapsing the folder section also clears a folder row selection so the
+    /// next arrow key starts from the visible item list.
+    func setFolderRowsExpanded(_ isExpanded: Bool) {
+        isFolderSectionExpanded = isExpanded
     }
 
     /// The user-configured display value for a shortcut, for labels that must
@@ -1015,8 +1118,10 @@ final class AppViewModel: ObservableObject {
     /// The rows arrow keys walk, in rendered order: folders, then pinned,
     /// then unpinned items.
     private var keyboardNavigationRows: [LedgerKeyboardRow] {
-        visibleFolders.map { .folder($0.id) }
-            + (pinnedItems + unpinnedItems).map { .item($0.id) }
+        let folders = isFolderSectionExpanded
+            ? visibleFolders.map { LedgerKeyboardRow.folder($0.id) }
+            : []
+        return folders + (pinnedItems + unpinnedItems).map { .item($0.id) }
     }
 
     private var selectedKeyboardRow: LedgerKeyboardRow? {
@@ -1083,12 +1188,23 @@ final class AppViewModel: ObservableObject {
         }
 
         errorMessage = nil
+        let snapshots = items.compactMap { item -> LedgerStatusSnapshot? in
+            guard targetIDs.contains(item.id) else { return nil }
+            return LedgerStatusSnapshot(
+                id: item.id,
+                isArchived: item.isArchived,
+                isTrashed: item.isTrashed,
+                resultingIsArchived: item.isArchived,
+                resultingIsTrashed: true
+            )
+        }
         for id in targetIDs { cancelCompletionHold(id) }
         withAnimation(ledgerRemovalAnimation) {
             for index in items.indices where targetIDs.contains(items[index].id) {
                 items[index].isTrashed = true
             }
         }
+        pendingLedgerUndoAction = .clear(snapshots)
         if selectedItemID.map(targetIDs.contains) == true {
             clearSelection()
         }
@@ -1101,6 +1217,20 @@ final class AppViewModel: ObservableObject {
         guard keyboardFocus == .selectedRow else { return false }
 
         switch command {
+        case .activateSelection:
+            return activateSelectedRow()
+        case .editSelection:
+            guard let item = selectedVisibleItem,
+                  !item.text.isEmpty || !item.attachments.isEmpty else { return false }
+            beginEditing(item)
+            return true
+        case .showActions:
+            guard let item = selectedVisibleItem else { return false }
+            NotificationCenter.default.post(
+                name: .notchLedgerRowActionsRequested,
+                object: item.id
+            )
+            return true
         case .moveSelectionUp:
             return moveLedgerSelection(by: -1)
         case .moveSelectionDown:
@@ -1134,8 +1264,88 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    /// Activates the currently selected ledger row. Link-only captures open in
+    /// the user's browser; text-backed rows enter the inline editor. Folders
+    /// remain browse targets so Return is consistent across the whole feed.
+    @discardableResult
+    func activateSelectedRow() -> Bool {
+        guard keyboardFocus == .selectedRow else { return false }
+        if let folder = selectedVisibleFolder {
+            openFolder(folder)
+            focusComposer()
+            return true
+        }
+        guard let item = selectedVisibleItem else { return false }
+        if item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           item.attachments.count == 1,
+           item.tags.isEmpty,
+           let attachment = item.attachments.first,
+           attachment.kind == .link,
+           let url = attachment.previewURL {
+            hooks.onOpenLink(url)
+            return true
+        }
+        guard !item.text.isEmpty || !item.attachments.isEmpty else { return false }
+        beginEditing(item)
+        return true
+    }
+
+    /// Replays the latest archive, trash, or clear action against the current
+    /// rows. The persistence hook runs first; if it reports a failure the
+    /// snapshot stays available and the optimistic state is left to the
+    /// coordinator's reload path.
+    @discardableResult
+    func undoLastLedgerAction() -> Bool {
+        guard let action = pendingLedgerUndoAction else { return false }
+        if let error = hooks.onUndoLedgerAction(action) {
+            errorMessage = error
+            return false
+        }
+        applyUndo(action)
+        pendingLedgerUndoAction = nil
+        errorMessage = nil
+        reconcileSelectionForCurrentView()
+        return true
+    }
+
+    /// Persistence uses this after a failed optimistic operation. It is
+    /// scoped to the affected IDs so an older unrelated Undo remains usable.
+    func discardPendingLedgerUndo(for itemID: UUID? = nil) {
+        guard let pendingLedgerUndoAction else { return }
+        guard let itemID else {
+            self.pendingLedgerUndoAction = nil
+            return
+        }
+        if pendingLedgerUndoAction.itemIDs.contains(itemID) {
+            self.pendingLedgerUndoAction = nil
+        }
+    }
+
+    private func applyUndo(_ action: LedgerUndoAction) {
+        switch action {
+        case let .archive(snapshot):
+            guard let index = items.firstIndex(where: { $0.id == snapshot.id }),
+                  items[index].isArchived == snapshot.resultingIsArchived,
+                  items[index].isTrashed == snapshot.resultingIsTrashed else { return }
+            items[index].isArchived = snapshot.isArchived
+            items[index].isTrashed = snapshot.isTrashed
+        case let .trash(snapshot):
+            guard let index = items.firstIndex(where: { $0.id == snapshot.id }),
+                  items[index].isTrashed == snapshot.resultingIsTrashed else { return }
+            // Trash owns only the trashed bit. An archive or any other edit
+            // made after the trash action must survive Undo.
+            items[index].isTrashed = snapshot.isTrashed
+        case let .clear(snapshots):
+            for snapshot in snapshots {
+                guard let index = items.firstIndex(where: { $0.id == snapshot.id }),
+                      items[index].isTrashed == snapshot.resultingIsTrashed else { continue }
+                items[index].isTrashed = snapshot.isTrashed
+            }
+        }
+    }
+
     private var selectedVisibleFolder: FolderSummary? {
-        guard let selectedFolderID else { return nil }
+        guard isFolderSectionExpanded, let selectedFolderID else { return nil }
         return visibleFolders.first { $0.id == selectedFolderID }
     }
 
@@ -1170,7 +1380,14 @@ final class AppViewModel: ObservableObject {
     }
 
     func undoConfirmation() {
-        hooks.onUndoCapture(confirmation?.itemID)
+        if let error = hooks.onUndoCapture(confirmation?.itemID) {
+            errorMessage = error
+            // Keep the failed recovery action available for retry instead of
+            // letting the confirmation timer dismiss it underneath the error.
+            setConfirmationPaused(true)
+            return
+        }
+        errorMessage = nil
         confirmation = nil
         dismiss()
     }
@@ -1402,11 +1619,28 @@ final class AppViewModel: ObservableObject {
     }
 
     func archive(_ item: LedgerItem) {
+        guard let current = items.first(where: { $0.id == item.id }) else { return }
+        let snapshot = LedgerStatusSnapshot(
+            id: current.id,
+            isArchived: current.isArchived,
+            isTrashed: current.isTrashed,
+            resultingIsArchived: true,
+            resultingIsTrashed: false
+        )
+        guard current.isArchived != snapshot.resultingIsArchived
+                || current.isTrashed != snapshot.resultingIsTrashed else { return }
         withAnimation(ledgerRemovalAnimation) {
             cancelCompletionHold(item.id)
-            mutateItem(item.id) { $0.isArchived = true }
+            mutateItem(item.id) {
+                $0.isArchived = true
+                $0.isTrashed = false
+            }
         }
         clearSelection()
+        pendingLedgerUndoAction = .archive(snapshot)
+        // Publish the pending operation before the persistence hook. A failed
+        // coordinator save can reload and discard this snapshot in its catch
+        // path; assigning it afterwards would falsely advertise Undo.
         hooks.onArchive(item.id)
     }
 
@@ -1535,19 +1769,36 @@ final class AppViewModel: ObservableObject {
     }
 
     func trash(_ item: LedgerItem) {
+        guard let current = items.first(where: { $0.id == item.id }), !current.isTrashed else { return }
+        let snapshot = LedgerStatusSnapshot(
+            id: current.id,
+            isArchived: current.isArchived,
+            isTrashed: current.isTrashed,
+            resultingIsArchived: current.isArchived,
+            resultingIsTrashed: true
+        )
         withAnimation(ledgerRemovalAnimation) {
             cancelCompletionHold(item.id)
             mutateItem(item.id) { $0.isTrashed = true }
         }
         clearSelection()
+        pendingLedgerUndoAction = .trash(snapshot)
+        // See archive(_:): failure recovery needs to be able to consume the
+        // snapshot while the persistence callback is still on the stack.
         hooks.onTrash(item.id)
     }
 
     func restore(_ item: LedgerItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
         withAnimation(ledgerRemovalAnimation) {
-            mutateItem(item.id) { $0.isTrashed = false }
+            mutateItem(item.id) {
+                $0.isArchived = false
+                $0.isTrashed = false
+            }
         }
+        discardPendingLedgerUndo(for: item.id)
         hooks.onRestore(item.id)
+        reconcileSelectionForCurrentView()
     }
 
     func deletePermanently(_ item: LedgerItem) {
@@ -1555,6 +1806,7 @@ final class AppViewModel: ObservableObject {
             cancelCompletionHold(item.id)
             items.removeAll { $0.id == item.id }
         }
+        discardPendingLedgerUndo(for: item.id)
         clearSelection()
         hooks.onDeletePermanently(item.id)
     }
@@ -1652,11 +1904,24 @@ final class AppViewModel: ObservableObject {
         composerText.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// Removes the one-character query escape before feeding text into the
+    /// normal tag/search parser. The stored capture therefore contains `/foo`,
+    /// while a command such as `/folder` remains untouched and is handled by
+    /// `submitComposer` above.
+    private var composerSearchText: String {
+        guard isEscapedSlashQuery else { return normalizedComposerText }
+        return String(normalizedComposerText.dropFirst())
+    }
+
+    private var composerCaptureText: String {
+        composerSearchText
+    }
+
     private var parsedComposerQuery: ParsedTagText {
-        guard !isFolderCommandActive, !isClearCommandActive else {
+        guard !isFolderCommandActive, !isClearCommandActive, !isComposerCommandMode else {
             return CaptureTagParser.parse("")
         }
-        let source = normalizedComposerText
+        let source = composerSearchText
         if let cachedParsedQuery, cachedParsedQuery.source == source {
             return cachedParsedQuery.parsed
         }
@@ -1688,8 +1953,14 @@ final class AppViewModel: ObservableObject {
     private func matchesBrowseLocation(_ item: LedgerItem) -> Bool {
         switch browseLocation {
         case .root:
-            return composerHasQuery || item.folderID == nil
+            // Every non-Inbox filter is global, so a task or recovery item in
+            // a folder must still appear when that route is selected. Plain
+            // Inbox browsing keeps folders collapsed until the user searches.
+            if filter != .all { return true }
+            if composerHasQuery && composerSearchesAllFolders { return true }
+            return item.folderID == nil
         case let .folder(id):
+            if composerHasQuery && composerSearchesAllFolders { return true }
             return item.folderID == id
         }
     }
@@ -1717,7 +1988,7 @@ final class AppViewModel: ObservableObject {
             item.dueDate != nil && !item.isArchived && !item.isTrashed
                 && (!item.isCompleted || heldOpen)
         case .completed:
-            item.isCompleted && !item.isTrashed
+            item.kind == .task && item.isCompleted && !item.isTrashed
         case .archive:
             item.isArchived && !item.isTrashed
         case .trash:
@@ -1798,6 +2069,31 @@ final class AppViewModel: ObservableObject {
         selectedItemID = nil
         selectedFolderID = nil
         keyboardFocus = .none
+    }
+
+    /// Filter and persistence updates can remove the selected row between two
+    /// render passes. Keep the keyboard state attached to a row that still
+    /// exists, or return focus to the composer when the route has no target.
+    private func reconcileSelectionForCurrentView() {
+        guard selectedItemID != nil || selectedFolderID != nil else { return }
+        if let selectedFolderID {
+            guard isFolderSectionExpanded,
+                  visibleFolders.contains(where: { $0.id == selectedFolderID }) else {
+                self.selectedFolderID = nil
+                if keyboardFocus == .selectedRow { keyboardFocus = .composer }
+                return
+            }
+            selectedItemID = nil
+            return
+        }
+        if let selectedItemID {
+            guard visibleItems.contains(where: { $0.id == selectedItemID }) else {
+                self.selectedItemID = nil
+                if keyboardFocus == .selectedRow { keyboardFocus = .composer }
+                return
+            }
+            selectedFolderID = nil
+        }
     }
 
     private func clearComposerQuery() {

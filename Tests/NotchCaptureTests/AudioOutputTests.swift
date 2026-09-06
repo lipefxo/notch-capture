@@ -136,7 +136,7 @@ final class AudioOutputServiceTests: XCTestCase {
         XCTAssertTrue(hardware.systemWrites.isEmpty)
     }
 
-    func testHardwareFailureRefreshesActualSplitState() {
+    func testSystemWriteFailureRollsBackBothOriginalDefaults() {
         let hardware = FakeCoreAudioHardware()
         hardware.deviceList = [
             device(2, "EDIFIER M60"),
@@ -144,13 +144,182 @@ final class AudioOutputServiceTests: XCTestCase {
         ]
         hardware.mediaID = 2
         hardware.systemID = 2
-        hardware.systemWriteError = FakeCoreAudioError.writeFailed
+        hardware.systemWriteErrors = [FakeCoreAudioError.writeFailed, nil]
         let service = AudioOutputService(hardware: hardware)
 
-        XCTAssertThrowsError(try service.select(.headphones))
+        XCTAssertThrowsError(try service.select(.headphones)) { error in
+            guard case let .switchFailed(.headphones, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Your previous outputs were restored"))
+            XCTAssertTrue(reason.contains("Try again"))
+        }
+        XCTAssertEqual(hardware.outputWrites, [4, 2])
+        XCTAssertEqual(hardware.systemWrites, [4])
+        XCTAssertEqual(hardware.mediaID, 2)
+        XCTAssertEqual(hardware.systemID, 2)
+        XCTAssertTrue(service.state.isSelected(.edifier))
+    }
+
+    func testRollbackPreservesInitiallySplitDefaults() {
+        let hardware = FakeCoreAudioHardware()
+        hardware.deviceList = [
+            device(1, "Felipe’s AirPods Pro"),
+            device(2, "EDIFIER M60"),
+            device(4, "fifine Ampli1"),
+        ]
+        hardware.mediaID = 2
+        hardware.systemID = 4
+        hardware.systemWriteErrors = [FakeCoreAudioError.writeFailed]
+        let service = AudioOutputService(hardware: hardware)
+        service.refresh()
+
+        XCTAssertThrowsError(try service.select(.airPods)) { error in
+            guard case let .switchFailed(.airPods, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Your previous outputs were restored"))
+        }
+        XCTAssertEqual(hardware.outputWrites, [1, 2])
+        XCTAssertEqual(hardware.systemWrites, [1])
+        XCTAssertEqual(hardware.mediaID, 2)
+        XCTAssertEqual(hardware.systemID, 4)
+        XCTAssertEqual(service.state.mediaTarget, .edifier)
+        XCTAssertEqual(service.state.systemTarget, .headphones)
+    }
+
+    func testRollbackRepairsSystemSetterThatMutatesBeforeThrowing() {
+        let hardware = FakeCoreAudioHardware()
+        hardware.deviceList = [
+            device(2, "EDIFIER M60"),
+            device(4, "fifine Ampli1"),
+        ]
+        hardware.mediaID = 2
+        hardware.systemID = 2
+        hardware.systemWriteErrors = [FakeCoreAudioError.writeFailed, nil]
+        hardware.systemWriteMutatesBeforeThrow = true
+        let service = AudioOutputService(hardware: hardware)
+
+        XCTAssertThrowsError(try service.select(.headphones)) { error in
+            guard case let .switchFailed(.headphones, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Your previous outputs were restored"))
+        }
+        XCTAssertEqual(hardware.outputWrites, [4, 2])
+        XCTAssertEqual(hardware.systemWrites, [4, 2])
+        XCTAssertEqual(hardware.mediaID, 2)
+        XCTAssertEqual(hardware.systemID, 2)
+    }
+
+    func testFirstDefaultWriteFailureNeverAttemptsSystemWrite() {
+        let hardware = FakeCoreAudioHardware()
+        hardware.deviceList = [
+            device(2, "EDIFIER M60"),
+            device(4, "fifine Ampli1"),
+        ]
+        hardware.mediaID = 2
+        hardware.systemID = 2
+        hardware.outputWriteErrors = [FakeCoreAudioError.writeFailed]
+        let service = AudioOutputService(hardware: hardware)
+        service.refresh()
+
+        XCTAssertThrowsError(try service.select(.headphones)) { error in
+            guard case let .switchFailed(.headphones, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Media output couldn’t switch"))
+            XCTAssertTrue(reason.contains("System output was left unchanged"))
+            XCTAssertTrue(reason.contains("Try again"))
+        }
+        XCTAssertEqual(hardware.outputWrites, [4])
+        XCTAssertTrue(hardware.systemWrites.isEmpty)
+        XCTAssertEqual(hardware.mediaID, 2)
+        XCTAssertEqual(hardware.systemID, 2)
+        XCTAssertTrue(service.state.isSelected(.edifier))
+    }
+
+    func testRollbackFailureReportsUnresolvedSplitStateAndControlCenter() {
+        let hardware = FakeCoreAudioHardware()
+        hardware.deviceList = [
+            device(2, "EDIFIER M60"),
+            device(4, "fifine Ampli1"),
+        ]
+        hardware.mediaID = 2
+        hardware.systemID = 2
+        hardware.outputWriteErrors = [nil, FakeCoreAudioError.writeFailed]
+        hardware.systemWriteErrors = [FakeCoreAudioError.writeFailed, nil]
+        hardware.systemWriteMutatesBeforeThrow = true
+        let service = AudioOutputService(hardware: hardware)
+        service.refresh()
+
+        XCTAssertThrowsError(try service.select(.headphones)) { error in
+            guard case let .switchFailed(.headphones, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Some audio may use a different output"))
+            XCTAssertTrue(reason.contains("Control Center"))
+            XCTAssertTrue(reason.contains("try again"))
+        }
+        XCTAssertEqual(hardware.outputWrites, [4, 2])
+        XCTAssertEqual(hardware.systemWrites, [4, 2])
+        XCTAssertEqual(hardware.mediaID, 4)
+        XCTAssertEqual(hardware.systemID, 2)
         XCTAssertEqual(service.state.mediaTarget, .headphones)
         XCTAssertEqual(service.state.systemTarget, .edifier)
         XCTAssertFalse(service.state.isSelected(.headphones))
+    }
+
+    func testRollbackRestoresKnownDefaultWhenOtherBaselineIsNil() {
+        let hardware = FakeCoreAudioHardware()
+        hardware.deviceList = [
+            device(2, "EDIFIER M60"),
+            device(4, "fifine Ampli1"),
+        ]
+        hardware.mediaID = 2
+        hardware.systemID = nil
+        hardware.systemWriteErrors = [FakeCoreAudioError.writeFailed]
+        hardware.systemWriteMutatesBeforeThrow = true
+        let service = AudioOutputService(hardware: hardware)
+        service.refresh()
+
+        XCTAssertThrowsError(try service.select(.headphones)) { error in
+            guard case let .switchFailed(.headphones, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Some audio may use a different output"))
+        }
+        XCTAssertEqual(hardware.outputWrites, [4, 2])
+        XCTAssertEqual(hardware.systemWrites, [4])
+        XCTAssertEqual(hardware.mediaID, 2)
+        XCTAssertEqual(hardware.systemID, 4)
+        XCTAssertEqual(service.state.mediaTarget, .edifier)
+        XCTAssertEqual(service.state.systemTarget, .headphones)
+    }
+
+    func testUnreadableDefaultBaselineNeverMutatesHardware() {
+        let hardware = FakeCoreAudioHardware()
+        hardware.deviceList = [
+            device(2, "EDIFIER M60"),
+            device(4, "fifine Ampli1"),
+        ]
+        hardware.mediaID = 2
+        hardware.systemID = 2
+        let service = AudioOutputService(hardware: hardware)
+        service.refresh()
+        hardware.systemReadError = FakeCoreAudioError.writeFailed
+
+        XCTAssertThrowsError(try service.select(.headphones)) { error in
+            guard case let .switchFailed(.headphones, reason) = error as? AudioOutputServiceError else {
+                return XCTFail("Unexpected error: \(error)")
+            }
+            XCTAssertTrue(reason.contains("Couldn’t read"))
+            XCTAssertTrue(reason.contains("No changes were made"))
+        }
+        XCTAssertTrue(hardware.outputWrites.isEmpty)
+        XCTAssertTrue(hardware.systemWrites.isEmpty)
+        XCTAssertEqual(hardware.mediaID, 2)
+        XCTAssertEqual(hardware.systemID, 2)
     }
 
     func testObservationLifecycleAndExternalChangesRefreshState() {
@@ -374,7 +543,14 @@ private final class FakeCoreAudioHardware: CoreAudioHardwareAccessing {
     var systemID: UInt32?
     var outputWrites: [UInt32] = []
     var systemWrites: [UInt32] = []
+    var outputWriteErrors: [Error?] = []
+    var systemWriteErrors: [Error?] = []
+    var outputWriteError: Error?
     var systemWriteError: Error?
+    var outputWriteMutatesBeforeThrow = false
+    var systemWriteMutatesBeforeThrow = false
+    var outputReadError: Error?
+    var systemReadError: Error?
     var volumeWriteError: Error?
     var muteWriteError: Error?
     var volumeStates: [UInt32: AudioVolumeViewState] = [:]
@@ -385,17 +561,42 @@ private final class FakeCoreAudioHardware: CoreAudioHardwareAccessing {
     var stopCount = 0
 
     func devices() throws -> [AudioOutputDevice] { deviceList }
-    func defaultOutputDeviceID() throws -> UInt32? { mediaID }
-    func defaultSystemOutputDeviceID() throws -> UInt32? { systemID }
+    func defaultOutputDeviceID() throws -> UInt32? {
+        if let outputReadError { throw outputReadError }
+        return mediaID
+    }
+    func defaultSystemOutputDeviceID() throws -> UInt32? {
+        if let systemReadError { throw systemReadError }
+        return systemID
+    }
 
     func setDefaultOutputDeviceID(_ id: UInt32) throws {
         outputWrites.append(id)
+        if !outputWriteErrors.isEmpty {
+            let error = outputWriteErrors.removeFirst()
+            if let error {
+                if outputWriteMutatesBeforeThrow { mediaID = id }
+                throw error
+            }
+        } else if let outputWriteError {
+            if outputWriteMutatesBeforeThrow { mediaID = id }
+            throw outputWriteError
+        }
         mediaID = id
     }
 
     func setDefaultSystemOutputDeviceID(_ id: UInt32) throws {
         systemWrites.append(id)
-        if let systemWriteError { throw systemWriteError }
+        if !systemWriteErrors.isEmpty {
+            let error = systemWriteErrors.removeFirst()
+            if let error {
+                if systemWriteMutatesBeforeThrow { systemID = id }
+                throw error
+            }
+        } else if let systemWriteError {
+            if systemWriteMutatesBeforeThrow { systemID = id }
+            throw systemWriteError
+        }
         systemID = id
     }
 
