@@ -140,6 +140,7 @@ struct CollapsedActivityPillView: View {
                     trackKey: snapshot.trackKey,
                     title: snapshot.title,
                     isPlaying: snapshot.isPlaying,
+                    waveform: viewModel.nowPlayingWaveform,
                     size: 22,
                     cornerRadius: 5,
                     action: viewModel.musicPlayPause
@@ -186,6 +187,7 @@ struct CollapsedActivityPillView: View {
                     trackKey: snapshot.trackKey,
                     title: snapshot.title,
                     isPlaying: snapshot.isPlaying,
+                    waveform: viewModel.nowPlayingWaveform,
                     size: artworkSize,
                     cornerRadius: 5,
                     action: viewModel.musicPlayPause
@@ -233,6 +235,7 @@ struct CollapsedActivityPillView: View {
                     trackKey: snapshot.trackKey,
                     title: snapshot.title,
                     isPlaying: snapshot.isPlaying,
+                    waveform: viewModel.nowPlayingWaveform,
                     size: 38,
                     cornerRadius: 8,
                     action: viewModel.musicPlayPause

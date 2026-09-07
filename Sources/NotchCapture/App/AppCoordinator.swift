@@ -27,6 +27,7 @@ final class AppCoordinator {
     private let updaterService: UpdaterService
     let displayLocator: DisplayLocator
     let nowPlayingService: NowPlayingService
+    let systemAudioLevelMeter: SystemAudioLevelMeter
     let audioOutputService: any AudioOutputControlling
     let studioLightService: any StudioLightControlling
     let modelUsageService: any ModelUsageControlling
@@ -117,6 +118,7 @@ final class AppCoordinator {
         self.updaterService = UpdaterService(previewMode: previewMode)
         self.displayLocator = DisplayLocator()
         self.nowPlayingService = NowPlayingService()
+        self.systemAudioLevelMeter = SystemAudioLevelMeter()
         self.audioOutputService = injectedAudioOutputService ?? AudioOutputService()
         self.studioLightService = injectedStudioLightService
             ?? StudioLightService(
@@ -603,6 +605,7 @@ final class AppCoordinator {
         hotKeyManager?.unregisterAll()
         hotKeyManager = nil
         nowPlayingService.stop()
+        systemAudioLevelMeter.stop()
         audioOutputService.stop()
         studioLightService.stop()
         modelUsageService.stop()

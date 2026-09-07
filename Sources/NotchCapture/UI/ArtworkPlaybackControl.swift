@@ -6,6 +6,7 @@ struct ArtworkPlaybackControl: View {
     let trackKey: String
     let title: String
     let isPlaying: Bool
+    let waveform: MusicWaveformLevels
     let size: CGFloat
     let cornerRadius: CGFloat
     let action: () -> Void
@@ -19,44 +20,16 @@ struct ArtworkPlaybackControl: View {
 
     var body: some View {
         Button(action: action) {
-            ZStack {
-                Group {
-                    if showsTransportGlyph {
-                        ArtworkPlaybackCanvas(
-                            artwork: artwork,
-                            overlayColor: overlayColor,
-                            availableSize: size,
-                            overlay: .transport(isPlaying: isPlaying)
-                        )
-                        .transition(.opacity)
-                    } else if isPlaying {
-                        TimelineView(
-                            .animation(
-                                minimumInterval: 1 / 20,
-                                paused: reduceMotion
-                            )
-                        ) { timeline in
-                            ArtworkPlaybackCanvas(
-                                artwork: artwork,
-                                overlayColor: overlayColor,
-                                availableSize: size,
-                                overlay: .waveform(time: timeline.date.timeIntervalSinceReferenceDate)
-                            )
-                        }
-                        .transition(.opacity)
-                    } else {
-                        ArtworkPlaybackCanvas(
-                            artwork: artwork,
-                            overlayColor: overlayColor,
-                            availableSize: size,
-                            overlay: .clean
-                        )
-                        .transition(.opacity)
-                    }
-                }
+            ArtworkPlaybackCanvas(
+                artwork: artwork,
+                overlayColor: overlayColor,
+                availableSize: size,
+                waveform: reduceMotion ? .silent : waveform,
+                isPlaying: isPlaying,
+                showsTransportGlyph: showsTransportGlyph
+            )
                 .id(artworkIdentity)
                 .transition(reduceMotion ? .opacity : .musicArtworkSwap)
-            }
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -115,24 +88,29 @@ private struct ArtworkPlaybackButtonStyle: ButtonStyle {
     }
 }
 
-private enum ArtworkCanvasOverlay {
-    case clean
-    case waveform(time: TimeInterval)
-    case transport(isPlaying: Bool)
-}
-
 private struct ArtworkPlaybackCanvas: View {
     let artwork: NSImage?
     let overlayColor: NSColor
     let availableSize: CGFloat
-    let overlay: ArtworkCanvasOverlay
+    let waveform: MusicWaveformLevels
+    let isPlaying: Bool
+    let showsTransportGlyph: Bool
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         ZStack {
             artworkLayer
-            overlayLayer
+            waveformLayer
+                .opacity(isPlaying && !showsTransportGlyph ? 1 : 0)
+                .scaleEffect(isPlaying && !showsTransportGlyph ? 1 : 0.82)
+            transportLayer
+                .opacity(showsTransportGlyph ? 1 : 0)
+                .scaleEffect(showsTransportGlyph ? 1 : 0.72)
         }
         .frame(width: availableSize, height: availableSize)
+        .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.hover, value: showsTransportGlyph)
+        .animation(reduceMotion ? NotchMotion.reducedMotion : NotchMotion.musicPlaybackState, value: isPlaying)
         .accessibilityHidden(true)
     }
 
@@ -153,48 +131,71 @@ private struct ArtworkPlaybackCanvas: View {
         }
     }
 
-    @ViewBuilder
-    private var overlayLayer: some View {
-        switch overlay {
-        case .clean:
-            EmptyView()
-        case let .waveform(time):
-            Canvas { context, size in
-                let barWidth = max(1.5, size.width * 0.07)
-                let barSpacing = max(0.9, size.width * 0.045)
-                let totalWidth = (barWidth * 4) + (barSpacing * 3)
-                let startX = (size.width - totalWidth) / 2
-                context.fill(
-                    Path { path in
-                        for index in 0..<4 {
-                            let height = barHeight(index: index, size: size.width, time: time)
-                            path.addRoundedRect(
-                                in: CGRect(
-                                    x: startX + (CGFloat(index) * (barWidth + barSpacing)),
-                                    y: (size.height - height) / 2,
-                                    width: barWidth,
-                                    height: height
-                                ),
-                                cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2)
-                            )
-                        }
-                    },
-                    with: .color(Color(nsColor: overlayColor))
-                )
-            }
-        case let .transport(isPlaying):
-            Image(systemName: isPlaying ? "pause.fill" : "play.fill")
-                .font(.system(size: max(8, availableSize * 0.36), weight: .bold))
-                .foregroundStyle(Color(nsColor: overlayColor))
-                .offset(x: isPlaying ? 0 : availableSize * 0.025)
+    private var waveformLayer: some View {
+        ArtworkWaveformShape(levels: waveform)
+            .fill(Color(nsColor: overlayColor))
+            .animation(reduceMotion ? nil : NotchMotion.musicWaveform, value: waveform)
+    }
+
+    private var transportLayer: some View {
+        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            .font(.system(size: max(8, availableSize * 0.36), weight: .bold))
+            .foregroundStyle(Color(nsColor: overlayColor))
+            .offset(x: isPlaying ? 0 : availableSize * 0.025)
+            .contentTransition(.symbolEffect(.replace))
+    }
+
+}
+
+private struct ArtworkWaveformShape: Shape {
+    var levels: MusicWaveformLevels
+
+    var animatableData: AnimatablePair<
+        AnimatablePair<Double, Double>,
+        AnimatablePair<Double, Double>
+    > {
+        get {
+            AnimatablePair(
+                AnimatablePair(level(at: 0), level(at: 1)),
+                AnimatablePair(level(at: 2), level(at: 3))
+            )
+        }
+        set {
+            levels = MusicWaveformLevels(values: [
+                newValue.first.first,
+                newValue.first.second,
+                newValue.second.first,
+                newValue.second.second,
+            ])
         }
     }
 
-    private func barHeight(index: Int, size: CGFloat, time: TimeInterval) -> CGFloat {
-        let maximum = size * 0.44
-        let minimum = max(2.5, size * 0.14)
-        let wave = CGFloat((sin((time * 5.2) + Double(index) * 1.7) + 1) / 2)
-        return minimum + ((maximum - minimum) * wave)
+    func path(in rect: CGRect) -> Path {
+        let barWidth = max(1.5, rect.width * 0.07)
+        let barSpacing = max(0.9, rect.width * 0.045)
+        let totalWidth = (barWidth * 4) + (barSpacing * 3)
+        let startX = rect.minX + ((rect.width - totalWidth) / 2)
+        let maximum = rect.width * 0.44
+        let minimum = max(2.5, rect.width * 0.14)
+
+        return Path { path in
+            for index in 0..<4 {
+                let height = minimum + ((maximum - minimum) * CGFloat(level(at: index)))
+                path.addRoundedRect(
+                    in: CGRect(
+                        x: startX + (CGFloat(index) * (barWidth + barSpacing)),
+                        y: rect.midY - (height / 2),
+                        width: barWidth,
+                        height: height
+                    ),
+                    cornerSize: CGSize(width: barWidth / 2, height: barWidth / 2)
+                )
+            }
+        }
+    }
+
+    private func level(at index: Int) -> Double {
+        levels.values.indices.contains(index) ? levels.values[index] : 0
     }
 }
 

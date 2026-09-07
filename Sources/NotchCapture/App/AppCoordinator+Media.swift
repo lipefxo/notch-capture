@@ -21,11 +21,19 @@ extension AppCoordinator {
     func configureMedia() {
         guard !previewMode else { return }
 
+        systemAudioLevelMeter.onLevelsChange = { [weak self] levels in
+            self?.viewModel.nowPlayingWaveform = levels
+        }
+
         nowPlayingService.onPresentationChange = { [weak self] presentation in
             guard let self else { return }
             let previousTrackKey = self.viewModel.nowPlaying?.trackKey
             self.viewModel.nowPlayingPresentation = presentation
             self.viewModel.nowPlaying = presentation?.snapshot
+            let audibleSource = presentation?.snapshot.isPlaying == true
+                ? presentation?.source
+                : nil
+            self.systemAudioLevelMeter.monitor(audibleSource)
             if presentation?.snapshot.trackKey != previousTrackKey {
                 self.viewModel.nowPlayingArtwork = nil
             }

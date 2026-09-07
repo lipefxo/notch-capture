@@ -114,3 +114,18 @@ enum MusicTimeFormatter {
         return string(from: duration)
     }
 }
+
+struct MusicWaveformLevels: Equatable, Sendable {
+    static let silent = Self(values: [0, 0, 0, 0])
+
+    let values: [Double]
+
+    init(values: [Double]) {
+        let normalized = Array(values.suffix(4)).map { min(1, max(0, $0)) }
+        self.values = Array(repeating: 0, count: 4 - normalized.count) + normalized
+    }
+
+    func appending(_ level: Double) -> Self {
+        Self(values: Array(values.dropFirst()) + [level])
+    }
+}

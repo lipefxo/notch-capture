@@ -237,6 +237,7 @@ private struct MusicPlayerBand: View {
                 trackKey: snapshot.trackKey,
                 title: snapshot.title,
                 isPlaying: snapshot.isPlaying,
+                waveform: viewModel.nowPlayingWaveform,
                 size: 40,
                 cornerRadius: 8,
                 action: viewModel.musicPlayPause
