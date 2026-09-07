@@ -21,6 +21,7 @@ APP_DIR="$ROOT/.build/Notch Capture.app"
 CONTENTS="$APP_DIR/Contents"
 MACOS="$CONTENTS/MacOS"
 FRAMEWORKS="$CONTENTS/Frameworks"
+RESOURCES="$CONTENTS/Resources"
 IDENTITY="${CODESIGN_IDENTITY:--}"
 BUILD_NUMBER="${BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}"
 
@@ -33,10 +34,15 @@ swift build --package-path "$ROOT" -c "$CONFIGURATION"
 
 BIN_DIR="$(swift build --package-path "$ROOT" -c "$CONFIGURATION" --show-bin-path)"
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS" "$FRAMEWORKS"
+mkdir -p "$MACOS" "$FRAMEWORKS" "$RESOURCES"
 cp "$ROOT/Support/Info.plist" "$CONTENTS/Info.plist"
 cp "$BIN_DIR/NotchCapture" "$MACOS/NotchCapture"
 chmod +x "$MACOS/NotchCapture"
+
+RESOURCE_BUNDLE="$BIN_DIR/NotchCapture_NotchCapture.bundle"
+if [[ -d "$RESOURCE_BUNDLE" ]]; then
+  ditto "$RESOURCE_BUNDLE" "$RESOURCES/NotchCapture_NotchCapture.bundle"
+fi
 
 SPARKLE_FRAMEWORK="$(find "$ROOT/.build" -type d -name 'Sparkle.framework' -path '*macos*' | head -1)"
 if [[ -z "$SPARKLE_FRAMEWORK" ]]; then

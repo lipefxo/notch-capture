@@ -33,11 +33,13 @@ struct CollapsedActivityPillView: View {
     }
 
     /// Minimal full-screen presentation hugs the physical notch while keeping
-    /// the active music controls and volume entry inside the compact shell.
+    /// the active music controls and usage status inside the compact shell.
     private var minimalNotchedLayout: some View {
         HStack(spacing: 4) {
             notchedMusicWing
-            compactVolumeButton
+            if viewModel.modelUsageState.showsUtilityMeters {
+                collapsedUsageLogos(size: 16, spacing: 7)
+            }
         }
             .frame(
                 width: compactMetrics.contentSize.width,
@@ -90,21 +92,15 @@ struct CollapsedActivityPillView: View {
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 52)
-                compactVolumeButton
+                if viewModel.modelUsageState.showsUtilityMeters {
+                    collapsedUsageLogos(size: 16, spacing: 7)
+                }
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: 34)
         case nil:
             EmptyView()
         }
-    }
-
-    private var compactVolumeButton: some View {
-        CompactVolumeButton(
-            viewModel: viewModel,
-            glyphSize: 10.5,
-            width: CompactSurfaceMetrics.audioControlSlot - 6
-        )
     }
 
     @ViewBuilder
@@ -114,7 +110,9 @@ struct CollapsedActivityPillView: View {
             HStack(spacing: 8) {
                 extendedMusicInfoView(snapshot)
                     .frame(maxWidth: .infinity)
-                CompactVolumeButton(viewModel: viewModel)
+                if viewModel.modelUsageState.showsUtilityMeters {
+                    collapsedUsageLogos(size: 18, spacing: 9)
+                }
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
@@ -148,8 +146,20 @@ struct CollapsedActivityPillView: View {
     }
 
     private var notchedTrailingWing: some View {
-        CompactVolumeButton(viewModel: viewModel)
-            .frame(height: compactMetrics.contentSize.height)
+        Group {
+            if viewModel.modelUsageState.showsUtilityMeters {
+                collapsedUsageLogos(size: 16, spacing: 7)
+            }
+        }
+        .frame(height: compactMetrics.contentSize.height)
+    }
+
+    private func collapsedUsageLogos(size: CGFloat, spacing: CGFloat) -> some View {
+        ModelUsageLogoStrip(
+            state: viewModel.modelUsageState,
+            logoSize: size,
+            spacing: spacing
+        )
     }
 
     private func musicInfoView(

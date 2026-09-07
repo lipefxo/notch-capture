@@ -29,6 +29,7 @@ final class AppCoordinator {
     let nowPlayingService: NowPlayingService
     let audioOutputService: any AudioOutputControlling
     let studioLightService: any StudioLightControlling
+    let modelUsageService: any ModelUsageControlling
     let cameraService: CameraService
     let cameraControlService: CameraControlService
     let cameraAimStore: CameraAimStore
@@ -55,7 +56,8 @@ final class AppCoordinator {
     init(
         defaults: UserDefaults = .standard,
         audioOutputService injectedAudioOutputService: (any AudioOutputControlling)? = nil,
-        studioLightService injectedStudioLightService: (any StudioLightControlling)? = nil
+        studioLightService injectedStudioLightService: (any StudioLightControlling)? = nil,
+        modelUsageService injectedModelUsageService: (any ModelUsageControlling)? = nil
     ) throws {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
@@ -125,6 +127,7 @@ final class AppCoordinator {
                     NSApp.activate(ignoringOtherApps: true)
                 }
             )
+        self.modelUsageService = injectedModelUsageService ?? ModelUsageService()
         self.cameraService = CameraService(onAccessPrompt: {
             // An agent app with a non-key panel can otherwise leave the camera
             // TCC prompt stranded behind the user's frontmost window.
@@ -205,7 +208,8 @@ final class AppCoordinator {
                 timeFormat: timeFormat,
                 compactPresentationSize: compactPresentationSize,
                 audioOutputState: audioOutputService.state,
-                studioLightState: studioLightService.state
+                studioLightState: studioLightService.state,
+                modelUsageState: modelUsageService.state
             )
         }
         if let storeRecoveryBackupURL {
@@ -235,6 +239,7 @@ final class AppCoordinator {
         configureMedia()
         configureAudioOutput()
         configureStudioLight()
+        configureModelUsage()
         configureCamera()
         configureStateSynchronization()
     }
@@ -538,6 +543,7 @@ final class AppCoordinator {
             nowPlayingService.setActivityLevel(.compact)
             audioOutputService.start()
             studioLightService.start()
+            modelUsageService.start()
             do {
                 let manager = try GlobalHotKeyManager { [weak self] action in
                     self?.handleHotKey(action)
@@ -599,6 +605,7 @@ final class AppCoordinator {
         nowPlayingService.stop()
         audioOutputService.stop()
         studioLightService.stop()
+        modelUsageService.stop()
         cameraService.stop()
         cameraControlService.detach()
         cameraPresentationTask?.cancel()
@@ -804,6 +811,9 @@ final class AppCoordinator {
         }
         hooks.onRefreshStudioLight = { [weak self] in
             self?.studioLightService.refresh()
+        }
+        hooks.onRefreshModelUsage = { [weak self] in
+            self?.modelUsageService.refresh()
         }
         hooks.onSetStudioLightPower = { [weak self] isOn in
             self?.studioLightService.setPower(isOn)

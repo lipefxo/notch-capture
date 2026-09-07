@@ -1,6 +1,6 @@
 # Notch Capture
 
-Notch Capture is a private, local-first macOS capture inbox that lives in the notch. It is a Swift 6 agent app with no Dock icon, menu-bar item, ordinary app window, or analytics. The app makes no network requests except three narrow ones: fetching Spotify album artwork for the now-playing display, directly retrieving a page title and favicon when a new web link is captured, and checking the project's own [appcast](https://lipefxo.github.io/notch-capture/appcast.xml) for updates via the bundled Sparkle framework.
+Notch Capture is a private, local-first macOS capture inbox that lives in the notch. It is a Swift 6 agent app with no Dock icon, menu-bar item, ordinary app window, or analytics. The app makes no network requests except four narrow ones: fetching Spotify album artwork for the now-playing display, directly retrieving a page title and favicon when a new web link is captured, checking the project's own [appcast](https://lipefxo.github.io/notch-capture/appcast.xml) for updates via the bundled Sparkle framework, and reading remaining ChatGPT/Codex and Cursor usage from those products when they are already signed in on this Mac.
 
 ## Default shortcut
 
@@ -66,6 +66,15 @@ Pairing reads the fixture's assigned control address instead of assuming a fixed
 
 The integration is implemented directly with Apple's CoreBluetooth framework. It does not install a background agent or require a third-party Bluetooth runtime. Only the light's macOS Bluetooth identifier and display name are stored locally in `UserDefaults`; Forget removes both. No Bluetooth mesh keys, scenes, or Zhiyun account data are stored.
 
+## Model usage
+
+The Utilities shelf and collapsed media activity show OpenAI and Cursor marks with a liquid fill that tracks the remaining allowance. The fill settles with a short depth animation after updates, leaves a quiet inactive silhouette at 0%, and shows the exact percentage on hover. Settings keeps the detailed usage and reset information. Usage appears when those products are already signed in on this Mac.
+
+- **OpenAI** — reads the local Codex login (`~/.codex/auth.json`, or the Codex keychain item) and asks ChatGPT for the current 5-hour and weekly windows.
+- **Cursor** — reads the Cursor app or CLI login and asks Cursor for plan usage, including how much is left in the current billing cycle.
+
+Notch Capture never stores those tokens. It only makes the usage request when a local login is present, and a Refresh control in Settings can fetch again. The endpoints are the same ones those products use for their own usage displays; they are unofficial and may change.
+
 ## Build and run
 
 Requirements: Apple Silicon Mac, macOS 14 or newer, and Xcode with the macOS 14 SDK. MOLUS G60 control additionally requires Bluetooth access.
@@ -125,7 +134,7 @@ Notch Capture keeps a content-free notch silhouette available while idle. It mat
 
 ## Settings
 
-The Settings surface (opened from the expanded inbox) covers launch at login, the external-display notch behavior, media activity size, 12/24-hour timestamps, MOLUS G60 Bluetooth pairing, the composer shortcut, library import/export, update checks, and quitting the app.
+The Settings surface (opened from the expanded inbox) covers launch at login, the external-display notch behavior, media activity size, 12/24-hour timestamps, remaining OpenAI and Cursor usage, MOLUS G60 Bluetooth pairing, the composer shortcut, library import/export, update checks, and quitting the app.
 
 ## Updating
 
