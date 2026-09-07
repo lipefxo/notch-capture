@@ -161,6 +161,39 @@ extension AppViewModel {
         }
     }
 
+    /// Timing for the inbox undo banner. The action remains available until
+    /// this window elapses, the user dismisses it, or a later mutation
+    /// supersedes it.
+    struct LedgerUndoPresentation: Equatable {
+        static let duration: TimeInterval = 5
+
+        var action: LedgerUndoAction
+        var expiresAt: Date
+        var pausedRemaining: TimeInterval?
+
+        init(
+            action: LedgerUndoAction,
+            expiresAt: Date,
+            pausedRemaining: TimeInterval? = nil
+        ) {
+            self.action = action
+            self.expiresAt = expiresAt
+            self.pausedRemaining = pausedRemaining
+        }
+
+        var isPaused: Bool { pausedRemaining != nil }
+        var title: String { action.title }
+        var itemIDs: Set<UUID> { action.itemIDs }
+
+        func remaining(at date: Date) -> TimeInterval {
+            max(0, min(Self.duration, pausedRemaining ?? expiresAt.timeIntervalSince(date)))
+        }
+
+        func progress(at date: Date) -> Double {
+            remaining(at: date) / Self.duration
+        }
+    }
+
     enum CollapsedActivityContent: Equatable {
         case musicOnly(NowPlayingSnapshot)
     }

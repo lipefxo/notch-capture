@@ -340,6 +340,99 @@ struct InlineErrorView: View {
     }
 }
 
+struct LedgerUndoBanner: View {
+    @ObservedObject var viewModel: AppViewModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var isHovered = false
+
+    var body: some View {
+        TimelineView(
+            .animation(
+                minimumInterval: 1 / 30,
+                paused: reduceMotion || viewModel.pendingLedgerUndo?.isPaused == true
+            )
+        ) { context in
+            let progress = remainingProgress(at: context.date)
+
+            HStack(spacing: 8) {
+                ZStack {
+                    Circle()
+                        .stroke(Color.white.opacity(0.09), lineWidth: 1.5)
+                    Circle()
+                        .trim(from: 0, to: progress)
+                        .stroke(
+                            NotchTheme.primaryAccent,
+                            style: StrokeStyle(lineWidth: 1.5, lineCap: .round)
+                        )
+                        .rotationEffect(.degrees(-90))
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(NotchTheme.primaryAccent)
+                }
+                .frame(width: 20, height: 20)
+                .accessibilityHidden(true)
+
+                Text(viewModel.undoLedgerActionTitle ?? "Undo last change")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(NotchTheme.primaryText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Button("Undo") {
+                    _ = viewModel.undoLastLedgerAction()
+                }
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(NotchTheme.primaryAccent)
+                .buttonStyle(CompactTextButtonStyle())
+                .notchHitTarget(Rectangle())
+                .help("Undo the last ledger change")
+                .accessibilityLabel("Undo")
+                .accessibilityHint(viewModel.undoLedgerActionTitle ?? "Undo the last ledger change")
+
+                Button {
+                    viewModel.dismissPendingLedgerUndo()
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .notchHitTarget(Rectangle())
+                .help("Dismiss")
+                .accessibilityLabel("Dismiss undo")
+                .accessibilityHint("Hides the undo option without reversing the last change")
+            }
+            .padding(.horizontal, 20)
+            .frame(height: 36)
+            .background(NotchTheme.primaryAccent.opacity(0.06))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(NotchTheme.hairline)
+                    .frame(height: 1)
+                    .accessibilityHidden(true)
+            }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel(viewModel.undoLedgerActionTitle ?? "Undo last ledger change")
+        }
+        .onHover { hovered in
+            isHovered = hovered
+            viewModel.setLedgerUndoBannerPaused(hovered || viewModel.errorMessage != nil)
+        }
+        .onChange(of: viewModel.pendingLedgerUndo?.action) { _, _ in
+            if isHovered { viewModel.setLedgerUndoBannerPaused(true) }
+        }
+        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -4)))
+    }
+
+    private func remainingProgress(at date: Date) -> Double {
+        if reduceMotion { return 1 }
+        return viewModel.pendingLedgerUndo?.progress(at: date) ?? 0
+    }
+}
+
 struct DropTargetOverlay: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentIsSettled = false

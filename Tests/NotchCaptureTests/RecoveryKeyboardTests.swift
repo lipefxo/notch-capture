@@ -328,7 +328,7 @@ final class RecoveryKeyboardTests: XCTestCase {
         XCTAssertEqual(restoredIDs, [item.id])
     }
 
-    func testUndoPersistenceFailureKeepsActionAvailable() {
+    func testUndoPersistenceFailureKeepsActionAvailable() throws {
         var hooks = AppViewModel.Hooks()
         hooks.onUndoLedgerAction = { _ in "Could not save the undo." }
         let item = AppViewModel.LedgerItem(title: "Keep")
@@ -339,6 +339,7 @@ final class RecoveryKeyboardTests: XCTestCase {
         XCTAssertTrue(viewModel.items[0].isArchived)
         XCTAssertEqual(viewModel.undoLedgerActionTitle, "Undo archive")
         XCTAssertEqual(viewModel.errorMessage, "Could not save the undo.")
+        XCTAssertTrue(try XCTUnwrap(viewModel.pendingLedgerUndo).isPaused)
     }
 
     func testArchiveAndTrashHookFailuresDiscardOptimisticUndo() {
@@ -361,6 +362,99 @@ final class RecoveryKeyboardTests: XCTestCase {
         trashViewModel = AppViewModel(items: [trashItem], hooks: trashHooks)
         trashViewModel.trash(trashItem)
         XCTAssertFalse(trashViewModel.canUndoLedgerAction)
+    }
+
+    func testLedgerUndoBannerExpiresAfterFiveSeconds() throws {
+        var currentDate = Date(timeIntervalSinceReferenceDate: 40_000)
+        let item = AppViewModel.LedgerItem(title: "Archive me")
+        let viewModel = AppViewModel(items: [item], now: { currentDate })
+
+        viewModel.archive(item)
+        let presentation = try XCTUnwrap(viewModel.pendingLedgerUndo)
+        XCTAssertEqual(presentation.remaining(at: currentDate), 5, accuracy: 0.001)
+        XCTAssertTrue(viewModel.canUndoLedgerAction)
+
+        currentDate = currentDate.addingTimeInterval(4)
+        viewModel.expirePendingLedgerUndoIfNeeded()
+        XCTAssertTrue(viewModel.canUndoLedgerAction)
+
+        currentDate = currentDate.addingTimeInterval(1)
+        viewModel.expirePendingLedgerUndoIfNeeded()
+        XCTAssertFalse(viewModel.canUndoLedgerAction)
+        XCTAssertTrue(viewModel.items[0].isArchived)
+    }
+
+    func testLedgerUndoBannerPauseFreezesRemainingTime() throws {
+        var currentDate = Date(timeIntervalSinceReferenceDate: 50_000)
+        let item = AppViewModel.LedgerItem(title: "Trash me")
+        let viewModel = AppViewModel(items: [item], now: { currentDate })
+
+        viewModel.trash(item)
+        currentDate = currentDate.addingTimeInterval(2)
+        viewModel.setLedgerUndoBannerPaused(true)
+
+        XCTAssertTrue(try XCTUnwrap(viewModel.pendingLedgerUndo).isPaused)
+        XCTAssertEqual(
+            try XCTUnwrap(viewModel.pendingLedgerUndo).remaining(at: currentDate),
+            3,
+            accuracy: 0.001
+        )
+
+        currentDate = currentDate.addingTimeInterval(10)
+        XCTAssertEqual(
+            try XCTUnwrap(viewModel.pendingLedgerUndo).remaining(at: currentDate),
+            3,
+            accuracy: 0.001
+        )
+
+        viewModel.setLedgerUndoBannerPaused(false)
+        let resumed = try XCTUnwrap(viewModel.pendingLedgerUndo)
+        XCTAssertFalse(resumed.isPaused)
+        XCTAssertEqual(resumed.expiresAt, currentDate.addingTimeInterval(3))
+    }
+
+    func testDismissingLedgerUndoBannerKeepsTheChange() {
+        let item = AppViewModel.LedgerItem(title: "Keep archived")
+        let viewModel = AppViewModel(items: [item])
+
+        viewModel.archive(item)
+        XCTAssertTrue(viewModel.items[0].isArchived)
+        viewModel.dismissPendingLedgerUndo()
+
+        XCTAssertFalse(viewModel.canUndoLedgerAction)
+        XCTAssertTrue(viewModel.items[0].isArchived)
+    }
+
+    func testANewLedgerUndoResetsTheBannerDeadline() throws {
+        var currentDate = Date(timeIntervalSinceReferenceDate: 60_000)
+        let first = AppViewModel.LedgerItem(title: "First")
+        let second = AppViewModel.LedgerItem(title: "Second")
+        let viewModel = AppViewModel(items: [first, second], now: { currentDate })
+
+        viewModel.archive(first)
+        currentDate = currentDate.addingTimeInterval(4)
+        viewModel.trash(second)
+
+        let presentation = try XCTUnwrap(viewModel.pendingLedgerUndo)
+        XCTAssertEqual(viewModel.undoLedgerActionTitle, "Undo move to Trash")
+        XCTAssertEqual(presentation.remaining(at: currentDate), 5, accuracy: 0.001)
+        XCTAssertTrue(viewModel.items[0].isArchived)
+        XCTAssertTrue(viewModel.items[1].isTrashed)
+    }
+
+    func testPausedLedgerUndoBannerDoesNotExpire() throws {
+        var currentDate = Date(timeIntervalSinceReferenceDate: 70_000)
+        let item = AppViewModel.LedgerItem(title: "Hold")
+        let viewModel = AppViewModel(items: [item], now: { currentDate })
+
+        viewModel.archive(item)
+        currentDate = currentDate.addingTimeInterval(1)
+        viewModel.setLedgerUndoBannerPaused(true)
+        currentDate = currentDate.addingTimeInterval(10)
+        viewModel.expirePendingLedgerUndoIfNeeded()
+
+        XCTAssertTrue(viewModel.canUndoLedgerAction)
+        XCTAssertTrue(viewModel.items[0].isArchived)
     }
 
     func testCaptureUndoFailureKeepsConfirmationAndErrorForRetry() {
