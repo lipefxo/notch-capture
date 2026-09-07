@@ -3,6 +3,17 @@ import Testing
 @testable import NotchCaptureSync
 
 struct CaptureSyncStoreTests {
+    @Test func disabledCloudKitFailsWithoutCreatingAClient() async {
+        let store = CaptureSyncStore(
+            containerIdentifier: "iCloud.com.example.NotchCaptureTests",
+            cloudKitEnabled: false
+        )
+
+        await #expect(throws: CaptureSyncError.cloudKitRequiresSignedDevice) {
+            try await store.synchronize()
+        }
+    }
+
     @Test func localCacheAndOutboxRoundTrip() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

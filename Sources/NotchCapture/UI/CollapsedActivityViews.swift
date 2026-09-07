@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 
 struct CollapsedActivityPillView: View {
+    private enum ExtendedFallbackMetrics {
+        static let horizontalInset: CGFloat = 9
+        static let mediaToUsageSpacing: CGFloat = 14
+        static let usageLogoSize: CGFloat = 20
+        static let usageLogoSpacing: CGFloat = 10
+    }
+
     @ObservedObject var viewModel: AppViewModel
     let presentationSize: CompactPresentationSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -107,14 +114,17 @@ struct CollapsedActivityPillView: View {
     private var extendedFallbackLayout: some View {
         switch viewModel.collapsedActivityContent {
         case let .musicOnly(snapshot):
-            HStack(spacing: 8) {
+            HStack(spacing: ExtendedFallbackMetrics.mediaToUsageSpacing) {
                 extendedMusicInfoView(snapshot)
                     .frame(maxWidth: .infinity)
                 if viewModel.modelUsageState.showsUtilityMeters {
-                    collapsedUsageLogos(size: 18, spacing: 9)
+                    collapsedUsageLogos(
+                        size: ExtendedFallbackMetrics.usageLogoSize,
+                        spacing: ExtendedFallbackMetrics.usageLogoSpacing
+                    )
                 }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, ExtendedFallbackMetrics.horizontalInset)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
         case nil:
             EmptyView()

@@ -59,13 +59,36 @@ final class ModelUsageTests: XCTestCase {
         let snapshot = try ModelUsageSnapshotBuilder.cursor(from: json, now: now)
 
         XCTAssertEqual(snapshot.planName, "Pro")
-        XCTAssertEqual(snapshot.headline, "760 left")
+        XCTAssertEqual(snapshot.headline, "38% left")
         XCTAssertEqual(snapshot.remainingFraction ?? 0, 0.38, accuracy: 0.0001)
-        XCTAssertEqual(snapshot.meters[0].usedText, "1,240 of 2,000")
+        XCTAssertEqual(snapshot.meters[0].usedText, "62% used")
         XCTAssertEqual(snapshot.meters[1].title, "Cursor Models")
         XCTAssertEqual(snapshot.meters[1].remainingText, "42% left")
         XCTAssertEqual(snapshot.meters[2].remainingText, "31% left")
         XCTAssertEqual(snapshot.meters[3].title, "On-demand")
+    }
+
+    func testCursorSnapshotPrefersAggregatePercentWhenBaseAllowanceIsExhausted() throws {
+        let json = """
+        {
+          "membershipType": "pro",
+          "individualUsage": {
+            "plan": {
+              "enabled": true,
+              "used": 2000,
+              "limit": 2000,
+              "remaining": 0,
+              "totalPercentUsed": 25.504909560723515
+            }
+          }
+        }
+        """.data(using: .utf8)!
+
+        let snapshot = try ModelUsageSnapshotBuilder.cursor(from: json, now: Date())
+
+        XCTAssertEqual(snapshot.headline, "74.5% left")
+        XCTAssertEqual(snapshot.remainingFraction ?? 0, 0.7449509043927648, accuracy: 0.0001)
+        XCTAssertEqual(snapshot.meters[0].usedText, "25.5% used")
     }
 
     func testCursorUnlimitedPlanHasFullRemainingFraction() throws {
@@ -322,6 +345,19 @@ final class ModelUsageTests: XCTestCase {
             ModelUsageLogoFill.inactiveOpacity,
             accuracy: 0.0001
         )
+    }
+
+    func testLiquidWaveFillClosesAlongTheBottomEdgeInsteadOfDiagonally() {
+        let paths = LiquidWaveGeometry.paths(
+            in: CGRect(x: 0, y: 0, width: 20, height: 20),
+            level: 0.5,
+            phase: 0,
+            amplitude: 0
+        )
+
+        XCTAssertTrue(paths.fill.contains(CGPoint(x: 1, y: 1)))
+        XCTAssertTrue(paths.fill.contains(CGPoint(x: 19, y: 1)))
+        XCTAssertFalse(paths.fill.contains(CGPoint(x: 10, y: 19)))
     }
 
     private static func jwt(sub: String) -> String {
