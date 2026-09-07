@@ -168,11 +168,11 @@ final class SystemAudioLevelMeter: @unchecked Sendable {
 
         let rms = sqrt(sumOfSquares / Double(sampleCount))
         let decibels = 20 * log10(max(rms, 0.000_001))
-        let normalized = min(1, max(0, (decibels + 55) / 45))
+        let normalized = Self.normalizedLevel(fromDecibels: decibels)
         let now = ProcessInfo.processInfo.systemUptime
 
         stateLock.lock()
-        let smoothing = normalized > smoothedLevel ? 0.58 : 0.16
+        let smoothing = normalized > smoothedLevel ? 0.42 : 0.18
         smoothedLevel += (normalized - smoothedLevel) * smoothing
         guard now - lastEmission >= 1 / 20 else {
             stateLock.unlock()
@@ -183,6 +183,17 @@ final class SystemAudioLevelMeter: @unchecked Sendable {
         let nextLevels = levels
         stateLock.unlock()
         publish(nextLevels)
+    }
+
+    /// Maps RMS dBFS onto 0...1. Typical streaming loudness sits mid-range
+    /// so compressed songs still have headroom instead of pinning every bar.
+    static func normalizedLevel(fromDecibels decibels: Double) -> Double {
+        let floorDecibels = -36.0
+        let ceilingDecibels = -1.0
+        let responseExponent = 1.25
+        let span = ceilingDecibels - floorDecibels
+        let linear = min(1, max(0, (decibels - floorDecibels) / span))
+        return pow(linear, responseExponent)
     }
 
     private func publish(_ levels: MusicWaveformLevels) {

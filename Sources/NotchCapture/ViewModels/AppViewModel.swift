@@ -2295,7 +2295,7 @@ extension AppViewModel {
             audioOutputState: .preview,
             modelUsageState: .preview
         )
-        model.nowPlayingWaveform = MusicWaveformLevels(values: [0.22, 0.78, 0.46, 0.9])
+        model.nowPlayingWaveform = MusicWaveformLevels(values: [0.22, 0.78, 0.46, 0.9, 0.58])
         if let compactSizeArgument = CommandLine.arguments.first(where: {
             $0.hasPrefix("--preview-compact-size=")
         }) {

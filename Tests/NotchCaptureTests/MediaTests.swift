@@ -5,12 +5,25 @@ final class NowPlayingModelTests: XCTestCase {
     func testWaveformLevelsClampPadAndRollForward() {
         XCTAssertEqual(
             MusicWaveformLevels(values: [-1, 0.25, 2]).values,
-            [0, 0, 0.25, 1]
+            [0, 0, 0, 0.25, 1]
         )
         XCTAssertEqual(
             MusicWaveformLevels(values: [0.1, 0.2, 0.3, 0.4]).appending(0.8).values,
-            [0.2, 0.3, 0.4, 0.8]
+            [0.1, 0.2, 0.3, 0.4, 0.8]
         )
+        XCTAssertEqual(MusicWaveformLevels.silent.values.count, MusicWaveformLevels.barCount)
+        XCTAssertEqual(MusicWaveformLevels.barCount, 5)
+    }
+
+    func testWaveformMeteringLeavesHeadroomForAverageLoudness() {
+        XCTAssertEqual(SystemAudioLevelMeter.normalizedLevel(fromDecibels: -55), 0, accuracy: 0.001)
+        XCTAssertEqual(SystemAudioLevelMeter.normalizedLevel(fromDecibels: -36), 0, accuracy: 0.001)
+        XCTAssertEqual(SystemAudioLevelMeter.normalizedLevel(fromDecibels: -1), 1, accuracy: 0.001)
+        XCTAssertEqual(SystemAudioLevelMeter.normalizedLevel(fromDecibels: 3), 1, accuracy: 0.001)
+
+        let typicalStreaming = SystemAudioLevelMeter.normalizedLevel(fromDecibels: -14)
+        XCTAssertGreaterThan(typicalStreaming, 0.35)
+        XCTAssertLessThan(typicalStreaming, 0.7)
     }
 
     func testConnectionActionsMatchRecoveryState() {

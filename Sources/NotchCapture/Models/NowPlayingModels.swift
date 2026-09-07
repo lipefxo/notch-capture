@@ -116,13 +116,14 @@ enum MusicTimeFormatter {
 }
 
 struct MusicWaveformLevels: Equatable, Sendable {
-    static let silent = Self(values: [0, 0, 0, 0])
+    static let barCount = 5
+    static let silent = Self(values: Array(repeating: 0, count: barCount))
 
     let values: [Double]
 
     init(values: [Double]) {
-        let normalized = Array(values.suffix(4)).map { min(1, max(0, $0)) }
-        self.values = Array(repeating: 0, count: 4 - normalized.count) + normalized
+        let normalized = Array(values.suffix(Self.barCount)).map { min(1, max(0, $0)) }
+        self.values = Array(repeating: 0, count: Self.barCount - normalized.count) + normalized
     }
 
     func appending(_ level: Double) -> Self {
