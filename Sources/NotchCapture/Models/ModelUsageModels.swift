@@ -512,6 +512,19 @@ enum ModelUsageSnapshotBuilder {
         title: String = "Plan",
         resetsText: String?
     ) -> ModelUsageMeter {
+        // Cursor's count fields describe the base allowance, which may be
+        // exhausted while bonus allowance is still available. Its aggregate
+        // percentage includes both pools and is the accurate headline value.
+        if let usedPercent = plan.totalPercentUsed ?? plan.usedPercent {
+            return ModelUsageMeter(
+                id: id,
+                title: title,
+                remainingFraction: ModelUsageFormatting.remainingFraction(fromUsedPercent: usedPercent),
+                usedText: ModelUsageFormatting.usedPercentText(usedPercent),
+                remainingText: ModelUsageFormatting.remainingPercentText(usedPercent),
+                resetsText: resetsText
+            )
+        }
         if let remaining = plan.remaining, let limit = plan.limit, limit > 0 {
             let used = plan.used ?? max(0, limit - remaining)
             return ModelUsageMeter(
@@ -520,16 +533,6 @@ enum ModelUsageSnapshotBuilder {
                 remainingFraction: min(1, max(0, remaining / limit)),
                 usedText: "\(ModelUsageFormatting.formattedCount(used)) of \(ModelUsageFormatting.formattedCount(limit))",
                 remainingText: "\(ModelUsageFormatting.formattedCount(remaining)) left",
-                resetsText: resetsText
-            )
-        }
-        if let usedPercent = plan.totalPercentUsed ?? plan.usedPercent {
-            return ModelUsageMeter(
-                id: id,
-                title: title,
-                remainingFraction: ModelUsageFormatting.remainingFraction(fromUsedPercent: usedPercent),
-                usedText: ModelUsageFormatting.usedPercentText(usedPercent),
-                remainingText: ModelUsageFormatting.remainingPercentText(usedPercent),
                 resetsText: resetsText
             )
         }

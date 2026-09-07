@@ -35,7 +35,14 @@ jobs:
         run: |
           APP_PATH="$(Scripts/build-app.sh release | tail -n 1)"
           test -d "$APP_PATH"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist")" = "$(git rev-list --count HEAD)"
+          ! codesign -d --entitlements :- "$APP_PATH" 2>&1 | grep -q 'com.apple.developer.icloud-services'
           codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+      - name: Verify local builds cannot mask releases
+        run: |
+          APP_PATH="$(Scripts/build-app.sh debug | tail -n 1)"
+          test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$APP_PATH/Contents/Info.plist")" = 1
 
   web:
     name: Web

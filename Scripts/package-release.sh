@@ -98,6 +98,7 @@ if [[ "$IDENTITY" != "-" ]]; then
   rm "$DIST/notarize-upload.zip"
 else
   echo "warning: ad-hoc identity — skipping notarization." >&2
+  echo "warning: CloudKit sync is disabled because restricted entitlements require a real signing identity." >&2
   echo "warning: testers must use Privacy & Security → 'Open Anyway' on first install." >&2
 fi
 
