@@ -1,6 +1,6 @@
 import Foundation
 
-public enum CaptureSyncError: LocalizedError, Sendable {
+public enum CaptureSyncError: LocalizedError, Sendable, Equatable {
     case cloudKitRequiresSignedDevice
 
     public var errorDescription: String? {
@@ -14,15 +14,21 @@ public enum CaptureSyncError: LocalizedError, Sendable {
 public actor CaptureSyncStore {
     private let cache: JSONSyncCache
     private let containerIdentifier: String
+    private let cloudKitEnabled: Bool
     private var cloud: CloudKitPrivateDatabaseClient?
     private var cachedRecords: [CaptureRecord]
     private var outbox: [SyncMutation]
 
-    public init(containerIdentifier: String, cacheURL: URL? = nil) {
+    public init(
+        containerIdentifier: String,
+        cacheURL: URL? = nil,
+        cloudKitEnabled: Bool = true
+    ) {
         let resolvedURL = cacheURL ?? Self.defaultCacheURL()
         let cache = JSONSyncCache(cacheURL: resolvedURL)
         self.cache = cache
         self.containerIdentifier = containerIdentifier
+        self.cloudKitEnabled = cloudKitEnabled
         self.cloud = nil
         let loadedRecords = (try? cache.loadRecords()) ?? []
         let loadedOutbox = Self.migratingLegacyDeletes(
@@ -67,6 +73,9 @@ public actor CaptureSyncStore {
     /// If CloudKit fails, the unacknowledged mutation remains in the outbox.
     @discardableResult
     public func synchronize(includingDeleted: Bool = false) async throws -> [CaptureRecord] {
+        guard cloudKitEnabled else {
+            throw CaptureSyncError.cloudKitRequiresSignedDevice
+        }
 #if targetEnvironment(simulator)
         // CKContainer traps instead of throwing when a Simulator app lacks a
         // provisioned iCloud entitlement. Keep previews safely offline; signed

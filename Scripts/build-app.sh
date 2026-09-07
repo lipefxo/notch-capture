@@ -9,11 +9,11 @@ set -euo pipefail
 #                      identity changes every build — Automation/Screen Recording
 #                      re-prompts between dev builds are expected until releases
 #                      are signed with a stable Developer ID.
-#   MARKETING_VERSION  Overrides CFBundleShortVersionString (releases derive it
-#                      from the build number; local builds keep the plist value).
-#   BUILD_NUMBER       Overrides CFBundleVersion (default: commit count). This
-#                      is useful for installing an older local baseline before
-#                      testing the next merge-driven Sparkle update.
+#   MARKETING_VERSION  Overrides CFBundleShortVersionString (release packaging
+#                      supplies it; local builds keep the plist value).
+#   BUILD_NUMBER       Overrides CFBundleVersion. Release builds default to the
+#                      commit count; debug builds use 1 so they cannot reserve a
+#                      future merge-driven Sparkle release number.
 
 ROOT="${0:A:h:h}"
 CONFIGURATION="${1:-debug}"
@@ -23,7 +23,13 @@ MACOS="$CONTENTS/MacOS"
 FRAMEWORKS="$CONTENTS/Frameworks"
 RESOURCES="$CONTENTS/Resources"
 IDENTITY="${CODESIGN_IDENTITY:--}"
-BUILD_NUMBER="${BUILD_NUMBER:-$(git -C "$ROOT" rev-list --count HEAD)}"
+if [[ -z "${BUILD_NUMBER:-}" ]]; then
+  if [[ "$CONFIGURATION" == "release" ]]; then
+    BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD)"
+  else
+    BUILD_NUMBER=1
+  fi
+fi
 
 if [[ ! "$BUILD_NUMBER" =~ '^[1-9][0-9]*$' ]]; then
   echo "error: BUILD_NUMBER must be a positive integer (got '$BUILD_NUMBER')" >&2
@@ -79,6 +85,13 @@ if [[ -e "$SPARKLE_B/Updater.app" ]]; then
   sign --preserve-metadata=entitlements "$SPARKLE_B/Updater.app"
 fi
 sign "$FRAMEWORKS/Sparkle.framework"
-sign --entitlements "$ROOT/Support/NotchCapture.entitlements" "$APP_DIR"
+if [[ "$IDENTITY" == "-" ]]; then
+  # launchd rejects ad-hoc apps that claim restricted iCloud entitlements,
+  # even after the user approves the app in Privacy & Security. Keep local and
+  # unsigned release builds launchable; CloudKit sync requires a real identity.
+  sign "$APP_DIR"
+else
+  sign --entitlements "$ROOT/Support/NotchCapture.entitlements" "$APP_DIR"
+fi
 
 echo "$APP_DIR"

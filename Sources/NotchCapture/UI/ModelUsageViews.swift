@@ -41,7 +41,7 @@ struct ModelUsageProviderRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                SettingsRowIcon(symbol: provider.symbolName)
+                ModelUsageSettingsLogo(provider: provider)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(provider.displayName)
                         .font(.system(size: 11, weight: .medium))
@@ -127,6 +127,7 @@ struct ModelUsageLogoMeter: View {
 
     @State private var isSettling = false
     @State private var settleStartedAt = Date.distantPast
+    @State private var isHovered = false
 
     var body: some View {
         TimelineView(
@@ -144,6 +145,7 @@ struct ModelUsageLogoMeter: View {
             )
         }
             .frame(width: size, height: size)
+            .contentShape(Rectangle())
             .animation(reduceMotion ? nil : .spring(duration: 0.52, bounce: 0.10), value: fillLevel)
             .animation(NotchMotion.content, value: state.isBusy)
             .onChange(of: fillLevel) { oldValue, newValue in
@@ -157,7 +159,17 @@ struct ModelUsageLogoMeter: View {
                 guard !Task.isCancelled else { return }
                 isSettling = false
             }
-            .help(helpText)
+            .onHover { isHovered = $0 }
+            .popover(
+                isPresented: $isHovered,
+                attachmentAnchor: .rect(.bounds),
+                arrowEdge: .bottom
+            ) {
+                ModelUsageHoverCard(
+                    provider: provider,
+                    statusText: hoverStatusText
+                )
+            }
             .accessibilityElement()
             .accessibilityLabel(provider.displayName)
             .accessibilityValue(accessibilityValue)
@@ -172,12 +184,12 @@ struct ModelUsageLogoMeter: View {
         return min(1, max(0, date.timeIntervalSince(settleStartedAt) / 0.78))
     }
 
-    private var helpText: String {
+    private var hoverStatusText: String {
         if let snapshot = state.connection.snapshot,
            let fraction = snapshot.remainingFraction {
-            return "\(provider.displayName): \(ModelUsageFormatting.formattedPercent(fraction * 100))% remaining"
+            return "\(ModelUsageFormatting.formattedPercent(fraction * 100))% left"
         }
-        return "\(provider.displayName): \(state.statusText)"
+        return state.statusText
     }
 
     private var accessibilityValue: String {
@@ -186,6 +198,26 @@ struct ModelUsageLogoMeter: View {
             return "\(ModelUsageFormatting.formattedPercent(fraction * 100)) percent remaining"
         }
         return state.statusText
+    }
+}
+
+private struct ModelUsageHoverCard: View {
+    let provider: ModelUsageProvider
+    let statusText: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ProviderLogo(provider: provider)
+                .foregroundStyle(NotchTheme.primaryText)
+                .frame(width: 13, height: 13)
+            Text("\(provider.displayName) · \(statusText)")
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(NotchTheme.primaryText)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .presentationBackground(NotchTheme.raisedGraphite)
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -347,6 +379,20 @@ private struct ProviderLogo: View {
         let resources = installedBundle ?? Bundle.module
         guard let url = resources.url(forResource: name, withExtension: "svg") else { return nil }
         return NSImage(contentsOf: url)
+    }
+}
+
+private struct ModelUsageSettingsLogo: View {
+    let provider: ModelUsageProvider
+
+    var body: some View {
+        ProviderLogo(provider: provider)
+            .foregroundStyle(NotchTheme.secondaryText)
+            .frame(width: 14, height: 14)
+            .frame(width: 26, height: 26)
+            .background(Color.white.opacity(0.045))
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .accessibilityHidden(true)
     }
 }
 

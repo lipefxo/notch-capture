@@ -142,9 +142,11 @@ Release builds check the project's appcast hourly and notify before installing a
 
 For the first install, download `NotchCapture-<version>.dmg` from the [latest GitHub release](https://github.com/lipefxo/notch-capture/releases/latest), open it, and drag Notch Capture onto the Applications shortcut. Current builds are not yet notarized, so macOS will refuse to open the downloaded app directly. Go to System Settings → Privacy & Security and click "Open Anyway" (macOS 15 removed the old right-click → Open bypass). Updates applied through Sparkle don't need this again.
 
-Until releases are signed with a stable Developer ID, macOS also ties the Automation permission (used to control Apple Music and Spotify) to each build's ad-hoc signature — expect to re-grant it after an update.
+Until releases are signed with a stable Developer ID, companion CloudKit sync is unavailable and macOS ties the Automation permission (used to control Apple Music and Spotify) to each build's ad-hoc signature — expect to re-grant it after an update. Ad-hoc builds omit the restricted iCloud entitlements because macOS refuses to launch an ad-hoc app that claims them.
 
 Every successful push to `master` publishes an immutable `v0.1.<build>` GitHub release. The build number is the Git commit count, and each release contains a first-install DMG plus the Sparkle ZIP. The workflow can also be rerun manually on `master`; reruns repair the existing release instead of creating duplicate tags. See `.github/workflows/release.yml` and `Scripts/package-release.sh`.
+
+Local debug builds deliberately use bundle build number `1`. Sparkle compares bundle build numbers, so this keeps a locally built copy from appearing as new as a later merge-driven release. Set `BUILD_NUMBER` explicitly only when testing a particular update path.
 
 ## Local data
 
