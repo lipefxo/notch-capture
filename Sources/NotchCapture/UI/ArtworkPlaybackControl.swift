@@ -151,35 +151,40 @@ private struct ArtworkWaveformShape: Shape {
     var levels: MusicWaveformLevels
 
     var animatableData: AnimatablePair<
-        AnimatablePair<Double, Double>,
-        AnimatablePair<Double, Double>
+        AnimatablePair<AnimatablePair<Double, Double>, AnimatablePair<Double, Double>>,
+        Double
     > {
         get {
             AnimatablePair(
-                AnimatablePair(level(at: 0), level(at: 1)),
-                AnimatablePair(level(at: 2), level(at: 3))
+                AnimatablePair(
+                    AnimatablePair(level(at: 0), level(at: 1)),
+                    AnimatablePair(level(at: 2), level(at: 3))
+                ),
+                level(at: 4)
             )
         }
         set {
             levels = MusicWaveformLevels(values: [
-                newValue.first.first,
-                newValue.first.second,
-                newValue.second.first,
-                newValue.second.second,
+                newValue.first.first.first,
+                newValue.first.first.second,
+                newValue.first.second.first,
+                newValue.first.second.second,
+                newValue.second,
             ])
         }
     }
 
     func path(in rect: CGRect) -> Path {
-        let barWidth = max(1.5, rect.width * 0.07)
-        let barSpacing = max(0.9, rect.width * 0.045)
-        let totalWidth = (barWidth * 4) + (barSpacing * 3)
+        let barCount = CGFloat(MusicWaveformLevels.barCount)
+        let barWidth = max(1.4, rect.width * 0.06)
+        let barSpacing = max(0.8, rect.width * 0.038)
+        let totalWidth = (barWidth * barCount) + (barSpacing * (barCount - 1))
         let startX = rect.minX + ((rect.width - totalWidth) / 2)
         let maximum = rect.width * 0.44
         let minimum = max(2.5, rect.width * 0.14)
 
         return Path { path in
-            for index in 0..<4 {
+            for index in 0..<MusicWaveformLevels.barCount {
                 let height = minimum + ((maximum - minimum) * CGFloat(level(at: index)))
                 path.addRoundedRect(
                     in: CGRect(
