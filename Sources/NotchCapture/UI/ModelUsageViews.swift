@@ -119,6 +119,10 @@ struct ModelUsageLogoStrip: View {
 }
 
 struct ModelUsageLogoMeter: View {
+    private enum Motion {
+        static let settleDuration: TimeInterval = 0.78
+    }
+
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let provider: ModelUsageProvider
@@ -181,7 +185,7 @@ struct ModelUsageLogoMeter: View {
 
     private func settleProgress(at date: Date) -> Double {
         guard isSettling, !reduceMotion else { return 1 }
-        return min(1, max(0, date.timeIntervalSince(settleStartedAt) / 0.78))
+        return min(1, max(0, date.timeIntervalSince(settleStartedAt) / Motion.settleDuration))
     }
 
     private var hoverStatusText: String {
@@ -242,115 +246,230 @@ private struct LiquidProviderLogo: View {
     let reduceMotion: Bool
 
     var body: some View {
-        GeometryReader { proxy in
-            let phaseOffset: CGFloat = provider == .openAI ? 0 : .pi * 0.62
-            let progress = CGFloat(min(1, max(0, settleProgress)))
-            let energy = reduceMotion ? 0 : pow(1 - progress, 2)
-            let phase = phaseOffset + (progress * .pi * 2.15)
-            let amplitude = 0.48 + (energy * 1.12)
-            let normalizedLevel = CGFloat(min(1, max(0, level)))
+        ZStack {
+            ProviderLogo(provider: provider)
+                .foregroundStyle(NotchTheme.primaryText.opacity(ghostOpacity))
 
-            ZStack {
-                ProviderLogo(provider: provider)
-                    .foregroundStyle(NotchTheme.primaryText.opacity(ghostOpacity))
-
-                LiquidLevelShape(
-                    level: normalizedLevel,
-                    phase: phase,
-                    amplitude: amplitude
-                )
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(0.98),
-                            Color.white.opacity(0.68),
-                        ],
-                        startPoint: .top,
-                        endPoint: .bottom
-                    )
-                )
-                .mask {
-                    ProviderLogo(provider: provider)
-                }
-
-                if normalizedLevel > 0.02 && normalizedLevel < 0.98 {
-                    LiquidSurfaceShape(
-                        level: normalizedLevel,
-                        phase: phase,
-                        amplitude: amplitude
-                    )
-                    .stroke(Color.white.opacity(0.52), lineWidth: 0.72)
-                    .shadow(color: Color.white.opacity(0.20), radius: 0.8, y: -0.35)
-                    .mask {
-                        ProviderLogo(provider: provider)
-                    }
-                }
-            }
-            .frame(width: proxy.size.width, height: proxy.size.height)
+            ContinuousLiquidProviderFill(
+                provider: provider,
+                level: level,
+                settleProgress: settleProgress,
+                reduceMotion: reduceMotion
+            )
+            .allowsHitTesting(false)
         }
-        .drawingGroup(opaque: false, colorMode: .linear)
         .accessibilityHidden(true)
     }
 }
 
-private struct LiquidLevelShape: Shape {
-    var level: CGFloat
-    var phase: CGFloat
-    var amplitude: CGFloat
+private struct ContinuousLiquidProviderFill: NSViewRepresentable {
+    let provider: ModelUsageProvider
+    let level: Double
+    let settleProgress: Double
+    let reduceMotion: Bool
 
-    var animatableData: CGFloat {
-        get { level }
-        set { level = newValue }
+    func makeNSView(context: Context) -> LiquidProviderFillView {
+        LiquidProviderFillView()
     }
 
-    func path(in rect: CGRect) -> Path {
-        guard level > 0.001 else { return Path() }
-        guard level < 0.999 else { return Path(rect) }
-
-        var path = Path()
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: surfacePoint(index: 0, samples: 24, in: rect))
-
-        for index in 1...24 {
-            path.addLine(to: surfacePoint(index: index, samples: 24, in: rect))
-        }
-
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.closeSubpath()
-        return path
-    }
-
-    fileprivate func surfacePoint(index: Int, samples: Int, in rect: CGRect) -> CGPoint {
-        let progress = CGFloat(index) / CGFloat(samples)
-        let baseY = rect.minY + ((1 - min(1, max(0, level))) * rect.height)
-        let edgeDamping = min(1, level * 8, (1 - level) * 8)
-        let wave = sin((progress * .pi * 2) + phase) * amplitude * edgeDamping
-        return CGPoint(
-            x: rect.minX + (progress * rect.width),
-            y: min(rect.maxY, max(rect.minY, baseY + wave))
+    func updateNSView(_ view: LiquidProviderFillView, context: Context) {
+        let progress = CGFloat(min(1, max(0, settleProgress)))
+        let energy = reduceMotion ? 0 : pow(1 - progress, 2)
+        view.update(
+            provider: provider,
+            level: CGFloat(min(1, max(0, level))),
+            phase: (provider == .openAI ? 0 : .pi * 0.62) + (progress * .pi * 2.15),
+            amplitude: 0.48 + (energy * 1.12),
+            reduceMotion: reduceMotion
         )
     }
 }
 
-private struct LiquidSurfaceShape: Shape {
-    var level: CGFloat
-    var phase: CGFloat
-    var amplitude: CGFloat
-
-    var animatableData: CGFloat {
-        get { level }
-        set { level = newValue }
-    }
-
-    func path(in rect: CGRect) -> Path {
-        let levelShape = LiquidLevelShape(level: level, phase: phase, amplitude: amplitude)
-        var path = Path()
-        path.move(to: levelShape.surfacePoint(index: 0, samples: 24, in: rect))
-        for index in 1...24 {
-            path.addLine(to: levelShape.surfacePoint(index: index, samples: 24, in: rect))
+enum LiquidWaveGeometry {
+    static func paths(
+        in rect: CGRect,
+        level: CGFloat,
+        phase: CGFloat,
+        amplitude: CGFloat,
+        samples: Int = 24
+    ) -> (fill: CGPath, surface: CGPath) {
+        let surfacePoints = (0...samples).map { index -> CGPoint in
+            let progress = CGFloat(index) / CGFloat(samples)
+            let baseY = min(1, max(0, level)) * rect.height
+            let edgeDamping = min(1, level * 8, (1 - level) * 8)
+            let wave = sin((progress * .pi * 2) + phase) * amplitude * edgeDamping
+            return CGPoint(
+                x: progress * rect.width,
+                y: min(rect.maxY, max(rect.minY, baseY + wave))
+            )
         }
-        return path
+
+        let fillPath = CGMutablePath()
+        fillPath.move(to: .zero)
+        fillPath.addLine(to: surfacePoints[0])
+        for point in surfacePoints.dropFirst() {
+            fillPath.addLine(to: point)
+        }
+        fillPath.addLine(to: CGPoint(x: rect.maxX, y: rect.minY))
+        fillPath.closeSubpath()
+
+        let surfacePath = CGMutablePath()
+        surfacePath.move(to: surfacePoints[0])
+        for point in surfacePoints.dropFirst() {
+            surfacePath.addLine(to: point)
+        }
+        return (fillPath, surfacePath)
     }
+}
+
+private final class LiquidProviderFillView: NSView {
+    private static let fillAnimationKey = "continuousLiquidFill"
+    private static let surfaceAnimationKey = "continuousLiquidSurface"
+    private static let cycleDuration: TimeInterval = 4.8
+
+    private let maskedLayer = CALayer()
+    private let logoMaskLayer = CALayer()
+    private let liquidLayer = CAShapeLayer()
+    private let surfaceLayer = CAShapeLayer()
+
+    private var provider = ModelUsageProvider.openAI
+    private var level: CGFloat = 0
+    private var phase: CGFloat = 0
+    private var amplitude: CGFloat = 0.48
+    private var reduceMotion = false
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        maskedLayer.masksToBounds = true
+        maskedLayer.mask = logoMaskLayer
+        layer?.addSublayer(maskedLayer)
+
+        liquidLayer.fillColor = NSColor.white.withAlphaComponent(0.88).cgColor
+        maskedLayer.addSublayer(liquidLayer)
+
+        surfaceLayer.fillColor = nil
+        surfaceLayer.strokeColor = NSColor.white.withAlphaComponent(0.52).cgColor
+        surfaceLayer.lineWidth = 0.72
+        surfaceLayer.lineJoin = .round
+        surfaceLayer.shadowColor = NSColor.white.withAlphaComponent(0.20).cgColor
+        surfaceLayer.shadowOpacity = 1
+        surfaceLayer.shadowRadius = 0.8
+        surfaceLayer.shadowOffset = CGSize(width: 0, height: 0.35)
+        maskedLayer.addSublayer(surfaceLayer)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    func update(
+        provider: ModelUsageProvider,
+        level: CGFloat,
+        phase: CGFloat,
+        amplitude: CGFloat,
+        reduceMotion: Bool
+    ) {
+        let changed = self.provider != provider
+            || abs(self.level - level) > 0.0001
+            || abs(self.phase - phase) > 0.0001
+            || abs(self.amplitude - amplitude) > 0.0001
+            || self.reduceMotion != reduceMotion
+        guard changed else { return }
+
+        self.provider = provider
+        self.level = level
+        self.phase = phase
+        self.amplitude = amplitude
+        self.reduceMotion = reduceMotion
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        guard bounds.width > 0, bounds.height > 0 else { return }
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        maskedLayer.frame = bounds
+        logoMaskLayer.frame = bounds
+        liquidLayer.frame = bounds
+        surfaceLayer.frame = bounds
+        updateLogoMask()
+        updateWavePaths(in: bounds)
+        CATransaction.commit()
+    }
+
+    private func updateLogoMask() {
+        var proposedRect = bounds
+        let image = ProviderLogo.image(named: provider.logoResourceName)
+        logoMaskLayer.contents = image?.cgImage(
+            forProposedRect: &proposedRect,
+            context: nil,
+            hints: nil
+        )
+        logoMaskLayer.contentsGravity = .resizeAspect
+        logoMaskLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    }
+
+    private func updateWavePaths(in rect: CGRect) {
+        liquidLayer.removeAnimation(forKey: Self.fillAnimationKey)
+        surfaceLayer.removeAnimation(forKey: Self.surfaceAnimationKey)
+
+        guard level > 0.001 else {
+            liquidLayer.path = nil
+            surfaceLayer.path = nil
+            return
+        }
+        guard level < 0.999 else {
+            liquidLayer.path = CGPath(rect: rect, transform: nil)
+            surfaceLayer.path = nil
+            return
+        }
+
+        let frameCount = 72
+        let phases = (0..<frameCount).map { frame in
+            phase + ((CGFloat(frame) / CGFloat(frameCount)) * .pi * 2)
+        }
+        let paths = phases.map {
+            LiquidWaveGeometry.paths(
+                in: rect,
+                level: level,
+                phase: $0,
+                amplitude: amplitude
+            )
+        }
+        liquidLayer.path = paths[0].fill
+        surfaceLayer.path = paths[0].surface
+
+        guard !reduceMotion,
+              level > 0.02,
+              level < 0.98 else { return }
+
+        let keyTimes = (0..<frameCount).map { frame in
+            NSNumber(value: Double(frame) / Double(frameCount))
+        }
+        let fillAnimation = CAKeyframeAnimation(keyPath: "path")
+        fillAnimation.values = paths.map(\.fill)
+        fillAnimation.keyTimes = keyTimes
+        fillAnimation.duration = Self.cycleDuration
+        fillAnimation.repeatCount = .infinity
+        fillAnimation.calculationMode = .discrete
+        fillAnimation.isRemovedOnCompletion = false
+        liquidLayer.add(fillAnimation, forKey: Self.fillAnimationKey)
+
+        let surfaceAnimation = CAKeyframeAnimation(keyPath: "path")
+        surfaceAnimation.values = paths.map(\.surface)
+        surfaceAnimation.keyTimes = keyTimes
+        surfaceAnimation.duration = Self.cycleDuration
+        surfaceAnimation.repeatCount = .infinity
+        surfaceAnimation.calculationMode = .discrete
+        surfaceAnimation.isRemovedOnCompletion = false
+        surfaceLayer.add(surfaceAnimation, forKey: Self.surfaceAnimationKey)
+    }
+
 }
 
 private struct ProviderLogo: View {
@@ -372,7 +491,7 @@ private struct ProviderLogo: View {
         .accessibilityHidden(true)
     }
 
-    private static func image(named name: String) -> NSImage? {
+    fileprivate static func image(named name: String) -> NSImage? {
         let installedBundle = Bundle.main.resourceURL
             .map { $0.appendingPathComponent("NotchCapture_NotchCapture.bundle") }
             .flatMap(Bundle.init(url:))

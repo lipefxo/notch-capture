@@ -347,6 +347,19 @@ final class ModelUsageTests: XCTestCase {
         )
     }
 
+    func testLiquidWaveFillClosesAlongTheBottomEdgeInsteadOfDiagonally() {
+        let paths = LiquidWaveGeometry.paths(
+            in: CGRect(x: 0, y: 0, width: 20, height: 20),
+            level: 0.5,
+            phase: 0,
+            amplitude: 0
+        )
+
+        XCTAssertTrue(paths.fill.contains(CGPoint(x: 1, y: 1)))
+        XCTAssertTrue(paths.fill.contains(CGPoint(x: 19, y: 1)))
+        XCTAssertFalse(paths.fill.contains(CGPoint(x: 10, y: 19)))
+    }
+
     private static func jwt(sub: String) -> String {
         let header = Data(#"{"alg":"none"}"#.utf8).base64URLEncodedString()
         let payload = Data("{\"sub\":\"\(sub)\"}".utf8).base64URLEncodedString()
