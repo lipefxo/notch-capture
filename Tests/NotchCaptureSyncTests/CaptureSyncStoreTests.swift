@@ -53,4 +53,22 @@ struct CaptureSyncStoreTests {
         #expect(await restored.records().isEmpty)
         #expect(await restored.records(includingDeleted: true).first?.deletedAt == deletedAt)
     }
+
+    @Test func synchronizeWithoutCloudKitEntitlementsThrowsSafely() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let cacheURL = directory.appendingPathComponent("captures.json")
+        let store = CaptureSyncStore(
+            containerIdentifier: "iCloud.com.example.NotchCaptureTests",
+            cacheURL: cacheURL
+        )
+
+        do {
+            _ = try await store.synchronize()
+            #expect(Bool(false), "An ad-hoc test runner must remain safely offline")
+        } catch CaptureSyncError.cloudKitRequiresSignedDevice {
+            // Expected: SwiftPM test runners have no CloudKit entitlements.
+        }
+    }
 }

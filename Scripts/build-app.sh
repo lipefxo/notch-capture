@@ -73,6 +73,10 @@ if [[ -e "$SPARKLE_B/Updater.app" ]]; then
   sign --preserve-metadata=entitlements "$SPARKLE_B/Updater.app"
 fi
 sign "$FRAMEWORKS/Sparkle.framework"
-sign --entitlements "$ROOT/Support/NotchCapture.entitlements" "$APP_DIR"
+if [[ "$IDENTITY" == "-" ]]; then
+  sign "$APP_DIR"
+else
+  sign --entitlements "$ROOT/Support/NotchCapture.entitlements" "$APP_DIR"
+fi
 
 echo "$APP_DIR"

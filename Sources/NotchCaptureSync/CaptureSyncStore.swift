@@ -1,4 +1,5 @@
 import Foundation
+import Security
 
 public enum CaptureSyncError: LocalizedError, Sendable {
     case cloudKitRequiresSignedDevice
@@ -67,6 +68,13 @@ public actor CaptureSyncStore {
     /// If CloudKit fails, the unacknowledged mutation remains in the outbox.
     @discardableResult
     public func synchronize(includingDeleted: Bool = false) async throws -> [CaptureRecord] {
+        guard Self.hasCloudKitEntitlements(for: containerIdentifier) else {
+            // CKContainer traps instead of throwing when the process is not
+            // provisioned for its requested container. Check the effective
+            // runtime entitlements before CloudKit has a chance to initialize.
+            throw CaptureSyncError.cloudKitRequiresSignedDevice
+        }
+
 #if targetEnvironment(simulator)
         // CKContainer traps instead of throwing when a Simulator app lacks a
         // provisioned iCloud entitlement. Keep previews safely offline; signed
@@ -110,6 +118,26 @@ public actor CaptureSyncStore {
         try cache.saveRecords(cachedRecords)
         return includingDeleted ? cachedRecords : cachedRecords.filter { $0.deletedAt == nil }
 #endif
+    }
+
+    private nonisolated static func hasCloudKitEntitlements(
+        for containerIdentifier: String
+    ) -> Bool {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+
+        let services = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.developer.icloud-services" as CFString,
+            nil
+        ) as? [String]
+        guard services?.contains("CloudKit") == true else { return false }
+
+        let containers = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.developer.icloud-container-identifiers" as CFString,
+            nil
+        ) as? [String]
+        return containers?.contains(containerIdentifier) == true
     }
 
     private func persist() throws {
