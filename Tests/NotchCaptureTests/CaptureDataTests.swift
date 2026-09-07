@@ -487,6 +487,7 @@ final class CaptureDataTests: XCTestCase {
         let container = try makeContainer()
         let repository = ItemRepository(modelContext: container.mainContext)
         let folder = try repository.createList(name: "  Research  ")
+        let item = try repository.createItem(text: "Paper", origin: .manual, list: folder)
 
         XCTAssertEqual(folder.name, "Research")
         XCTAssertThrowsError(try repository.createList(name: "research")) { error in
@@ -495,8 +496,10 @@ final class CaptureDataTests: XCTestCase {
             }
         }
 
-        try repository.renameList(folder, to: "Reading")
+        let renamedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        try repository.renameList(folder, to: "Reading", now: renamedAt)
         XCTAssertEqual(folder.name, "Reading")
+        XCTAssertEqual(item.updatedAt, renamedAt)
         XCTAssertThrowsError(try repository.renameList(folder, to: " \n ")) { error in
             guard case ItemRepositoryError.emptyListName = error else {
                 return XCTFail("Unexpected error: \(error)")
@@ -551,13 +554,15 @@ final class CaptureDataTests: XCTestCase {
         XCTAssertEqual(existingInbox.list?.id, folder.id)
         XCTAssertEqual(try repository.fetch(scope: .list(folder.id)).first?.id, existingInbox.id)
 
-        XCTAssertEqual(try repository.deleteList(folder), 3)
+        let deletedAt = Date(timeIntervalSince1970: 2_000_000_000)
+        XCTAssertEqual(try repository.deleteList(folder, now: deletedAt), 3)
 
         let storedFolders = try container.mainContext.fetch(FetchDescriptor<ItemList>())
         XCTAssertTrue(storedFolders.isEmpty)
         let inbox = try repository.fetch(scope: .inbox)
         XCTAssertEqual(inbox.map(\.id), [existingInbox.id, first.id, second.id])
         XCTAssertTrue(inbox.allSatisfy { $0.list == nil })
+        XCTAssertTrue(inbox.allSatisfy { $0.updatedAt == deletedAt })
     }
 
     func testMissingReorderItemDoesNotPartiallyApplyAssignments() throws {

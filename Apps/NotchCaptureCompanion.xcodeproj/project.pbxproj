@@ -1,0 +1,381 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		100000000000000000000001 /* NotchCaptureMobileApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000001 /* NotchCaptureMobileApp.swift */; };
+		100000000000000000000002 /* MobileCaptureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* MobileCaptureModel.swift */; };
+		100000000000000000000003 /* MobileRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000003 /* MobileRootView.swift */; };
+		100000000000000000000004 /* NotchCaptureWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000004 /* NotchCaptureWatchApp.swift */; };
+		100000000000000000000005 /* WatchCaptureModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000005 /* WatchCaptureModel.swift */; };
+		100000000000000000000006 /* WatchRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000006 /* WatchRootView.swift */; };
+		100000000000000000000007 /* NotchCaptureSync in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000001 /* NotchCaptureSync */; };
+		100000000000000000000008 /* NotchCaptureSync in Frameworks */ = {isa = PBXBuildFile; productRef = A00000000000000000000002 /* NotchCaptureSync */; };
+		100000000000000000000009 /* Notch Capture Watch.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = 200000000000000000000008 /* Notch Capture Watch.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		300000000000000000000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 400000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 500000000000000000000002;
+			remoteInfo = "Notch Capture Watch";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		600000000000000000000001 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				100000000000000000000009 /* Notch Capture Watch.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		200000000000000000000001 /* NotchCaptureMobileApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchCaptureMobileApp.swift; sourceTree = "<group>"; };
+		200000000000000000000002 /* MobileCaptureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileCaptureModel.swift; sourceTree = "<group>"; };
+		200000000000000000000003 /* MobileRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileRootView.swift; sourceTree = "<group>"; };
+		200000000000000000000004 /* NotchCaptureWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotchCaptureWatchApp.swift; sourceTree = "<group>"; };
+		200000000000000000000005 /* WatchCaptureModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchCaptureModel.swift; sourceTree = "<group>"; };
+		200000000000000000000006 /* WatchRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRootView.swift; sourceTree = "<group>"; };
+		200000000000000000000007 /* Notch Capture.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Notch Capture.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000008 /* Notch Capture Watch.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Notch Capture Watch.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		200000000000000000000009 /* iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = iOS.entitlements; sourceTree = "<group>"; };
+		20000000000000000000000A /* Watch.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Watch.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		700000000000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (100000000000000000000007 /* NotchCaptureSync in Frameworks */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		700000000000000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (100000000000000000000008 /* NotchCaptureSync in Frameworks */, );
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		800000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				800000000000000000000002 /* iOS */,
+				800000000000000000000003 /* Watch */,
+				800000000000000000000004 /* Configuration */,
+				800000000000000000000005 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		800000000000000000000002 /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000001 /* NotchCaptureMobileApp.swift */,
+				200000000000000000000002 /* MobileCaptureModel.swift */,
+				200000000000000000000003 /* MobileRootView.swift */,
+			);
+			path = iOS;
+			sourceTree = "<group>";
+		};
+		800000000000000000000003 /* Watch */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000004 /* NotchCaptureWatchApp.swift */,
+				200000000000000000000005 /* WatchCaptureModel.swift */,
+				200000000000000000000006 /* WatchRootView.swift */,
+			);
+			path = Watch;
+			sourceTree = "<group>";
+		};
+		800000000000000000000004 /* Configuration */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000009 /* iOS.entitlements */,
+				20000000000000000000000A /* Watch.entitlements */,
+			);
+			path = Configuration;
+			sourceTree = "<group>";
+		};
+		800000000000000000000005 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				200000000000000000000007 /* Notch Capture.app */,
+				200000000000000000000008 /* Notch Capture Watch.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		500000000000000000000001 /* Notch Capture */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000002 /* Build configuration list for PBXNativeTarget "Notch Capture" */;
+			buildPhases = (
+				B00000000000000000000001 /* Sources */,
+				700000000000000000000001 /* Frameworks */,
+				600000000000000000000001 /* Embed Watch Content */,
+			);
+			buildRules = ( );
+			dependencies = (C00000000000000000000001 /* PBXTargetDependency */, );
+			name = "Notch Capture";
+			packageProductDependencies = (A00000000000000000000001 /* NotchCaptureSync */, );
+			productName = NotchCaptureMobile;
+			productReference = 200000000000000000000007 /* Notch Capture.app */;
+			productType = "com.apple.product-type.application";
+		};
+		500000000000000000000002 /* Notch Capture Watch */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 900000000000000000000003 /* Build configuration list for PBXNativeTarget "Notch Capture Watch" */;
+			buildPhases = (
+				B00000000000000000000002 /* Sources */,
+				700000000000000000000002 /* Frameworks */,
+			);
+			buildRules = ( );
+			dependencies = ( );
+			name = "Notch Capture Watch";
+			packageProductDependencies = (A00000000000000000000002 /* NotchCaptureSync */, );
+			productName = NotchCaptureWatch;
+			productReference = 200000000000000000000008 /* Notch Capture Watch.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		400000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					500000000000000000000001 = {CreatedOnToolsVersion = 26.4; ProvisioningStyle = Automatic; };
+					500000000000000000000002 = {CreatedOnToolsVersion = 26.4; ProvisioningStyle = Automatic; };
+				};
+			};
+			buildConfigurationList = 900000000000000000000001 /* Build configuration list for PBXProject "NotchCaptureCompanion" */;
+			compatibilityVersion = "Xcode 16.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base, );
+			mainGroup = 800000000000000000000001;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (D00000000000000000000001 /* XCLocalSwiftPackageReference ".." */, );
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 800000000000000000000005 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				500000000000000000000001 /* Notch Capture */,
+				500000000000000000000002 /* Notch Capture Watch */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B00000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000001 /* NotchCaptureMobileApp.swift in Sources */,
+				100000000000000000000002 /* MobileCaptureModel.swift in Sources */,
+				100000000000000000000003 /* MobileRootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B00000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				100000000000000000000004 /* NotchCaptureWatchApp.swift in Sources */,
+				100000000000000000000005 /* WatchCaptureModel.swift in Sources */,
+				100000000000000000000006 /* WatchRootView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		C00000000000000000000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 500000000000000000000002 /* Notch Capture Watch */;
+			targetProxy = 300000000000000000000001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		E00000000000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		E00000000000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				COPY_PHASE_STRIP = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = Release;
+		};
+		E00000000000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Configuration/iOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_ASSET_PATHS = "";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Notch Capture";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lipe.notchcapture.companion;
+				PRODUCT_NAME = "Notch Capture";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		E00000000000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Configuration/iOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Notch Capture";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lipe.notchcapture.companion;
+				PRODUCT_NAME = "Notch Capture";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		E00000000000000000000005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Configuration/Watch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Notch Capture";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.lipe.notchcapture.companion;
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lipe.notchcapture.companion.watchkitapp;
+				PRODUCT_NAME = "Notch Capture Watch";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		E00000000000000000000006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Configuration/Watch.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Notch Capture";
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.lipe.notchcapture.companion;
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKRunsIndependentlyOfCompanionApp = YES;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.lipe.notchcapture.companion.watchkitapp;
+				PRODUCT_NAME = "Notch Capture Watch";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		900000000000000000000001 /* Build configuration list for PBXProject "NotchCaptureCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (E00000000000000000000001 /* Debug */, E00000000000000000000002 /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000002 /* Build configuration list for PBXNativeTarget "Notch Capture" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (E00000000000000000000003 /* Debug */, E00000000000000000000004 /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		900000000000000000000003 /* Build configuration list for PBXNativeTarget "Notch Capture Watch" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (E00000000000000000000005 /* Debug */, E00000000000000000000006 /* Release */, );
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		D00000000000000000000001 /* XCLocalSwiftPackageReference ".." */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ..;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A00000000000000000000001 /* NotchCaptureSync */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D00000000000000000000001 /* XCLocalSwiftPackageReference ".." */;
+			productName = NotchCaptureSync;
+		};
+		A00000000000000000000002 /* NotchCaptureSync */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D00000000000000000000001 /* XCLocalSwiftPackageReference ".." */;
+			productName = NotchCaptureSync;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = 400000000000000000000001 /* Project object */;
+}

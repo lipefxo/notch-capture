@@ -82,6 +82,41 @@ Open `Package.swift` in Xcode for development. Run tests with:
 swift test
 ```
 
+## iPhone and Apple Watch companion
+
+The companion project lives at `Apps/NotchCaptureCompanion.xcodeproj` and contains native iOS 17 and watchOS 10 targets. The iPhone app supports quick note/task capture, search, editing, pinning, completion, Archive, and Trash. The Watch app is intentionally text-first: dictate or scribble a capture, review recent items, and complete tasks with a tap.
+
+Both companions are offline-first. Changes are written to a local JSON cache and durable outbox immediately, then reconciled through the private CloudKit database for `iCloud.com.lipe.notchcapture`. The Mac app mirrors the existing SwiftData ledger every 20 seconds and keeps attachment files local; attachment transfer is not part of the first companion release.
+
+Before running on devices:
+
+1. Open `Apps/NotchCaptureCompanion.xcodeproj` in Xcode and select your Apple Developer team for both targets.
+2. Create or select the `iCloud.com.lipe.notchcapture` container in Signing & Capabilities, with CloudKit enabled, for the Mac, iOS, and Watch bundle identifiers.
+3. Run each app once against the Development environment. CloudKit creates the private `CaptureRecord` record type from the fields written by the app.
+4. In CloudKit Console, promote the schema to Production before distributing a build.
+
+With matching iOS and watchOS simulator runtimes installed, check the complete embedded app without signing with:
+
+```sh
+xcodebuild -project Apps/NotchCaptureCompanion.xcodeproj \
+  -scheme "Notch Capture" -destination "generic/platform=iOS Simulator" \
+  SYMROOT="$PWD/.context/CompanionBuild" \
+  OBJROOT="$PWD/.context/CompanionIntermediates" \
+  CODE_SIGNING_ALLOWED=NO build
+```
+
+The Watch target can also be compiled on its own:
+
+```sh
+xcodebuild -project Apps/NotchCaptureCompanion.xcodeproj \
+  -target "Notch Capture Watch" -sdk watchsimulator \
+  SYMROOT="$PWD/.context/CompanionBuild" \
+  OBJROOT="$PWD/.context/CompanionIntermediates" \
+  -arch arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
+```
+
+The combined iPhone scheme embeds the Watch app. On physical devices, all three apps must be signed by the same team and use the same iCloud container. iCloud failures never block local capture; queued edits retry on the next sync.
+
 The first launch shows a three-step tour of the main features (capture, organizing, music). It resumes where you left off until finished.
 
 ## Idle behavior
