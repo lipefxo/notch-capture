@@ -27,7 +27,11 @@ let package = Package(
                 .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/NotchCapture",
+            resources: [
+                .process("Resources")
+            ],
             linkerSettings: [
+                .linkedLibrary("sqlite3"),
                 // The bundled app carries Sparkle in Contents/Frameworks; unsafeFlags
                 // is acceptable because this leaf executable is never a dependency.
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
@@ -36,7 +40,10 @@ let package = Package(
         .testTarget(
             name: "NotchCaptureTests",
             dependencies: ["NotchCapture"],
-            path: "Tests/NotchCaptureTests"
+            path: "Tests/NotchCaptureTests",
+            linkerSettings: [
+                .linkedLibrary("sqlite3")
+            ]
         ),
         .testTarget(
             name: "NotchCaptureSyncTests",

@@ -1,5 +1,6 @@
 import Foundation
 import NotchCaptureSync
+import Security
 import SwiftData
 
 /// Mirrors the local SwiftData ledger into the small, platform-neutral records
@@ -10,6 +11,16 @@ import SwiftData
 final class CompanionSyncService {
     private static let containerIdentifier = "iCloud.com.lipe.notchcapture"
     private static let knownIDsDefaultsKey = "companionSync.knownLocalItemIDs"
+
+    private static var hasCloudKitEntitlement: Bool {
+        guard let task = SecTaskCreateFromSelf(nil) else { return false }
+        let entitlement = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.developer.icloud-services" as CFString,
+            nil
+        )
+        return entitlement != nil
+    }
 
     private let modelContext: ModelContext
     private let store: CaptureSyncStore
@@ -25,7 +36,10 @@ final class CompanionSyncService {
         resetDeletionBaseline: Bool = false
     ) {
         self.modelContext = modelContext
-        self.store = CaptureSyncStore(containerIdentifier: Self.containerIdentifier)
+        self.store = CaptureSyncStore(
+            containerIdentifier: Self.containerIdentifier,
+            cloudKitEnabled: Self.hasCloudKitEntitlement
+        )
         self.defaults = defaults
         if resetDeletionBaseline {
             defaults.removeObject(forKey: Self.knownIDsDefaultsKey)

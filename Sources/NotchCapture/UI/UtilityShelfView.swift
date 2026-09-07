@@ -27,66 +27,66 @@ struct UtilityShelfView: View {
     }
 
     private var compactSummary: some View {
-        Button {
-            if reduceMotion {
-                isExpanded.toggle()
-            } else {
-                withAnimation(NotchMotion.content) {
-                    isExpanded.toggle()
-                }
-            }
-        } label: {
-            HStack(spacing: 9) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(NotchTheme.secondaryText)
-                    .frame(width: 18, height: 18)
+        HStack(spacing: 9) {
+            Button(action: toggleExpanded) {
+                HStack(spacing: 9) {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                        .frame(width: 18, height: 18)
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Utilities")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(NotchTheme.primaryText)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Utilities")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(NotchTheme.primaryText)
 
-                    HStack(spacing: 5) {
-                        Image(systemName: AudioVolumePresentation.symbolName(for: viewModel.audioOutputState.volume))
-                            .font(.system(size: 9.5, weight: .medium))
-                            .foregroundStyle(NotchTheme.secondaryText)
-                        Text(compactOutputTitle)
-                            .lineLimit(1)
-
-                        if let playbackSummary {
-                            Text("·")
-                                .foregroundStyle(NotchTheme.tertiaryText)
-                            Image(systemName: playbackSummary.icon)
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(playbackSummary.isRecovery ? NotchTheme.warning : NotchTheme.secondaryText)
-                            Text(playbackSummary.title)
+                        HStack(spacing: 5) {
+                            Image(systemName: AudioVolumePresentation.symbolName(for: viewModel.audioOutputState.volume))
+                                .font(.system(size: 9.5, weight: .medium))
+                                .foregroundStyle(NotchTheme.secondaryText)
+                            Text(compactOutputTitle)
                                 .lineLimit(1)
-                        }
-                    }
-                    .font(.system(size: 9.5, weight: .regular))
-                    .foregroundStyle(NotchTheme.secondaryText)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
 
+                            if let playbackSummary {
+                                Text("·")
+                                    .foregroundStyle(NotchTheme.tertiaryText)
+                                Image(systemName: playbackSummary.icon)
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(playbackSummary.isRecovery ? NotchTheme.warning : NotchTheme.secondaryText)
+                                Text(playbackSummary.title)
+                                    .lineLimit(1)
+                            }
+                        }
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundStyle(NotchTheme.secondaryText)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .contentShape(Rectangle())
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.84))
+            .help(utilityHelpText)
+            .accessibilityLabel("Utility shelf")
+            .accessibilityValue("\(isExpanded ? "Expanded" : "Collapsed"). \(compactAccessibilitySummary)")
+            .accessibilityHint(isExpanded ? "Hides output and playback controls" : "Shows output and playback controls")
+
+            if viewModel.modelUsageState.showsUtilityMeters {
+                ModelUsageLogoStrip(state: viewModel.modelUsageState)
+            }
+
+            Button(action: toggleExpanded) {
                 Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(NotchTheme.secondaryText)
                     .frame(width: 22, height: 22)
             }
-            .padding(.horizontal, 20)
-            .frame(height: 44)
-            .contentShape(Rectangle())
+            .buttonStyle(PressableIconButtonStyle(width: 22))
+            .help(isExpanded ? "Collapse utility controls" : "Expand utility controls")
+            .accessibilityLabel(isExpanded ? "Collapse utility controls" : "Expand utility controls")
         }
-        .buttonStyle(NotchPressButtonStyle(pressedScale: 0.995, pressedOpacity: 0.84))
-        .help(
-            isSplitOutput
-                ? "Media and system sounds use different outputs. \(isExpanded ? "Collapse" : "Expand") utility controls for details."
-                : (isExpanded ? "Collapse utility controls" : "Expand utility controls")
-        )
-        .accessibilityLabel("Utility shelf")
-        .accessibilityValue("\(isExpanded ? "Expanded" : "Collapsed"). \(compactAccessibilitySummary)")
-        .accessibilityHint(isExpanded ? "Hides output and playback controls" : "Shows output and playback controls")
+        .padding(.horizontal, 20)
+        .frame(height: 44)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(NotchTheme.hairline)
@@ -99,6 +99,22 @@ struct UtilityShelfView: View {
                 .frame(height: 1)
                 .accessibilityHidden(true)
         }
+    }
+
+    private func toggleExpanded() {
+        if reduceMotion {
+            isExpanded.toggle()
+        } else {
+            withAnimation(NotchMotion.content) {
+                isExpanded.toggle()
+            }
+        }
+    }
+
+    private var utilityHelpText: String {
+        isSplitOutput
+            ? "Media and system sounds use different outputs. \(isExpanded ? "Collapse" : "Expand") utility controls for details."
+            : (isExpanded ? "Collapse utility controls" : "Expand utility controls")
     }
 
     private var expandedControls: some View {
@@ -180,6 +196,9 @@ struct UtilityShelfView: View {
         if let playbackSummary {
             parts.append(playbackSummary.title)
         }
+        if let usageSummary = viewModel.modelUsageState.compactSummary {
+            parts.append(usageSummary)
+        }
         return parts.joined(separator: ", ")
     }
 }
@@ -187,6 +206,7 @@ struct UtilityShelfView: View {
 private struct MusicPlayerBand: View {
     @ObservedObject var viewModel: AppViewModel
     let presentation: NowPlayingPresentation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var snapshot: NowPlayingSnapshot { presentation.snapshot }
 
@@ -234,6 +254,7 @@ private struct MusicPlayerBand: View {
                     }
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .musicTrackTransition(id: snapshot.trackKey, reduceMotion: reduceMotion)
 
                     HStack(spacing: 14) {
                         transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)

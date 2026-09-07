@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 
 struct CollapsedActivityPillView: View {
+    private enum ExtendedFallbackMetrics {
+        static let horizontalInset: CGFloat = 9
+        static let mediaToUsageSpacing: CGFloat = 14
+        static let usageLogoSize: CGFloat = 20
+        static let usageLogoSpacing: CGFloat = 10
+    }
+
     @ObservedObject var viewModel: AppViewModel
     let presentationSize: CompactPresentationSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -33,11 +40,13 @@ struct CollapsedActivityPillView: View {
     }
 
     /// Minimal full-screen presentation hugs the physical notch while keeping
-    /// the active music controls and volume entry inside the compact shell.
+    /// the active music controls and usage status inside the compact shell.
     private var minimalNotchedLayout: some View {
         HStack(spacing: 4) {
             notchedMusicWing
-            compactVolumeButton
+            if viewModel.modelUsageState.showsUtilityMeters {
+                collapsedUsageLogos(size: 16, spacing: 7)
+            }
         }
             .frame(
                 width: compactMetrics.contentSize.width,
@@ -90,7 +99,9 @@ struct CollapsedActivityPillView: View {
                     .frame(maxWidth: .infinity)
                 CollapsedTransportControls(viewModel: viewModel, snapshot: snapshot)
                     .frame(width: 52)
-                compactVolumeButton
+                if viewModel.modelUsageState.showsUtilityMeters {
+                    collapsedUsageLogos(size: 16, spacing: 7)
+                }
             }
             .padding(.horizontal, 12)
             .frame(width: compactMetrics.contentSize.width, height: 34)
@@ -99,24 +110,21 @@ struct CollapsedActivityPillView: View {
         }
     }
 
-    private var compactVolumeButton: some View {
-        CompactVolumeButton(
-            viewModel: viewModel,
-            glyphSize: 10.5,
-            width: CompactSurfaceMetrics.audioControlSlot - 6
-        )
-    }
-
     @ViewBuilder
     private var extendedFallbackLayout: some View {
         switch viewModel.collapsedActivityContent {
         case let .musicOnly(snapshot):
-            HStack(spacing: 8) {
+            HStack(spacing: ExtendedFallbackMetrics.mediaToUsageSpacing) {
                 extendedMusicInfoView(snapshot)
                     .frame(maxWidth: .infinity)
-                CompactVolumeButton(viewModel: viewModel)
+                if viewModel.modelUsageState.showsUtilityMeters {
+                    collapsedUsageLogos(
+                        size: ExtendedFallbackMetrics.usageLogoSize,
+                        spacing: ExtendedFallbackMetrics.usageLogoSpacing
+                    )
+                }
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, ExtendedFallbackMetrics.horizontalInset)
             .frame(width: compactMetrics.contentSize.width, height: compactMetrics.contentSize.height)
         case nil:
             EmptyView()
@@ -148,8 +156,20 @@ struct CollapsedActivityPillView: View {
     }
 
     private var notchedTrailingWing: some View {
-        CompactVolumeButton(viewModel: viewModel)
-            .frame(height: compactMetrics.contentSize.height)
+        Group {
+            if viewModel.modelUsageState.showsUtilityMeters {
+                collapsedUsageLogos(size: 16, spacing: 7)
+            }
+        }
+        .frame(height: compactMetrics.contentSize.height)
+    }
+
+    private func collapsedUsageLogos(size: CGFloat, spacing: CGFloat) -> some View {
+        ModelUsageLogoStrip(
+            state: viewModel.modelUsageState,
+            logoSize: size,
+            spacing: spacing
+        )
     }
 
     private func musicInfoView(
@@ -195,6 +215,7 @@ struct CollapsedActivityPillView: View {
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .layoutPriority(1)
+        .musicTrackTransition(id: snapshot.trackKey, reduceMotion: reduceMotion)
     }
 
     @ViewBuilder
@@ -231,6 +252,7 @@ struct CollapsedActivityPillView: View {
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
+                            .musicTrackTransition(id: snapshot.trackKey, reduceMotion: reduceMotion)
                         }
                         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
                         .help("Open \(snapshot.title) in Notch Capture")

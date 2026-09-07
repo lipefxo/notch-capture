@@ -532,6 +532,7 @@ extension AppViewModel {
         var onRetryStudioLight: () -> Void = {}
         var onForgetStudioLight: () -> Void = {}
         var onRefreshStudioLight: () -> Void = {}
+        var onRefreshModelUsage: () -> Void = {}
         var onSetStudioLightPower: (Bool) -> Void = { _ in }
         var onSetStudioLightBrightness: (Double, Bool) -> Void = { _, _ in }
         var onSetStudioLightColorTemperature: (Int, Bool) -> Void = { _, _ in }

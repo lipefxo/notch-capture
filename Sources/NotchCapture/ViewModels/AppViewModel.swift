@@ -137,6 +137,7 @@ final class AppViewModel: ObservableObject {
     @Published var nowPlayingArtwork: NSImage?
     @Published var audioOutputState: AudioOutputViewState
     @Published var studioLightState: StudioLightViewState
+    @Published var modelUsageState: ModelUsageViewState
     @Published var cameraPreview: CameraService.PreviewState = .idle
     @Published var cameraControls: CameraControlService.Capabilities = .none
     /// In the device's own units, where 100 is 1x — the same scale as
@@ -208,6 +209,7 @@ final class AppViewModel: ObservableObject {
         nowPlayingArtwork: NSImage? = nil,
         audioOutputState: AudioOutputViewState = .empty,
         studioLightState: StudioLightViewState = .empty,
+        modelUsageState: ModelUsageViewState = .empty,
         composerSearchesAllFolders: Bool = true,
         isFolderSectionExpanded: Bool = false,
         shortcuts: [Shortcut] = [
@@ -232,6 +234,7 @@ final class AppViewModel: ObservableObject {
         self.nowPlayingArtwork = nowPlayingArtwork
         self.audioOutputState = audioOutputState
         self.studioLightState = studioLightState
+        self.modelUsageState = modelUsageState
         self.composerSearchesAllFolders = composerSearchesAllFolders
         self.isFolderSectionExpanded = isFolderSectionExpanded
         self.shortcuts = shortcuts
@@ -1936,6 +1939,7 @@ final class AppViewModel: ObservableObject {
     func retryStudioLight() { hooks.onRetryStudioLight() }
     func forgetStudioLight() { hooks.onForgetStudioLight() }
     func refreshStudioLight() { hooks.onRefreshStudioLight() }
+    func refreshModelUsage() { hooks.onRefreshModelUsage() }
     func setStudioLightPower(_ isOn: Bool) {
         hooks.onSetStudioLightPower(isOn)
     }
@@ -2287,7 +2291,8 @@ extension AppViewModel {
                 artworkURL: nil
             ),
             nowPlayingArtwork: NSImage(contentsOf: thumbnailURL),
-            audioOutputState: .preview
+            audioOutputState: .preview,
+            modelUsageState: .preview
         )
         if let compactSizeArgument = CommandLine.arguments.first(where: {
             $0.hasPrefix("--preview-compact-size=")
