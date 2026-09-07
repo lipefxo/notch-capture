@@ -12,6 +12,7 @@ struct SettingsView: View {
                     VStack(alignment: .leading, spacing: 14) {
                         generalSection
                         mediaSection
+                        modelUsageSection
                         studioLightSection
                         shortcutsSection
                         privacyAndDataSection
@@ -176,6 +177,10 @@ struct SettingsView: View {
         }
     }
 
+    private var modelUsageSection: some View {
+        ModelUsageSettingsSection(viewModel: viewModel)
+    }
+
     private var studioLightSection: some View {
         SettingsGroup(title: "Studio Light", subtitle: "Experimental MOLUS G60 control") {
             HStack(spacing: 8) {
@@ -303,7 +308,7 @@ struct SettingsView: View {
 
             SettingsDivider()
             Text(
-                "Link metadata and music artwork are requested only when needed. Update checks contact the app’s update service."
+                "Link metadata and music artwork are requested only when needed. Remaining ChatGPT and Cursor usage is requested only when those apps are signed in on this Mac. Update checks contact the app’s update service."
             )
             .font(.system(size: 9))
             .foregroundStyle(NotchTheme.tertiaryText)
@@ -371,7 +376,7 @@ struct SettingsView: View {
     }
 }
 
-private struct SettingsGroup<Content: View>: View {
+struct SettingsGroup<Content: View>: View {
     let title: String
     let subtitle: String?
     @ViewBuilder let content: Content
@@ -412,7 +417,7 @@ private struct SettingsGroup<Content: View>: View {
     }
 }
 
-private struct SettingsDivider: View {
+struct SettingsDivider: View {
     var leadingInset: CGFloat = 0
 
     var body: some View {
@@ -467,7 +472,7 @@ private struct SettingsToggleRow: View {
     }
 }
 
-private struct SettingsRowIcon: View {
+struct SettingsRowIcon: View {
     let symbol: String
 
     var body: some View {
@@ -480,7 +485,7 @@ private struct SettingsRowIcon: View {
     }
 }
 
-private struct SettingsButtonStyle: ButtonStyle {
+struct SettingsButtonStyle: ButtonStyle {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     func makeBody(configuration: Configuration) -> some View {
