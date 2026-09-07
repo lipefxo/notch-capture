@@ -2,6 +2,17 @@ import XCTest
 @testable import NotchCapture
 
 final class NowPlayingModelTests: XCTestCase {
+    func testWaveformLevelsClampPadAndRollForward() {
+        XCTAssertEqual(
+            MusicWaveformLevels(values: [-1, 0.25, 2]).values,
+            [0, 0, 0.25, 1]
+        )
+        XCTAssertEqual(
+            MusicWaveformLevels(values: [0.1, 0.2, 0.3, 0.4]).appending(0.8).values,
+            [0.2, 0.3, 0.4, 0.8]
+        )
+    }
+
     func testConnectionActionsMatchRecoveryState() {
         let reconnectable: Set<NowPlayingConnectionState> = [.disconnected, .permissionDenied]
 

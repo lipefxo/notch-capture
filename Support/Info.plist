@@ -30,6 +30,8 @@
     <string>Notch Capture controls Apple Music and Spotify to show and control what's playing.</string>
     <key>NSCameraUsageDescription</key>
     <string>Notch Capture shows a live camera preview in the notch so you can check yourself before a call. Nothing is recorded or sent anywhere.</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Notch Capture reads the currently playing music's audio level to animate its album artwork. Audio is never recorded or saved.</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Notch Capture uses Bluetooth to connect to and control your studio light.</string>
     <key>NSPrincipalClass</key>

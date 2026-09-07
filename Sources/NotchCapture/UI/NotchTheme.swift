@@ -167,6 +167,8 @@ enum NotchMotion {
     static let insertionDuration: TimeInterval = 0.18
     static let removalDuration: TimeInterval = 0.14
     static let musicTrackSwapDuration: TimeInterval = 0.20
+    static let musicPlaybackStateDuration: TimeInterval = 0.28
+    static let musicWaveformDuration: TimeInterval = 0.08
     static let musicTrackSwapOffset: CGFloat = 6
     static let musicTrackSwapBlurRadius: CGFloat = 2
     static let stagingDelay: TimeInterval = 0.04
@@ -217,6 +219,8 @@ enum NotchMotion {
     static let insertion = easeOut(duration: insertionDuration)
     static let removal = easeOut(duration: removalDuration)
     static let musicTrackSwap = easeOut(duration: musicTrackSwapDuration)
+    static let musicPlaybackState = easeOut(duration: musicPlaybackStateDuration)
+    static let musicWaveform = Animation.linear(duration: musicWaveformDuration)
     static let dropEnter = selection.animation
     static let dropExit = removal
     static let composerFocus = easeOut(duration: composerFocusDuration)
