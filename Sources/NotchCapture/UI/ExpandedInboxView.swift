@@ -1417,7 +1417,7 @@ struct ExpandedInboxView: View {
     private var ledgerBody: some View {
         VStack(spacing: 0) {
             if viewModel.canUndoLedgerAction {
-                ledgerUndoBanner
+                LedgerUndoBanner(viewModel: viewModel)
             }
 
             Group {
@@ -1451,6 +1451,10 @@ struct ExpandedInboxView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(NotchTheme.graphite)
+        .animation(
+            reduceMotion ? NotchMotion.reducedMotion : NotchMotion.content,
+            value: viewModel.canUndoLedgerAction
+        )
     }
 
     private var itemFeed: some View {
@@ -1558,45 +1562,6 @@ struct ExpandedInboxView: View {
         if draggedItemID != nil, reorderTarget != nil, previewUnpinnedItems.isEmpty {
             emptyGroupDropTarget(title: "Drop to unpin", isPinned: false)
         }
-    }
-
-    private var ledgerUndoBanner: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.uturn.backward")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(NotchTheme.primaryAccent)
-                .frame(width: 18, height: 18)
-
-            Text(viewModel.undoLedgerActionTitle ?? "Undo last change")
-                .font(.system(size: 10.5, weight: .medium))
-                .foregroundStyle(NotchTheme.primaryText)
-                .lineLimit(1)
-
-            Spacer(minLength: 8)
-
-            Button("Undo") {
-                _ = viewModel.undoLastLedgerAction()
-            }
-            .font(.system(size: 10.5, weight: .semibold))
-            .foregroundStyle(NotchTheme.primaryAccent)
-            .buttonStyle(CompactTextButtonStyle())
-            .notchHitTarget(Rectangle())
-            .help("Undo the last ledger change")
-            .accessibilityLabel("Undo")
-            .accessibilityHint(viewModel.undoLedgerActionTitle ?? "Undo the last ledger change")
-        }
-        .padding(.horizontal, 20)
-        .frame(height: 36)
-        .background(NotchTheme.primaryAccent.opacity(0.06))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(NotchTheme.hairline)
-                .frame(height: 1)
-                .accessibilityHidden(true)
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel(viewModel.undoLedgerActionTitle ?? "Undo last ledger change")
-        .transition(reduceMotion ? .opacity : .opacity.combined(with: .offset(y: -4)))
     }
 
     private func folderSectionHeader(count: Int) -> some View {

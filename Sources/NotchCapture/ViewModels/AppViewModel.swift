@@ -167,7 +167,8 @@ final class AppViewModel: ObservableObject {
         didSet { invalidateDerivedLedger() }
     }
     private var completionHoldTasks: [UUID: Task<Void, Never>] = [:]
-    @Published private(set) var pendingLedgerUndoAction: LedgerUndoAction?
+    @Published private(set) var pendingLedgerUndo: LedgerUndoPresentation?
+    private var ledgerUndoDismissTask: Task<Void, Never>?
 
     var hooks: Hooks
     private let now: () -> Date
@@ -239,7 +240,7 @@ final class AppViewModel: ObservableObject {
         self.shortcuts = shortcuts
         self.hooks = hooks
         self.now = now
-        self.pendingLedgerUndoAction = nil
+        self.pendingLedgerUndo = nil
     }
 
     var visibleItems: [LedgerItem] {
@@ -309,8 +310,9 @@ final class AppViewModel: ObservableObject {
     /// Whether the current inbox mutation has a reversible action available.
     /// Only one operation is retained; unrelated edits can happen while it is
     /// available because undo applies status fields to the current row.
-    var canUndoLedgerAction: Bool { pendingLedgerUndoAction != nil }
-    var undoLedgerActionTitle: String? { pendingLedgerUndoAction?.title }
+    var pendingLedgerUndoAction: LedgerUndoAction? { pendingLedgerUndo?.action }
+    var canUndoLedgerAction: Bool { pendingLedgerUndo != nil }
+    var undoLedgerActionTitle: String? { pendingLedgerUndo?.title }
 
     /// `/folder` is deliberately a complete command rather than search text.
     /// It must begin the composer text and be followed by whitespace or end of input,
@@ -1207,7 +1209,7 @@ final class AppViewModel: ObservableObject {
                 items[index].isTrashed = true
             }
         }
-        pendingLedgerUndoAction = .clear(snapshots)
+        presentLedgerUndo(.clear(snapshots))
         if selectedItemID.map(targetIDs.contains) == true {
             clearSelection()
         }
@@ -1302,26 +1304,93 @@ final class AppViewModel: ObservableObject {
         guard let action = pendingLedgerUndoAction else { return false }
         if let error = hooks.onUndoLedgerAction(action) {
             errorMessage = error
+            // Keep the failed recovery action on screen for retry instead of
+            // letting the banner timer dismiss it underneath the error.
+            setLedgerUndoBannerPaused(true)
             return false
         }
         applyUndo(action)
-        pendingLedgerUndoAction = nil
+        dismissPendingLedgerUndo()
         errorMessage = nil
         reconcileSelectionForCurrentView()
         return true
     }
 
+    /// Hides the undo banner without reversing the last change. The timer,
+    /// the dismiss control, and hover-pause all land here.
+    func dismissPendingLedgerUndo() {
+        cancelLedgerUndoDismissal()
+        pendingLedgerUndo = nil
+    }
+
+    /// Internal so tests can expire the banner against an injected clock
+    /// instead of waiting on the real dismiss task.
+    func expirePendingLedgerUndoIfNeeded() {
+        guard let pendingLedgerUndo, !pendingLedgerUndo.isPaused else { return }
+        guard pendingLedgerUndo.remaining(at: now()) <= 0 else { return }
+        dismissPendingLedgerUndo()
+    }
+
+    func setLedgerUndoBannerPaused(_ paused: Bool) {
+        guard var presentation = pendingLedgerUndo else { return }
+        let date = now()
+
+        if paused {
+            guard presentation.pausedRemaining == nil else { return }
+            presentation.pausedRemaining = presentation.remaining(at: date)
+            pendingLedgerUndo = presentation
+            cancelLedgerUndoDismissal()
+            return
+        }
+
+        guard let remaining = presentation.pausedRemaining else { return }
+        presentation.pausedRemaining = nil
+        presentation.expiresAt = date.addingTimeInterval(remaining)
+        pendingLedgerUndo = presentation
+        scheduleLedgerUndoDismissal()
+    }
+
     /// Persistence uses this after a failed optimistic operation. It is
     /// scoped to the affected IDs so an older unrelated Undo remains usable.
     func discardPendingLedgerUndo(for itemID: UUID? = nil) {
-        guard let pendingLedgerUndoAction else { return }
+        guard let pendingLedgerUndo else { return }
         guard let itemID else {
-            self.pendingLedgerUndoAction = nil
+            dismissPendingLedgerUndo()
             return
         }
-        if pendingLedgerUndoAction.itemIDs.contains(itemID) {
-            self.pendingLedgerUndoAction = nil
+        if pendingLedgerUndo.itemIDs.contains(itemID) {
+            dismissPendingLedgerUndo()
         }
+    }
+
+    private func presentLedgerUndo(_ action: LedgerUndoAction) {
+        cancelLedgerUndoDismissal()
+        pendingLedgerUndo = LedgerUndoPresentation(
+            action: action,
+            expiresAt: now().addingTimeInterval(LedgerUndoPresentation.duration)
+        )
+        scheduleLedgerUndoDismissal()
+    }
+
+    private func scheduleLedgerUndoDismissal() {
+        cancelLedgerUndoDismissal()
+        guard let presentation = pendingLedgerUndo, !presentation.isPaused else { return }
+        let delay = presentation.remaining(at: now())
+        if delay <= 0 {
+            expirePendingLedgerUndoIfNeeded()
+            return
+        }
+        ledgerUndoDismissTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard !Task.isCancelled else { return }
+            guard self?.pendingLedgerUndo?.isPaused != true else { return }
+            self?.dismissPendingLedgerUndo()
+        }
+    }
+
+    private func cancelLedgerUndoDismissal() {
+        ledgerUndoDismissTask?.cancel()
+        ledgerUndoDismissTask = nil
     }
 
     private func applyUndo(_ action: LedgerUndoAction) {
@@ -1640,7 +1709,7 @@ final class AppViewModel: ObservableObject {
             }
         }
         clearSelection()
-        pendingLedgerUndoAction = .archive(snapshot)
+        presentLedgerUndo(.archive(snapshot))
         // Publish the pending operation before the persistence hook. A failed
         // coordinator save can reload and discard this snapshot in its catch
         // path; assigning it afterwards would falsely advertise Undo.
@@ -1785,7 +1854,7 @@ final class AppViewModel: ObservableObject {
             mutateItem(item.id) { $0.isTrashed = true }
         }
         clearSelection()
-        pendingLedgerUndoAction = .trash(snapshot)
+        presentLedgerUndo(.trash(snapshot))
         // See archive(_:): failure recovery needs to be able to consume the
         // snapshot while the persistence callback is still on the stack.
         hooks.onTrash(item.id)
