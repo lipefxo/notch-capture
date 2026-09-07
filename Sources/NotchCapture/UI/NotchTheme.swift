@@ -166,6 +166,9 @@ enum NotchMotion {
     static let hoverDuration: TimeInterval = 0.08
     static let insertionDuration: TimeInterval = 0.18
     static let removalDuration: TimeInterval = 0.14
+    static let musicTrackSwapDuration: TimeInterval = 0.20
+    static let musicTrackSwapOffset: CGFloat = 6
+    static let musicTrackSwapBlurRadius: CGFloat = 2
     static let stagingDelay: TimeInterval = 0.04
     static let surfaceContentDelay: TimeInterval = 0.018
     static let surfaceContentOffset: CGFloat = 6
@@ -213,6 +216,7 @@ enum NotchMotion {
     static let hover = easeOut(duration: hoverDuration)
     static let insertion = easeOut(duration: insertionDuration)
     static let removal = easeOut(duration: removalDuration)
+    static let musicTrackSwap = easeOut(duration: musicTrackSwapDuration)
     static let dropEnter = selection.animation
     static let dropExit = removal
     static let composerFocus = easeOut(duration: composerFocusDuration)
@@ -237,6 +241,81 @@ enum NotchMotion {
             bounce: dragLanding.bounce,
             initialVelocity: min(1, max(-1, initialVelocity))
         )
+    }
+}
+
+private struct MusicTrackSwapEffect: ViewModifier {
+    let opacity: Double
+    let offset: CGFloat
+    let blurRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .offset(y: offset)
+            .blur(radius: blurRadius)
+    }
+}
+
+private struct MusicArtworkSwapEffect: ViewModifier {
+    let opacity: Double
+    let scale: CGFloat
+    let blurRadius: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(opacity)
+            .scaleEffect(scale)
+            .blur(radius: blurRadius)
+    }
+}
+
+extension AnyTransition {
+    static var musicTrackSwap: AnyTransition {
+        AnyTransition.asymmetric(
+            insertion: .modifier(
+                active: MusicTrackSwapEffect(
+                    opacity: 0,
+                    offset: NotchMotion.musicTrackSwapOffset,
+                    blurRadius: NotchMotion.musicTrackSwapBlurRadius
+                ),
+                identity: MusicTrackSwapEffect(opacity: 1, offset: 0, blurRadius: 0)
+            ),
+            removal: .modifier(
+                active: MusicTrackSwapEffect(
+                    opacity: 0,
+                    offset: -NotchMotion.musicTrackSwapOffset,
+                    blurRadius: NotchMotion.musicTrackSwapBlurRadius
+                ),
+                identity: MusicTrackSwapEffect(opacity: 1, offset: 0, blurRadius: 0)
+            )
+        )
+    }
+
+    static var musicArtworkSwap: AnyTransition {
+        AnyTransition.modifier(
+            active: MusicArtworkSwapEffect(
+                opacity: 0,
+                scale: 0.94,
+                blurRadius: NotchMotion.musicTrackSwapBlurRadius
+            ),
+            identity: MusicArtworkSwapEffect(opacity: 1, scale: 1, blurRadius: 0)
+        )
+    }
+}
+
+extension View {
+    func musicTrackTransition<ID: Hashable>(
+        id: ID,
+        reduceMotion: Bool
+    ) -> some View {
+        self
+            .id(id)
+            .transition(reduceMotion ? .opacity : .musicTrackSwap)
+            .animation(
+                reduceMotion ? NotchMotion.reducedMotion : NotchMotion.musicTrackSwap,
+                value: id
+            )
     }
 }
 

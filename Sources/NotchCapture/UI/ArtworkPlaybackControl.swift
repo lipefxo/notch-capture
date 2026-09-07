@@ -20,44 +20,52 @@ struct ArtworkPlaybackControl: View {
     var body: some View {
         Button(action: action) {
             ZStack {
-                if showsTransportGlyph {
-                    ArtworkPlaybackCanvas(
-                        artwork: artwork,
-                        overlayColor: overlayColor,
-                        availableSize: size,
-                        overlay: .transport(isPlaying: isPlaying)
-                    )
-                    .transition(.opacity)
-                } else if isPlaying {
-                    TimelineView(
-                        .animation(
-                            minimumInterval: 1 / 20,
-                            paused: reduceMotion
-                        )
-                    ) { timeline in
+                Group {
+                    if showsTransportGlyph {
                         ArtworkPlaybackCanvas(
                             artwork: artwork,
                             overlayColor: overlayColor,
                             availableSize: size,
-                            overlay: .waveform(time: timeline.date.timeIntervalSinceReferenceDate)
+                            overlay: .transport(isPlaying: isPlaying)
                         )
+                        .transition(.opacity)
+                    } else if isPlaying {
+                        TimelineView(
+                            .animation(
+                                minimumInterval: 1 / 20,
+                                paused: reduceMotion
+                            )
+                        ) { timeline in
+                            ArtworkPlaybackCanvas(
+                                artwork: artwork,
+                                overlayColor: overlayColor,
+                                availableSize: size,
+                                overlay: .waveform(time: timeline.date.timeIntervalSinceReferenceDate)
+                            )
+                        }
+                        .transition(.opacity)
+                    } else {
+                        ArtworkPlaybackCanvas(
+                            artwork: artwork,
+                            overlayColor: overlayColor,
+                            availableSize: size,
+                            overlay: .clean
+                        )
+                        .transition(.opacity)
                     }
-                    .transition(.opacity)
-                } else {
-                    ArtworkPlaybackCanvas(
-                        artwork: artwork,
-                        overlayColor: overlayColor,
-                        availableSize: size,
-                        overlay: .clean
-                    )
-                    .transition(.opacity)
                 }
+                .id(artworkIdentity)
+                .transition(reduceMotion ? .opacity : .musicArtworkSwap)
             }
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
             .animation(overlayAnimation, value: showsTransportGlyph)
             .animation(overlayAnimation, value: isPlaying)
+            .animation(
+                reduceMotion ? NotchMotion.reducedMotion : NotchMotion.musicTrackSwap,
+                value: artworkIdentity
+            )
         }
         .buttonStyle(ArtworkPlaybackButtonStyle())
         .focused($isFocused)

@@ -206,6 +206,7 @@ struct UtilityShelfView: View {
 private struct MusicPlayerBand: View {
     @ObservedObject var viewModel: AppViewModel
     let presentation: NowPlayingPresentation
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private var snapshot: NowPlayingSnapshot { presentation.snapshot }
 
@@ -253,6 +254,7 @@ private struct MusicPlayerBand: View {
                     }
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .musicTrackTransition(id: snapshot.trackKey, reduceMotion: reduceMotion)
 
                     HStack(spacing: 14) {
                         transportButton("backward.fill", label: "Previous track", action: viewModel.musicPrevious, compact: true)

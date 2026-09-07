@@ -205,6 +205,7 @@ struct CollapsedActivityPillView: View {
         .lineLimit(1)
         .frame(maxWidth: .infinity, alignment: .leading)
         .layoutPriority(1)
+        .musicTrackTransition(id: snapshot.trackKey, reduceMotion: reduceMotion)
     }
 
     @ViewBuilder
@@ -241,6 +242,7 @@ struct CollapsedActivityPillView: View {
                             .lineLimit(1)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .contentShape(Rectangle())
+                            .musicTrackTransition(id: snapshot.trackKey, reduceMotion: reduceMotion)
                         }
                         .buttonStyle(NotchPressButtonStyle(pressedScale: 0.99, pressedOpacity: 0.94))
                         .help("Open \(snapshot.title) in Notch Capture")
