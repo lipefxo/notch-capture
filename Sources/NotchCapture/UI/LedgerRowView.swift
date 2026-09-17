@@ -372,6 +372,8 @@ struct LedgerRowExitModifier: ViewModifier {
 
 struct LedgerRowView: View, Equatable {
     let item: AppViewModel.LedgerItem
+    let displayTitle: String
+    let displayFolderName: String?
     let isSelected: Bool
     let isEditing: Bool
     let timeFormat: AppViewModel.TimeFormat
@@ -397,6 +399,8 @@ struct LedgerRowView: View, Equatable {
 
     nonisolated static func == (lhs: LedgerRowView, rhs: LedgerRowView) -> Bool {
         lhs.item == rhs.item
+            && lhs.displayTitle == rhs.displayTitle
+            && lhs.displayFolderName == rhs.displayFolderName
             && lhs.isSelected == rhs.isSelected
             && lhs.isEditing == rhs.isEditing
             && lhs.timeFormat == rhs.timeFormat
@@ -414,6 +418,8 @@ struct LedgerRowView: View, Equatable {
 
     init(
         item: AppViewModel.LedgerItem,
+        displayTitle: String,
+        displayFolderName: String?,
         isSelected: Bool,
         isEditing: Bool,
         timeFormat: AppViewModel.TimeFormat,
@@ -421,6 +427,8 @@ struct LedgerRowView: View, Equatable {
         viewModel: AppViewModel
     ) {
         self.item = item
+        self.displayTitle = displayTitle
+        self.displayFolderName = displayFolderName
         self.isSelected = isSelected
         self.isEditing = isEditing
         self.timeFormat = timeFormat
@@ -530,11 +538,12 @@ struct LedgerRowView: View, Equatable {
         }
         .help(rowAccessibilityHint)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(item.title)")
+        .accessibilityLabel("\(item.kind == .task ? "Task" : "Note"): \(displayTitle)")
         .accessibilityHint(rowAccessibilityHint)
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityActions {
-            if !item.text.isEmpty || !item.attachments.isEmpty {
+            if !viewModel.isScreenSharePrivacyEnabled,
+               !item.text.isEmpty || !item.attachments.isEmpty {
                 Button("Edit") { viewModel.beginEditing(item) }
             }
             Button(item.isCompleted ? "Mark incomplete" : "Complete") {
@@ -564,9 +573,10 @@ struct LedgerRowView: View, Equatable {
             AttachmentLedgerRow(
                 item: item,
                 attachment: attachment,
+                displayTitle: displayTitle,
                 timeFormat: timeFormat,
                 searchLocation: showsSearchLocation
-                    ? (item.folderName ?? "Inbox")
+                    ? (displayFolderName ?? "Inbox")
                     : nil,
                 completedPresentation: completedPresentation,
                 isInteractive: isInteractive
@@ -599,9 +609,10 @@ struct LedgerRowView: View, Equatable {
                 AttachmentLedgerRow(
                     item: item,
                     attachment: attachment,
+                    displayTitle: displayTitle,
                     timeFormat: timeFormat,
                     searchLocation: showsSearchLocation
-                        ? (item.folderName ?? "Inbox")
+                        ? (displayFolderName ?? "Inbox")
                         : nil,
                     completedPresentation: completedPresentation,
                     isInteractive: isInteractive
@@ -706,7 +717,7 @@ struct LedgerRowView: View, Equatable {
                 .contentShape(Rectangle())
                 .notchHitTarget(Rectangle())
                 .help("Open link")
-                .accessibilityLabel("Open link: \(item.title)")
+                .accessibilityLabel("Open link: \(displayTitle)")
             } else {
                 selectionContentLayout(
                     completedPresentation: completedPresentation,
@@ -798,12 +809,12 @@ struct LedgerRowView: View, Equatable {
     @ViewBuilder
     private func titleText(completedPresentation: Bool, isInteractive: Bool) -> some View {
         if isInteractive {
-            InlineTagTitleText(title: item.title, tags: item.tags) { tag in
+            InlineTagTitleText(title: displayTitle, tags: item.tags) { tag in
                 viewModel.search(for: tag)
             }
         } else {
             Text(InlineTagTitleFormatter.attributedTitle(
-                item.title,
+                displayTitle,
                 tags: item.tags,
                 includesLinks: false
             ))
@@ -1009,7 +1020,7 @@ struct LedgerRowView: View, Equatable {
 
     private var subtitle: String? {
         if showsSearchLocation {
-            return item.folderName.map { "Folder · \($0)" } ?? "Inbox"
+            return displayFolderName.map { "Folder · \($0)" } ?? "Inbox"
         }
         if let linkSourceSubtitle = item.linkSourceSubtitle {
             return linkSourceSubtitle
@@ -1048,7 +1059,7 @@ struct LedgerRowView: View, Equatable {
         .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
         .menuAnchor($actionsAnchor)
         .help("More actions (Shift-F10)")
-        .accessibilityLabel("More actions for \(item.title)")
+        .accessibilityLabel("More actions for \(displayTitle)")
         .accessibilityHint("Press Shift-F10 to open this menu")
     }
 
@@ -1064,7 +1075,7 @@ struct LedgerRowView: View, Equatable {
 
     private func presentActionsMenu() {
         presentation.present(
-            NotchMenu(title: item.title, anchor: actionsAnchor, items: appMenuItems)
+            NotchMenu(title: displayTitle, anchor: actionsAnchor, items: appMenuItems)
         )
     }
 
@@ -1089,7 +1100,7 @@ struct LedgerRowView: View, Equatable {
 
     private var appMenuItems: [NotchMenuItem] {
         var items: [NotchMenuItem] = [
-            NotchMenuItem(title: "Edit", icon: "pencil", isEnabled: !item.text.isEmpty || !item.attachments.isEmpty) { viewModel.beginEditing(item) },
+            NotchMenuItem(title: "Edit", icon: "pencil", isEnabled: !viewModel.isScreenSharePrivacyEnabled && (!item.text.isEmpty || !item.attachments.isEmpty)) { viewModel.beginEditing(item) },
             NotchMenuItem(title: item.isCompleted ? "Mark incomplete" : "Complete", icon: item.isCompleted ? "arrow.uturn.backward" : "checkmark") { viewModel.toggleComplete(item) },
             NotchMenuItem(title: item.isPinned ? "Unpin" : "Pin", icon: item.isPinned ? "pin.slash" : "pin") { viewModel.togglePin(item) },
         ]
@@ -1116,7 +1127,7 @@ struct LedgerRowView: View, Equatable {
             NotchMenuItem(title: "Inbox", icon: "tray", isEnabled: item.folderID != nil, isChecked: item.folderID == nil) { viewModel.move(item, to: nil) }
         ]
         for folder in viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-            items.append(NotchMenuItem(title: folder.name, icon: "folder", isEnabled: item.folderID != folder.id, isChecked: item.folderID == folder.id) { viewModel.move(item, to: folder.id) })
+            items.append(NotchMenuItem(title: viewModel.displayName(for: folder), icon: "folder", isEnabled: item.folderID != folder.id, isChecked: item.folderID == folder.id) { viewModel.move(item, to: folder.id) })
         }
         return items
     }
@@ -1126,6 +1137,7 @@ struct LedgerRowView: View, Equatable {
 private struct AttachmentLedgerRow: View {
     let item: AppViewModel.LedgerItem
     let attachment: AppViewModel.LedgerAttachment
+    let displayTitle: String
     let timeFormat: AppViewModel.TimeFormat
     let searchLocation: String?
     let completedPresentation: Bool
@@ -1145,7 +1157,7 @@ private struct AttachmentLedgerRow: View {
             .notchHitTarget(Rectangle())
             .disabled(attachment.previewURL == nil)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Attachment: \(attachment.name)")
+            .accessibilityLabel("Attachment: \(displayTitle)")
             .accessibilityHint("Opens the captured attachment")
         } else {
             rowLabel
@@ -1177,7 +1189,7 @@ private struct AttachmentLedgerRow: View {
             }
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(attachment.name)
+                Text(displayTitle)
                     .font(.system(size: 12, weight: .regular))
                     .foregroundStyle(
                         completedPresentation ? NotchTheme.completedPrimaryText : NotchTheme.primaryText

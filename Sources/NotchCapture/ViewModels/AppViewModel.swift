@@ -113,6 +113,17 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var selectedComposerCommandIndex = 0
     @Published private(set) var isTagAutocompleteDismissed = false
     @Published var autoHideExternalPill: Bool
+    @Published var isScreenSharePrivacyEnabled: Bool {
+        didSet {
+            guard oldValue != isScreenSharePrivacyEnabled else { return }
+            if isScreenSharePrivacyEnabled {
+                privacyAliasSeed = UInt64.random(in: UInt64.min...UInt64.max)
+                // An inline editor contains the original item text, so it must
+                // not remain visible after privacy mode is enabled.
+                cancelEditing()
+            }
+        }
+    }
     @Published var launchAtLogin: Bool {
         didSet { hooks.onSetLaunchAtLogin(launchAtLogin) }
     }
@@ -174,6 +185,7 @@ final class AppViewModel: ObservableObject {
     var hooks: Hooks
     private let now: () -> Date
     private var composerDraftID = UUID()
+    private var privacyAliasSeed: UInt64
     private struct PendingNotification {
         var notification: NotchNotification
         var isEligibleForPresentation: Bool
@@ -202,6 +214,7 @@ final class AppViewModel: ObservableObject {
         folders: [FolderSummary] = [],
         tags: [TagSummary] = [],
         autoHideExternalPill: Bool = false,
+        isScreenSharePrivacyEnabled: Bool = false,
         launchAtLogin: Bool = false,
         timeFormat: TimeFormat = .twelveHour,
         compactPresentationSize: CompactPresentationSize = .minimal,
@@ -217,7 +230,8 @@ final class AppViewModel: ObservableObject {
             Shortcut(action: .openComposer, title: "Open composer", displayValue: "⌃⇧N")
         ],
         hooks: Hooks = Hooks(),
-        now: @escaping () -> Date = { .now }
+        now: @escaping () -> Date = { .now },
+        privacyAliasSeed: UInt64 = UInt64.random(in: UInt64.min...UInt64.max)
     ) {
         self.surfaceState = surfaceState
         self.needsOnboarding = surfaceState == .onboarding
@@ -226,6 +240,8 @@ final class AppViewModel: ObservableObject {
         self.folders = folders
         self.tags = tags
         self.autoHideExternalPill = autoHideExternalPill
+        self.isScreenSharePrivacyEnabled = isScreenSharePrivacyEnabled
+        self.privacyAliasSeed = privacyAliasSeed
         self.launchAtLogin = launchAtLogin
         self.timeFormat = timeFormat
         self.compactPresentationSize = compactPresentationSize
@@ -293,9 +309,9 @@ final class AppViewModel: ObservableObject {
         return folders.first { $0.id == id }
     }
 
-    var navigationTitle: String { currentFolder?.name ?? "Inbox" }
+    var navigationTitle: String { currentFolder.map(displayName(for:)) ?? "Inbox" }
     var captureDestinationID: UUID? { currentFolder?.id }
-    var captureDestinationName: String { currentFolder?.name ?? "Inbox" }
+    var captureDestinationName: String { currentFolder.map(displayName(for:)) ?? "Inbox" }
     var isAtRoot: Bool { browseLocation == .root }
     var isShowingGlobalSearchResults: Bool {
         composerHasQuery && (isAtRoot || composerSearchesAllFolders)
@@ -307,6 +323,29 @@ final class AppViewModel: ObservableObject {
         !visibleTagGroups.isEmpty || !visibleFolders.isEmpty || !visibleItems.isEmpty
     }
     var showsInboxSection: Bool { isAtRoot && !composerHasQuery && !visibleItems.isEmpty }
+
+    func displayTitle(for item: LedgerItem) -> String {
+        guard isScreenSharePrivacyEnabled else { return item.title }
+        return ScreenSharePrivacyAlias.title(
+            for: item.id,
+            seed: privacyAliasSeed,
+            kind: .item
+        )
+    }
+
+    func displayName(for folder: FolderSummary) -> String {
+        displayFolderName(id: folder.id, fallback: folder.name) ?? folder.name
+    }
+
+    func displayFolderName(id: UUID?, fallback: String?) -> String? {
+        guard let id else { return fallback }
+        guard isScreenSharePrivacyEnabled else { return fallback }
+        return ScreenSharePrivacyAlias.title(
+            for: id,
+            seed: privacyAliasSeed,
+            kind: .folder
+        )
+    }
 
     /// Whether the current inbox mutation has a reversible action available.
     /// Only one operation is retained; unrelated edits can happen while it is
@@ -1010,6 +1049,10 @@ final class AppViewModel: ObservableObject {
     }
 
     func beginEditing(_ item: LedgerItem) {
+        guard !isScreenSharePrivacyEnabled else {
+            errorMessage = "Turn off screen-share privacy to edit item content."
+            return
+        }
         // Attachment-only items are editable too: the draft starts empty and
         // becomes the item's caption (saveEditing allows empty text when
         // attachments exist).

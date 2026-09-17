@@ -515,7 +515,7 @@ struct ExpandedInboxView: View {
                 if viewModel.isAtRoot {
                     rootViewSelector
                 } else {
-                    Text(viewModel.currentFolder?.name ?? viewModel.navigationTitle)
+                    Text(viewModel.navigationTitle)
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(NotchTheme.primaryText)
                         .lineLimit(1)
@@ -531,7 +531,7 @@ struct ExpandedInboxView: View {
                     .buttonStyle(PressableIconButtonStyle())
                     .menuAnchor($folderHeaderMenuAnchor)
                     .help("Folder actions")
-                    .accessibilityLabel("Actions for \(folder.name)")
+                    .accessibilityLabel("Actions for \(viewModel.displayName(for: folder))")
                 }
             }
             .id(viewModel.browseLocation)
@@ -654,7 +654,8 @@ struct ExpandedInboxView: View {
     }
 
     private func beginRenaming(_ folder: AppViewModel.FolderSummary) {
-        presentation.present(NotchModal(kind: .standard, title: "Rename Folder", message: nil, textFieldLabel: "Folder name", draft: folder.name, primaryTitle: "Rename", cancelTitle: "Cancel", onSubmit: { name in
+        let hidesCurrentName = viewModel.isScreenSharePrivacyEnabled
+        presentation.present(NotchModal(kind: .standard, title: "Rename Folder", message: hidesCurrentName ? "The current name stays hidden while screen-share privacy is on." : nil, textFieldLabel: "Folder name", draft: hidesCurrentName ? "" : folder.name, primaryTitle: "Rename", cancelTitle: "Cancel", onSubmit: { name in
             viewModel.renameFolder(folder, to: name) ? nil : "Enter a folder name."
         }, onCancel: {}))
     }
@@ -666,7 +667,7 @@ struct ExpandedInboxView: View {
     }
 
     private func presentFolderActions(_ folder: AppViewModel.FolderSummary) {
-        presentation.present(NotchMenu(title: folder.name, anchor: folderHeaderMenuAnchor, items: [
+        presentation.present(NotchMenu(title: viewModel.displayName(for: folder), anchor: folderHeaderMenuAnchor, items: [
             NotchMenuItem(title: "Rename Folder", icon: "pencil") { beginRenaming(folder) },
             NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { presentDeleteFolder(folder) },
         ]))
@@ -674,7 +675,7 @@ struct ExpandedInboxView: View {
 
     private func presentDeleteFolder(_ folder: AppViewModel.FolderSummary) {
         let count = viewModel.totalItemCount(in: folder.id)
-        presentation.present(NotchModal(kind: .destructive, title: "Delete \(folder.name)?", message: "\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.", textFieldLabel: nil, draft: "", primaryTitle: "Delete Folder", cancelTitle: "Cancel", onSubmit: { _ in
+        presentation.present(NotchModal(kind: .destructive, title: "Delete \(viewModel.displayName(for: folder))?", message: "\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.", textFieldLabel: nil, draft: "", primaryTitle: "Delete Folder", cancelTitle: "Cancel", onSubmit: { _ in
             viewModel.deleteFolder(folder)
             return nil
         }, onCancel: {}))
@@ -1438,7 +1439,7 @@ struct ExpandedInboxView: View {
                     EmptyInboxView(
                         filter: viewModel.filter,
                         query: viewModel.composerText,
-                        folderName: viewModel.currentFolder?.name
+                        folderName: viewModel.currentFolder.map(viewModel.displayName(for:))
                     )
                     .padding(.bottom, ledgerBottomClearance)
                     .transition(.identity)
@@ -1481,7 +1482,10 @@ struct ExpandedInboxView: View {
             }
             .overlay(alignment: .topLeading) {
                 if let presentation = dragPresentation {
-                    LedgerDragPreview(item: presentation.item, phase: presentation.phase)
+                    LedgerDragPreview(
+                        displayTitle: viewModel.displayTitle(for: presentation.item),
+                        phase: presentation.phase
+                    )
                         .scaleEffect(reduceMotion ? 1 : presentation.scale)
                         .opacity(presentation.opacity)
                         .position(presentation.position)
@@ -1675,6 +1679,7 @@ struct ExpandedInboxView: View {
     private func folderRow(_ folder: AppViewModel.FolderSummary) -> some View {
         FolderLedgerRow(
             folder: folder,
+            displayName: viewModel.displayName(for: folder),
             itemCount: viewModel.matchingItemCount(in: folder.id),
             isSelected: viewModel.selectedFolderID == folder.id,
             isDropTarget: targetedFolderID == folder.id,
@@ -1702,6 +1707,11 @@ struct ExpandedInboxView: View {
         let isDragSource = dragPresentation?.item.id == item.id
         return LedgerRowView(
             item: item,
+            displayTitle: viewModel.displayTitle(for: item),
+            displayFolderName: viewModel.displayFolderName(
+                id: item.folderID,
+                fallback: item.folderName
+            ),
             isSelected: viewModel.selectedItemID == item.id,
             isEditing: viewModel.itemEditSession?.itemID == item.id,
             timeFormat: viewModel.timeFormat,

@@ -4,6 +4,80 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppViewModelTests: XCTestCase {
+    func testScreenSharePrivacyMasksItemAndFolderTitlesWithoutChangingStoredModels() {
+        let folder = AppViewModel.FolderSummary(
+            id: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
+            name: "Confidential Clients"
+        )
+        let item = AppViewModel.LedgerItem(
+            id: UUID(uuidString: "11111111-2222-3333-4444-555555555555")!,
+            title: "Acquisition target",
+            folderID: folder.id,
+            folderName: folder.name
+        )
+        let viewModel = AppViewModel(
+            items: [item],
+            folders: [folder],
+            isScreenSharePrivacyEnabled: true,
+            privacyAliasSeed: 42
+        )
+
+        let itemAlias = viewModel.displayTitle(for: item)
+        let folderAlias = viewModel.displayName(for: folder)
+
+        XCTAssertNotEqual(itemAlias, item.title)
+        XCTAssertNotEqual(folderAlias, folder.name)
+        XCTAssertEqual(itemAlias.split(separator: " ").count, 3)
+        XCTAssertEqual(folderAlias.split(separator: " ").count, 3)
+        XCTAssertEqual(viewModel.displayTitle(for: item), itemAlias)
+        XCTAssertEqual(viewModel.displayName(for: folder), folderAlias)
+        XCTAssertEqual(viewModel.items.first?.title, item.title)
+        XCTAssertEqual(viewModel.folders.first?.name, folder.name)
+
+        viewModel.openFolder(folder)
+        XCTAssertEqual(viewModel.navigationTitle, folderAlias)
+        XCTAssertEqual(viewModel.captureDestinationName, folderAlias)
+    }
+
+    func testTurningOffScreenSharePrivacyRestoresOriginalTitles() {
+        let folder = AppViewModel.FolderSummary(name: "Private Roadmap")
+        let item = AppViewModel.LedgerItem(title: "Unannounced launch")
+        let viewModel = AppViewModel(
+            items: [item],
+            folders: [folder],
+            isScreenSharePrivacyEnabled: true,
+            privacyAliasSeed: 7
+        )
+
+        XCTAssertNotEqual(viewModel.displayTitle(for: item), item.title)
+        XCTAssertNotEqual(viewModel.displayName(for: folder), folder.name)
+
+        viewModel.isScreenSharePrivacyEnabled = false
+
+        XCTAssertEqual(viewModel.displayTitle(for: item), item.title)
+        XCTAssertEqual(viewModel.displayName(for: folder), folder.name)
+    }
+
+    func testEnablingScreenSharePrivacyClosesAnEditorAndPreventsRevealingItemText() {
+        let item = AppViewModel.LedgerItem(
+            title: "Private title",
+            text: "Private title\nPrivate details"
+        )
+        let viewModel = AppViewModel(items: [item])
+        viewModel.beginEditing(item)
+        XCTAssertNotNil(viewModel.itemEditSession)
+
+        viewModel.isScreenSharePrivacyEnabled = true
+
+        XCTAssertNil(viewModel.itemEditSession)
+        viewModel.beginEditing(item)
+        XCTAssertNil(viewModel.itemEditSession)
+        XCTAssertEqual(
+            viewModel.errorMessage,
+            "Turn off screen-share privacy to edit item content."
+        )
+    }
+
     func testLedgerFeedLayoutWithoutPinsContainsUniqueItemIdentitiesAndNoHeader() {
         let first = AppViewModel.LedgerItem(title: "First")
         let second = AppViewModel.LedgerItem(title: "Second")

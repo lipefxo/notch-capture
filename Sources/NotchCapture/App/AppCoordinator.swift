@@ -9,6 +9,7 @@ final class AppCoordinator {
     enum DefaultsKey {
         static let onboardingComplete = "onboardingComplete"
         static let autoHideExternalPill = "autoHideExternalPill"
+        static let screenSharePrivacyEnabled = "screenSharePrivacyEnabled"
         static let timeFormat = "timeFormat"
         static let compactPresentationSize = "compactPresentationSize"
 
@@ -206,6 +207,9 @@ final class AppCoordinator {
             self.viewModel = AppViewModel(
                 surfaceState: initialState,
                 autoHideExternalPill: defaults.bool(forKey: DefaultsKey.autoHideExternalPill),
+                isScreenSharePrivacyEnabled: defaults.bool(
+                    forKey: DefaultsKey.screenSharePrivacyEnabled
+                ),
                 launchAtLogin: loginItemService.isEnabled,
                 timeFormat: timeFormat,
                 compactPresentationSize: compactPresentationSize,
@@ -958,6 +962,13 @@ final class AppCoordinator {
                     guard let self else { return }
                     self.updateIdlePillVisibility()
                 }
+            }
+            .store(in: &cancellables)
+
+        viewModel.$isScreenSharePrivacyEnabled
+            .dropFirst()
+            .sink { [weak self] value in
+                self?.defaults.set(value, forKey: DefaultsKey.screenSharePrivacyEnabled)
             }
             .store(in: &cancellables)
 

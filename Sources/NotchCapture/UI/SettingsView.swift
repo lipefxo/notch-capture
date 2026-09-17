@@ -287,6 +287,13 @@ struct SettingsView: View {
 
     private var privacyAndDataSection: some View {
         SettingsGroup(title: "Privacy & Data", subtitle: "Your library stays on this Mac") {
+            SettingsToggleRow(
+                title: "Screen-share privacy",
+                detail: "Scramble folder and item titles until turned off",
+                isOn: $viewModel.isScreenSharePrivacyEnabled
+            )
+
+            SettingsDivider()
             HStack(spacing: 8) {
                 SettingsRowIcon(symbol: "externaldrive")
                 VStack(alignment: .leading, spacing: 2) {
