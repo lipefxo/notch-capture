@@ -129,12 +129,12 @@ struct LedgerInsertionIndicator: View {
 }
 
 struct LedgerDragPreview: View {
-    let item: AppViewModel.LedgerItem
+    let displayTitle: String
     let phase: LedgerDragPresentation.Phase
 
     var body: some View {
         HStack(spacing: 10) {
-            Text(item.title)
+            Text(displayTitle)
                 .font(.system(size: 12.5, weight: .medium))
                 .foregroundStyle(NotchTheme.primaryText)
                 .lineLimit(1)

@@ -121,6 +121,7 @@ struct CompactVerticalScrollIndicatorConfigurator: NSViewRepresentable {
 
 struct FolderLedgerRow: View {
     let folder: AppViewModel.FolderSummary
+    let displayName: String
     let itemCount: Int
     let isSelected: Bool
     let isDropTarget: Bool
@@ -148,7 +149,7 @@ struct FolderLedgerRow: View {
                     .frame(width: 18, height: 18)
 
                 HStack(spacing: 7) {
-                    Text(folder.name)
+                    Text(displayName)
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(NotchTheme.primaryText)
                         .lineLimit(1)
@@ -192,7 +193,7 @@ struct FolderLedgerRow: View {
         .scaleEffect(isDropTarget && !reduceMotion ? 1.01 : 1)
         .overlay(alignment: .trailing) {
             Button {
-                presentation.present(NotchMenu(title: folder.name, anchor: actionsAnchor, items: [
+                presentation.present(NotchMenu(title: displayName, anchor: actionsAnchor, items: [
                     NotchMenuItem(title: "Open Folder", icon: "folder") { onOpen() },
                     NotchMenuItem(title: "Rename Folder", icon: "pencil") { onRename() },
                     NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { onDelete() },
@@ -220,7 +221,7 @@ struct FolderLedgerRow: View {
             .menuAnchor($actionsAnchor)
             .padding(.trailing, 8)
             .help("More actions")
-            .accessibilityLabel("More actions for \(folder.name)")
+            .accessibilityLabel("More actions for \(displayName)")
             .opacity(showsActions ? 1 : 0)
             // An opacity-0 view still hit-tests; don't let an invisible button
             // swallow clicks meant for the row.
@@ -235,7 +236,7 @@ struct FolderLedgerRow: View {
         .animation(reduceMotion ? nil : NotchMotion.hover, value: isHovered)
         .animation(reduceMotion ? nil : NotchMotion.filter, value: isDropTarget)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Folder \(folder.name), \(itemCount) \(itemCount == 1 ? "item" : "items")")
+        .accessibilityLabel("Folder \(displayName), \(itemCount) \(itemCount == 1 ? "item" : "items")")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint("Opens this folder")
         .accessibilityAction(named: "Rename Folder", onRename)
