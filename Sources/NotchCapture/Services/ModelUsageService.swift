@@ -83,8 +83,9 @@ final class ModelUsageService: ModelUsageControlling {
     }
 
     private func refreshOnce() async {
-        await refresh(provider: .openAI)
-        await refresh(provider: .cursor)
+        for provider in ModelUsageProvider.connectedProviders {
+            await refresh(provider: provider)
+        }
     }
 
     private func refresh(provider: ModelUsageProvider) async {

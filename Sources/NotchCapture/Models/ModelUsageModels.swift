@@ -4,6 +4,9 @@ enum ModelUsageProvider: String, CaseIterable, Identifiable, Sendable {
     case openAI
     case cursor
 
+    // Keep Cursor support available while its integration is disconnected.
+    static let connectedProviders: [ModelUsageProvider] = [.openAI]
+
     var id: String { rawValue }
 
     var displayName: String {
@@ -142,7 +145,7 @@ struct ModelUsageViewState: Equatable, Sendable {
     }
 
     var compactSummaries: [String] {
-        ModelUsageProvider.allCases.compactMap { provider in
+        ModelUsageProvider.connectedProviders.compactMap { provider in
             guard let snapshot = self[provider].connection.snapshot else { return nil }
             return "\(provider.displayName) \(snapshot.compactText)"
         }
@@ -155,7 +158,7 @@ struct ModelUsageViewState: Equatable, Sendable {
     }
 
     var showsUtilityMeters: Bool {
-        ModelUsageProvider.allCases.contains { provider in
+        ModelUsageProvider.connectedProviders.contains { provider in
             switch self[provider].connection {
             case .notSignedIn:
                 false
