@@ -136,7 +136,7 @@ final class CompanionSyncService {
             }
             if let item = itemsByID[record.id] {
                 guard !Self.hasSameValues(record, as: item) else { continue }
-                let resolvedList = resolveList(for: record, in: &lists)
+                let resolvedList = Self.resolveList(for: record, in: &lists, modelContext: modelContext)
                 let resolvedTags = resolveTags(named: record.tags, in: &tags, now: record.updatedAt)
                 item.text = record.text
                 item.kindRawValue = Self.localKind(record.kind).rawValue
@@ -153,7 +153,7 @@ final class CompanionSyncService {
                 continue
             }
 
-            let resolvedList = resolveList(for: record, in: &lists)
+            let resolvedList = Self.resolveList(for: record, in: &lists, modelContext: modelContext)
             let resolvedTags = resolveTags(named: record.tags, in: &tags, now: record.updatedAt)
             let item = CaptureItem(
                 id: record.id,
@@ -197,23 +197,27 @@ final class CompanionSyncService {
         return (ranks.max() ?? -1) + 1
     }
 
-    private func resolveList(for record: CaptureRecord, in lists: inout [ItemList]) -> ItemList? {
+    static func resolveList(
+        for record: CaptureRecord, in lists: inout [ItemList], modelContext: ModelContext
+    ) -> ItemList? {
+        if let id = record.folderID, let existing = lists.first(where: { $0.id == id }) {
+            return existing
+        }
         guard let name = record.folderName?.trimmingCharacters(in: .whitespacesAndNewlines),
               !name.isEmpty else {
             return nil
         }
-        if let id = record.folderID, let existing = lists.first(where: { $0.id == id }) {
-            return existing
-        }
-        if let existing = lists.first(where: {
-            $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        // Names alone cannot identify same-named folders in different branches.
+        if record.folderID == nil, let existing = lists.first(where: {
+            $0.parentID == nil && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
         }) {
             return existing
         }
+        let rootLists = lists.filter { $0.parentID == nil }
         let list = ItemList(
             id: record.folderID ?? UUID(),
-            name: name,
-            sortOrder: (lists.map(\.sortOrder).max() ?? -1) + 1,
+            name: FolderNamePolicy.availableName(name, among: rootLists.map(\.name)),
+            sortOrder: (rootLists.map(\.sortOrder).max() ?? -1) + 1,
             createdAt: record.createdAt,
             updatedAt: record.updatedAt
         )

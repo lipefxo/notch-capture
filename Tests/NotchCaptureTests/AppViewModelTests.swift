@@ -319,7 +319,7 @@ final class AppViewModelTests: XCTestCase {
         var createdTags: [String] = []
         var pasteDraftID: UUID?
         var hooks = AppViewModel.Hooks()
-        hooks.onCreateFolder = { name in
+        hooks.onCreateFolder = { name, _ in
             createdNames.append(name)
             return createdFolderID
         }
@@ -348,10 +348,10 @@ final class AppViewModelTests: XCTestCase {
 
     func testFolderCommandValidationAndPersistenceFailurePreserveTheDraftAndLocation() {
         let currentFolder = AppViewModel.FolderSummary(name: "Current")
-        let existingFolder = AppViewModel.FolderSummary(name: "Projects")
+        let existingFolder = AppViewModel.FolderSummary(name: "Projects", parentID: currentFolder.id)
         let image = composerImage(name: "Attached.png", contents: "attached")
         var hooks = AppViewModel.Hooks()
-        hooks.onCreateFolder = { _ in nil }
+        hooks.onCreateFolder = { _, _ in nil }
         let viewModel = AppViewModel(folders: [currentFolder, existingFolder], hooks: hooks)
         viewModel.openFolder(currentFolder)
         viewModel.appendComposerImages([image])
@@ -379,7 +379,7 @@ final class AppViewModelTests: XCTestCase {
     func testNewFolderDialogCreationStillDoesNotNavigate() {
         let createdFolderID = UUID()
         var hooks = AppViewModel.Hooks()
-        hooks.onCreateFolder = { _ in createdFolderID }
+        hooks.onCreateFolder = { _, _ in createdFolderID }
         let viewModel = AppViewModel(hooks: hooks)
 
         XCTAssertTrue(viewModel.createFolder(named: "Projects"))
@@ -1418,7 +1418,7 @@ final class AppViewModelTests: XCTestCase {
         var deletedFolderID: UUID?
         var hooks = AppViewModel.Hooks()
         hooks.onMove = { moves.append(($0, $1)) }
-        hooks.onDeleteFolder = { deletedFolderID = $0 }
+        hooks.onDeleteFolder = { deletedFolderID = $0; return nil }
         let viewModel = AppViewModel(items: [inbox, first, second], folders: [folder], hooks: hooks)
 
         viewModel.move(inbox, to: folder.id)
@@ -2058,7 +2058,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persisted.map(\.sortOrder), [0, 1, 2])
     }
 
-    func testFolderReorderPersistsOnlyFlatFolderRanks() {
+    func testFolderReorderPersistsOnlySiblingFolderRanks() {
         let first = AppViewModel.FolderSummary(name: "First", sortOrder: 0)
         let second = AppViewModel.FolderSummary(name: "Second", sortOrder: 1)
         let third = AppViewModel.FolderSummary(name: "Third", sortOrder: 2)
@@ -2078,7 +2078,7 @@ final class AppViewModelTests: XCTestCase {
         XCTAssertEqual(persisted.map(\.sortOrder), [0, 1, 2])
     }
 
-    func testFolderReorderIsUnavailableOutsideTheUnfilteredRoot() {
+    func testFolderReorderRejectsSearchAndCrossParentTargets() {
         let first = AppViewModel.FolderSummary(name: "First", sortOrder: 0)
         let second = AppViewModel.FolderSummary(name: "Second", sortOrder: 1)
         let viewModel = AppViewModel(folders: [first, second])
@@ -2089,7 +2089,7 @@ final class AppViewModelTests: XCTestCase {
 
         viewModel.composerText = ""
         viewModel.openFolder(first)
-        XCTAssertFalse(viewModel.canReorderFolders)
+        XCTAssertTrue(viewModel.canReorderFolders)
         XCTAssertFalse(viewModel.reorderFolder(folderID: second.id, relativeTo: first.id, placement: .before))
     }
 

@@ -757,7 +757,7 @@ final class CaptureDataTests: XCTestCase {
         let manifest = try XCTUnwrap(
             JSONSerialization.jsonObject(with: Data(contentsOf: package.appendingPathComponent("manifest.json"))) as? [String: Any]
         )
-        XCTAssertEqual(manifest["schemaVersion"] as? Int, 6)
+        XCTAssertEqual(manifest["schemaVersion"] as? Int, 7)
         XCTAssertNil(manifest["snippetCategories"])
         let exportedItem = try XCTUnwrap((manifest["items"] as? [[String: Any]])?.first)
         XCTAssertNil(exportedItem["reusableAt"])
@@ -924,7 +924,7 @@ final class CaptureDataTests: XCTestCase {
 
         try populateLegacySnippetStore(at: storeURL, keptID: keptID)
 
-        let schema = Schema(NotchCaptureSchemaV2.models)
+        let schema = Schema(NotchCaptureSchemaV3.models)
         let configuration = ModelConfiguration("NotchCapture", schema: schema, url: storeURL)
         let migrated = try ModelContainer(
             for: schema,
@@ -986,7 +986,7 @@ final class CaptureDataTests: XCTestCase {
     }
 
     private func makeContainer() throws -> ModelContainer {
-        let schema = Schema(NotchCaptureSchemaV2.models)
+        let schema = Schema(NotchCaptureSchemaV3.models)
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         return try ModelContainer(
             for: schema,

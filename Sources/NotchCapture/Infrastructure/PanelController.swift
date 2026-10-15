@@ -446,7 +446,7 @@ public final class PanelController: NSObject, ObservableObject {
             requestDismissal(reason: .automatic)
             return
         }
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || NotchMotion.previewReducesMotion
         let transition = PanelTransitionPolicy.resolve(
             from: oldState,
             to: newState,
@@ -726,7 +726,7 @@ public final class PanelController: NSObject, ObservableObject {
         confirmationDismissalTask = nil
         let oldState = state
         let wasVisible = panel.isVisible
-        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion || NotchMotion.previewReducesMotion
         let transition = PanelTransitionPolicy.resolve(
             from: oldState,
             to: hiddenState,

@@ -3,7 +3,7 @@ import SwiftData
 import UniformTypeIdentifiers
 
 struct CapturePackageManifest: Codable, Sendable {
-    static let currentVersion = 6
+    static let currentVersion = 7
 
     let schemaVersion: Int
     let exportedAt: Date
@@ -15,6 +15,7 @@ struct CapturePackageManifest: Codable, Sendable {
         let id: UUID
         let name: String
         let sortOrder: Int
+        var parentID: UUID? = nil
         let createdAt: Date
         let updatedAt: Date
     }
@@ -199,6 +200,7 @@ final class CapturePackageService {
                 id: $0.id,
                 name: $0.name,
                 sortOrder: $0.sortOrder,
+                parentID: $0.parentID,
                 createdAt: $0.createdAt,
                 updatedAt: $0.updatedAt
             )
@@ -313,6 +315,7 @@ final class CapturePackageService {
             throw CapturePackageError.unsupportedSchema(manifest.schemaVersion)
         }
 
+        let orderedLists = try parentFirstLists(in: manifest)
         let existingItems = try modelContext.fetch(FetchDescriptor<CaptureItem>())
         let existingLists = try modelContext.fetch(FetchDescriptor<ItemList>())
         let existingTags = try modelContext.fetch(FetchDescriptor<CaptureTag>())
@@ -330,9 +333,19 @@ final class CapturePackageService {
         var reassignedCount = 0
 
         do {
-            for record in manifest.lists {
-                if let existing = listsByID[record.id], existing.name == record.name {
+            for record in orderedLists {
+                let parentID = record.parentID.flatMap { listMapping[$0]?.id }
+                // Reuse the same destination path, including after an earlier ID conflict.
+                if let existing = listsByID[record.id], existing.name == record.name,
+                   existing.parentID == parentID {
                     listMapping[record.id] = existing
+                    continue
+                }
+                if let existing = listsByID.values.first(where: {
+                    $0.parentID == parentID && $0.name.localizedCaseInsensitiveCompare(record.name) == .orderedSame
+                }) {
+                    listMapping[record.id] = existing
+                    if record.id != existing.id { reassignedCount += 1 }
                     continue
                 }
                 let chosenID: UUID
@@ -346,6 +359,7 @@ final class CapturePackageService {
                     id: chosenID,
                     name: record.name,
                     sortOrder: record.sortOrder,
+                    parentID: parentID,
                     createdAt: record.createdAt,
                     updatedAt: record.updatedAt
                 )
@@ -398,6 +412,7 @@ final class CapturePackageService {
                    isExactDuplicate(
                        record,
                        mappedTags: mappedTags,
+                       mappedListID: record.listID.flatMap { listMapping[$0]?.id },
                        of: existing
                    ) {
                     duplicateCount += 1
@@ -507,9 +522,45 @@ final class CapturePackageService {
         )
     }
 
+    /// Validate before inserting any models or copying attachment bytes. The iterative
+    /// traversal accepts arbitrarily deep trees and does not depend on manifest order.
+    private func parentFirstLists(in manifest: CapturePackageManifest) throws -> [CapturePackageManifest.ListRecord] {
+        var records: [UUID: CapturePackageManifest.ListRecord] = [:]
+        for var record in manifest.lists {
+            if manifest.schemaVersion < 7 { record.parentID = nil }
+            guard records[record.id] == nil,
+                  !record.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw CapturePackageError.invalidFolderHierarchy
+            }
+            records[record.id] = record
+        }
+        var children: [UUID: [UUID]] = [:]
+        var pending: [UUID] = []
+        for record in manifest.lists {
+            guard let validated = records[record.id] else { continue }
+            if let parentID = validated.parentID {
+                guard records[parentID] != nil else { throw CapturePackageError.invalidFolderHierarchy }
+                children[parentID, default: []].append(record.id)
+            } else {
+                pending.append(record.id)
+            }
+        }
+        var ordered: [CapturePackageManifest.ListRecord] = []
+        var index = 0
+        while index < pending.count {
+            let id = pending[index]
+            index += 1
+            if let record = records[id] { ordered.append(record) }
+            pending.append(contentsOf: children[id] ?? [])
+        }
+        guard ordered.count == records.count else { throw CapturePackageError.invalidFolderHierarchy }
+        return ordered
+    }
+
     private func isExactDuplicate(
         _ record: CapturePackageManifest.ItemRecord,
         mappedTags: [CaptureTag],
+        mappedListID: UUID?,
         of item: CaptureItem
     ) -> Bool {
         let existingAttachments = item.attachments.sorted(by: { $0.order < $1.order })
@@ -536,7 +587,7 @@ final class CapturePackageService {
             record.trashedAt == item.trashedAt &&
             record.origin == item.origin &&
             record.source == item.source &&
-            record.listID == item.list?.id &&
+            mappedListID == item.list?.id &&
             Set(mappedTags.map(\.id)) == Set(item.tags.map(\.id)) &&
             attachmentsMatch
     }
@@ -568,10 +619,12 @@ enum CapturePackageError: LocalizedError {
     case missingAttachment(String)
     case missingTag(UUID)
     case invalidTagName(String)
+    case invalidFolderHierarchy
 
     var errorDescription: String? {
         switch self {
         case .invalidExtension: "Capture packages must use the .notchcapture extension."
+        case .invalidFolderHierarchy: "The package contains duplicate folders, missing parents, or a folder cycle."
         case .destinationExists: "A file already exists at the export destination."
         case let .invalidManifest(error): "The package manifest is invalid: \(error.localizedDescription)"
         case let .unsupportedSchema(version): "Package schema version \(version) is not supported."

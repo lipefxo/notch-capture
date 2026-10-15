@@ -210,33 +210,37 @@ extension AppCoordinator {
         }
     }
 
-    func createFolder(named name: String) -> UUID? {
+    func createFolder(named name: String, parentID: UUID?) -> UUID? {
         do {
-            let list = try repository.createList(name: name)
+            let list = try repository.createList(name: name, parentID: parentID)
             reloadFromStore()
             return list.id
         } catch { show(error) }
         return nil
     }
 
-    func renameFolder(id: UUID, to name: String) {
+    func moveFolder(id: UUID, to parentID: UUID?) -> String? {
+        do {
+            try repository.moveList(try findList(id), to: parentID)
+            reloadFromStore()
+            return nil
+        } catch { return error.localizedDescription }
+    }
+
+    func renameFolder(id: UUID, to name: String) -> String? {
         do {
             try repository.renameList(try findList(id), to: name)
             reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
+            return nil
+        } catch { return error.localizedDescription }
     }
 
-    func deleteFolder(id: UUID) {
+    func deleteFolder(id: UUID) -> String? {
         do {
             _ = try repository.deleteList(try findList(id))
             reloadFromStore()
-        } catch {
-            reloadFromStore()
-            show(error)
-        }
+            return nil
+        } catch { return error.localizedDescription }
     }
 
     func createTag(named name: String) {
@@ -427,7 +431,7 @@ extension AppCoordinator {
             let tags = try modelContainer.mainContext.fetch(FetchDescriptor<CaptureTag>())
             viewModel.items = items.map(makeLedgerItem)
             viewModel.folders = lists.map {
-                AppViewModel.FolderSummary(id: $0.id, name: $0.name, sortOrder: $0.sortOrder)
+                AppViewModel.FolderSummary(id: $0.id, name: $0.name, sortOrder: $0.sortOrder, parentID: $0.parentID)
             }
             viewModel.tags = tags.map {
                 AppViewModel.TagSummary(

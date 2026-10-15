@@ -64,7 +64,8 @@ struct SurfaceChromeMetrics: Equatable {
 
 struct NotchSurfaceView: View {
     @ObservedObject var viewModel: AppViewModel
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+    private var reduceMotion: Bool { systemReduceMotion || NotchMotion.previewReducesMotion }
     @EnvironmentObject private var morphCoordinator: PanelMorphCoordinator
     @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @State private var displayedState: AppViewModel.SurfaceState?

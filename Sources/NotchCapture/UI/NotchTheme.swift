@@ -129,6 +129,15 @@ struct NotchSpringProfile: Equatable, Sendable {
 }
 
 enum NotchMotion {
+    /// Keep native window transitions and SwiftUI content in the same preview mode.
+    static let previewReducesMotion: Bool = {
+#if DEBUG
+        CommandLine.arguments.contains("--design-preview") && CommandLine.arguments.contains("--preview-reduced-motion")
+#else
+        false
+#endif
+    }()
+
     // The shell is intentionally under-damped. Its overshoot gives the large
     // geometry change a soft, elastic edge instead of reading as a staged
     // window resize. Closing uses progressively less energy so it still feels

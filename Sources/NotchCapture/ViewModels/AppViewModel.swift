@@ -29,7 +29,7 @@ final class AppViewModel: ObservableObject {
         }
         var detail: String {
             switch self {
-            case .folder: "Create a top-level folder"
+            case .folder: "Create a folder here"
             case .clear: "Move all completed tasks to Trash"
             }
         }
@@ -56,6 +56,7 @@ final class AppViewModel: ObservableObject {
     @Published var selectedItemID: UUID?
     @Published var selectedFolderID: UUID?
     @Published private(set) var keyboardFocus: KeyboardFocus = .composer
+    @Published private(set) var isNavigatingToParent = false
     @Published var browseLocation: BrowseLocation = .root {
         didSet {
             invalidateDerivedLedger()
@@ -288,15 +289,16 @@ final class AppViewModel: ObservableObject {
     }
 
     private func computeVisibleFolders() -> [FolderSummary] {
-        guard browseLocation == .root else { return [] }
         let query = parsedComposerQuery
         guard query.tagNames.isEmpty else { return [] }
         return folders
+            .filter { isShowingGlobalSearchResults || $0.parentID == currentFolder?.id }
             .filter { folder in
                 filter == .all || matchingItemCount(in: folder.id) > 0
             }
             .filter { folder in
-                query.text.isEmpty || folder.name.localizedCaseInsensitiveContains(query.text)
+                let name = isShowingGlobalSearchResults ? folderPath(for: folder, privacyMasked: false) : folder.name
+                return query.text.isEmpty || name.localizedCaseInsensitiveContains(query.text)
             }
             .sorted {
                 if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
@@ -345,6 +347,57 @@ final class AppViewModel: ObservableObject {
             seed: privacyAliasSeed,
             kind: .folder
         )
+    }
+
+    func displayFolderPath(id: UUID?, fallback: String?) -> String? {
+        guard let folder = folders.first(where: { $0.id == id }) else {
+            return displayFolderName(id: id, fallback: fallback)
+        }
+        return folderPath(for: folder)
+    }
+
+    var parentFolder: FolderSummary? {
+        guard let parentID = currentFolder?.parentID else { return nil }
+        return folders.first { $0.id == parentID }
+    }
+
+    var parentDestinationName: String { parentFolder.map(displayName(for:)) ?? "Inbox" }
+
+    func folderPath(for folder: FolderSummary, privacyMasked: Bool = true) -> String {
+        let byID = Dictionary(uniqueKeysWithValues: folders.map { ($0.id, $0) })
+        var components: [String] = []
+        var current: FolderSummary? = folder
+        var visited: Set<UUID> = []
+        while let node = current, visited.insert(node.id).inserted {
+            components.append(privacyMasked ? displayName(for: node) : node.name)
+            current = node.parentID.flatMap { byID[$0] }
+        }
+        return components.reversed().joined(separator: " / ")
+    }
+
+    var folderDestinations: [FolderSummary] {
+        folders.sorted {
+            let comparison = folderPath(for: $0, privacyMasked: false)
+                .localizedCaseInsensitiveCompare(folderPath(for: $1, privacyMasked: false))
+            return comparison == .orderedSame ? $0.id.uuidString < $1.id.uuidString : comparison == .orderedAscending
+        }
+    }
+
+    func descendantFolderIDs(of id: UUID) -> Set<UUID> {
+        let children = Dictionary(grouping: folders, by: \.parentID)
+        var result: Set<UUID> = []
+        var pending = [id]
+        while let parentID = pending.popLast() {
+            for child in children[parentID] ?? [] where child.id != id {
+                if result.insert(child.id).inserted { pending.append(child.id) }
+            }
+        }
+        return result
+    }
+
+    func moveDestinations(for folder: FolderSummary) -> [FolderSummary] {
+        let excluded = descendantFolderIDs(of: folder.id).union([folder.id])
+        return folderDestinations.filter { !excluded.contains($0.id) }
     }
 
     /// Whether the current inbox mutation has a reversible action available.
@@ -973,13 +1026,15 @@ final class AppViewModel: ObservableObject {
         items.count { item in item.tags.contains { $0.id == tagID } }
     }
 
-    func openFolder(_ folder: FolderSummary) {
+    func openFolder(_ folder: FolderSummary, navigatingToParent: Bool = false) {
+        guard folders.contains(where: { $0.id == folder.id }) else { return }
         guard saveEditing() else { return }
         clearSelection()
         resetComposerDraft()
         errorMessage = nil
         filter = .all
         composerSearchesAllFolders = false
+        isNavigatingToParent = navigatingToParent
         browseLocation = .folder(folder.id)
     }
 
@@ -991,8 +1046,17 @@ final class AppViewModel: ObservableObject {
         errorMessage = nil
         filter = .all
         composerSearchesAllFolders = false
+        isNavigatingToParent = false
         browseLocation = .folder(id)
         keyboardFocus = .composer
+    }
+
+    func openParent() {
+        if let parent = parentFolder {
+            openFolder(parent, navigatingToParent: true)
+        } else {
+            openRoot()
+        }
     }
 
     func openRoot() {
@@ -1002,6 +1066,7 @@ final class AppViewModel: ObservableObject {
         errorMessage = nil
         filter = .all
         composerSearchesAllFolders = true
+        isNavigatingToParent = true
         browseLocation = .root
     }
 
@@ -1137,7 +1202,7 @@ final class AppViewModel: ObservableObject {
             } else if composerHasDraft {
                 clearComposerQuery()
             } else if !isAtRoot {
-                openRoot()
+                openParent()
                 focusComposer()
             } else {
                 dismiss()
@@ -1695,10 +1760,9 @@ final class AppViewModel: ObservableObject {
         visibleItems.filter { $0.isPinned == item.isPinned }.last?.id != item.id
     }
 
-    /// Folders are a single, flat collection. Reordering only rewrites their
-    /// display ranks; it never changes an item's folder membership.
+    /// Folder ordering is local to the current parent.
     var canReorderFolders: Bool {
-        browseLocation == .root && filter == .all && parsedComposerQuery.text.isEmpty && parsedComposerQuery.tagNames.isEmpty
+        filter == .all && !composerHasQuery && !isComposerCommandMode
     }
 
     @discardableResult
@@ -1708,7 +1772,7 @@ final class AppViewModel: ObservableObject {
         placement: ReorderPlacement
     ) -> Bool {
         guard canReorderFolders, folderID != targetID else { return false }
-        var ordered = folders.sorted {
+        var ordered = folders.filter { $0.parentID == currentFolder?.id }.sorted {
             if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
             return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
@@ -1807,12 +1871,15 @@ final class AppViewModel: ObservableObject {
             errorMessage = "Give the folder a name."
             return nil
         }
-        guard !folders.contains(where: { $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) else {
+        let parentID = currentFolder?.id
+        guard !folders.contains(where: {
+            $0.parentID == parentID && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+        }) else {
             errorMessage = "That folder already exists."
             return nil
         }
         errorMessage = nil
-        guard let folderID = hooks.onCreateFolder(name) else {
+        guard let folderID = hooks.onCreateFolder(name, parentID) else {
             if errorMessage == nil {
                 errorMessage = "Could not create the folder."
             }
@@ -1821,8 +1888,8 @@ final class AppViewModel: ObservableObject {
         // The coordinator reloads synchronously. Keep test and alternate hook
         // implementations coherent if they return an ID before updating folders.
         if !folders.contains(where: { $0.id == folderID }) {
-            let nextOrder = (folders.map(\.sortOrder).max() ?? -1) + 1
-            folders.append(FolderSummary(id: folderID, name: name, sortOrder: nextOrder))
+            let nextOrder = (folders.filter { $0.parentID == parentID }.map(\.sortOrder).max() ?? -1) + 1
+            folders.append(FolderSummary(id: folderID, name: name, sortOrder: nextOrder, parentID: parentID))
         }
         newFolderName = ""
         return folderID
@@ -1836,9 +1903,14 @@ final class AppViewModel: ObservableObject {
             return false
         }
         guard !folders.contains(where: {
-            $0.id != folder.id && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
+            $0.id != folder.id && $0.parentID == folder.parentID
+                && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame
         }) else {
             errorMessage = "That folder already exists."
+            return false
+        }
+        if let error = hooks.onRenameFolder(folder.id, name) {
+            errorMessage = error
             return false
         }
         if let index = folders.firstIndex(where: { $0.id == folder.id }) {
@@ -1848,32 +1920,94 @@ final class AppViewModel: ObservableObject {
             items[index].folderName = name
         }
         errorMessage = nil
-        hooks.onRenameFolder(folder.id, name)
         return true
     }
 
-    func deleteFolder(_ folder: FolderSummary) {
-        for isPinned in [true, false] {
-            let contained = items
-                .filter { $0.folderID == folder.id && $0.isPinned == isPinned }
-                .sorted(by: itemComesBefore)
-            let inboxTop = (items
-                .filter { $0.folderID == nil && $0.isPinned == isPinned }
-                .compactMap(\.sortOrder)
-                .min() ?? 0) - 1
-            for (offset, containedItem) in contained.enumerated() {
-                mutateItem(containedItem.id) {
-                    $0.folderID = nil
-                    $0.folderName = nil
-                    $0.sortOrder = inboxTop - contained.count + offset
-                }
+    @discardableResult
+    func moveFolder(_ folder: FolderSummary, to parentID: UUID?) -> Bool {
+        guard let folder = folders.first(where: { $0.id == folder.id }) else { return false }
+        guard folder.parentID != parentID else { return true }
+        if let parentID {
+            guard folders.contains(where: { $0.id == parentID }) else {
+                errorMessage = ItemRepositoryError.listNotFound(parentID).localizedDescription
+                return false
+            }
+            guard parentID != folder.id, !descendantFolderIDs(of: folder.id).contains(parentID) else {
+                errorMessage = ItemRepositoryError.invalidFolderMove.localizedDescription
+                return false
             }
         }
-        folders.removeAll { $0.id == folder.id }
-        if browseLocation == .folder(folder.id) {
-            openRoot()
+        guard !folders.contains(where: {
+            $0.id != folder.id && $0.parentID == parentID
+                && $0.name.localizedCaseInsensitiveCompare(folder.name) == .orderedSame
+        }) else {
+            errorMessage = "That folder already exists."
+            return false
         }
-        hooks.onDeleteFolder(folder.id)
+        if let error = hooks.onMoveFolder(folder.id, parentID) {
+            errorMessage = error
+            return false
+        }
+        let nextOrder = (folders.filter { $0.id != folder.id && $0.parentID == parentID }
+            .map(\.sortOrder).max() ?? -1) + 1
+        if let index = folders.firstIndex(where: { $0.id == folder.id }) {
+            folders[index].parentID = parentID
+            folders[index].sortOrder = nextOrder
+        }
+        clearSelection()
+        errorMessage = nil
+        return true
+    }
+
+    @discardableResult
+    func deleteFolder(_ folder: FolderSummary) -> Bool {
+        let wasCurrentFolder = currentFolder?.id == folder.id
+        let parent = folders.first { $0.id == folder.parentID }
+        if let error = hooks.onDeleteFolder(folder.id) {
+            errorMessage = error
+            return false
+        }
+        // Production hooks reload synchronously; also support hooks that leave projection updates to us.
+        if folders.contains(where: { $0.id == folder.id }) {
+            for isPinned in [true, false] {
+                let contained = items.filter { $0.folderID == folder.id && $0.isPinned == isPinned }
+                    .sorted(by: itemComesBefore)
+                let destinationTop = (items.filter { $0.folderID == parent?.id && $0.isPinned == isPinned }
+                    .compactMap(\.sortOrder).min() ?? 0) - 1
+                for (offset, item) in contained.enumerated() {
+                    mutateItem(item.id) {
+                        $0.folderID = parent?.id
+                        $0.folderName = parent?.name
+                        $0.sortOrder = destinationTop - contained.count + offset
+                    }
+                }
+            }
+            let children = folders.filter { $0.parentID == folder.id }.sorted {
+                if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+                return $0.id.uuidString < $1.id.uuidString
+            }
+            let siblings = folders.filter { $0.id != folder.id && $0.parentID == parent?.id }
+            var names = siblings.map(\.name)
+            let nextOrder = (siblings.map(\.sortOrder).max() ?? -1) + 1
+            for (offset, child) in children.enumerated() {
+                let name = FolderNamePolicy.availableName(child.name, among: names)
+                names.append(name)
+                if let index = folders.firstIndex(where: { $0.id == child.id }) {
+                    folders[index].parentID = parent?.id
+                    folders[index].name = name
+                    folders[index].sortOrder = nextOrder + offset
+                }
+                for index in items.indices where items[index].folderID == child.id {
+                    items[index].folderName = name
+                }
+            }
+            folders.removeAll { $0.id == folder.id }
+        }
+        if wasCurrentFolder {
+            if let parent { openFolder(parent, navigatingToParent: true) } else { openRoot() }
+        }
+        errorMessage = nil
+        return true
     }
 
     func totalItemCount(in folderID: UUID) -> Int {
@@ -2376,6 +2510,13 @@ extension AppViewModel {
            let index = model.items.firstIndex(where: { $0.id == selectedTask.id }) {
             model.items[index].isCompleted = true
             model.items[index].completedAt = .now
+        }
+        if CommandLine.arguments.contains("--preview-nested-folders") {
+            let research = FolderSummary(name: "Research", parentID: projectsFolder.id)
+            let drafts = FolderSummary(name: "Drafts", parentID: research.id)
+            model.folders += [research, drafts]
+            model.items.append(LedgerItem(title: "Review the first draft", folderID: drafts.id, folderName: drafts.name))
+            model.isFolderSectionExpanded = true
         }
         if CommandLine.arguments.contains("--preview-empty-search") {
             model.composerText = "No matching capture"

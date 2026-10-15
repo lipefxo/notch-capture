@@ -207,11 +207,13 @@ extension AppViewModel {
         var id: UUID
         var name: String
         var sortOrder: Int
+        var parentID: UUID?
 
-        init(id: UUID = UUID(), name: String, sortOrder: Int = 0) {
+        init(id: UUID = UUID(), name: String, sortOrder: Int = 0, parentID: UUID? = nil) {
             self.id = id
             self.name = name
             self.sortOrder = sortOrder
+            self.parentID = parentID
         }
     }
 
@@ -496,9 +498,10 @@ extension AppViewModel {
         var onArchive: (UUID) -> Void = { _ in }
         var onSetDueDate: (UUID, Date?) -> Void = { _, _ in }
         var onMove: (UUID, UUID?) -> Void = { _, _ in }
-        var onCreateFolder: (String) -> UUID? = { _ in nil }
-        var onRenameFolder: (UUID, String) -> Void = { _, _ in }
-        var onDeleteFolder: (UUID) -> Void = { _ in }
+        var onCreateFolder: (String, UUID?) -> UUID? = { _, _ in nil }
+        var onMoveFolder: (UUID, UUID?) -> String? = { _, _ in nil }
+        var onRenameFolder: (UUID, String) -> String? = { _, _ in nil }
+        var onDeleteFolder: (UUID) -> String? = { _ in nil }
         var onCreateTag: (String) -> Void = { _ in }
         var onRenameTag: (UUID, String) -> Void = { _, _ in }
         var onDeleteTag: (UUID) -> Void = { _ in }

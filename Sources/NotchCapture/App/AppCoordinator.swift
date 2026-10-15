@@ -64,7 +64,7 @@ final class AppCoordinator {
         self.defaults = defaults
         self.previewMode = CommandLine.arguments.contains("--design-preview")
 
-        let schema = Schema(NotchCaptureSchemaV2.models)
+        let schema = Schema(NotchCaptureSchemaV3.models)
         var storeRecoveryBackupURL: URL?
         if previewMode {
             let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -677,8 +677,11 @@ final class AppCoordinator {
         hooks.onMove = { [weak self] id, folderID in
             self?.move(id: id, to: folderID)
         }
-        hooks.onCreateFolder = { [weak self] name in
-            self?.createFolder(named: name)
+        hooks.onCreateFolder = { [weak self] name, parentID in
+            self?.createFolder(named: name, parentID: parentID)
+        }
+        hooks.onMoveFolder = { [weak self] id, parentID in
+            self?.moveFolder(id: id, to: parentID)
         }
         hooks.onRenameFolder = { [weak self] id, name in
             self?.renameFolder(id: id, to: name)
@@ -757,6 +760,10 @@ final class AppCoordinator {
             NSWorkspace.shared.open(url)
         }
         if previewMode {
+            hooks.onCreateFolder = { _, _ in UUID() }
+            hooks.onMoveFolder = { _, _ in nil }
+            hooks.onRenameFolder = { _, _ in nil }
+            hooks.onDeleteFolder = { _ in nil }
             hooks.onSelectAudioOutput = { [weak self] target in
                 guard let self,
                       self.viewModel.audioOutputState.isAvailable(target) else { return }

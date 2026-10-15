@@ -249,54 +249,107 @@ final class ItemRepository {
     }
 
     @discardableResult
-    func createList(name: String) throws -> ItemList {
+    func createList(name: String, parentID: UUID? = nil) throws -> ItemList {
+        let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        let trimmed = try validatedListName(name, parentID: parentID, in: lists)
+        let nextOrder = (lists.filter { $0.parentID == parentID }.map(\.sortOrder).max() ?? -1) + 1
+        let list = ItemList(name: trimmed, sortOrder: nextOrder, parentID: parentID)
+        do {
+            modelContext.insert(list)
+            try saveHandler()
+            return list
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
+
+    private func validatedListName(
+        _ name: String, parentID: UUID?, excluding id: UUID? = nil, in lists: [ItemList]
+    ) throws -> String {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ItemRepositoryError.emptyListName }
-        let descriptor = FetchDescriptor<ItemList>(sortBy: [SortDescriptor(\ItemList.sortOrder)])
-        let lists = try modelContext.fetch(descriptor)
-        guard !lists.contains(where: { $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame }) else {
-            throw ItemRepositoryError.duplicateListName
+        if let parentID, !lists.contains(where: { $0.id == parentID }) {
+            throw ItemRepositoryError.listNotFound(parentID)
         }
-        let nextOrder = (lists.map(\.sortOrder).max() ?? -1) + 1
-        let list = ItemList(name: trimmed, sortOrder: nextOrder)
-        modelContext.insert(list)
-        try modelContext.save()
-        return list
+        guard !lists.contains(where: {
+            $0.id != id && $0.parentID == parentID
+                && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
+        }) else { throw ItemRepositoryError.duplicateListName }
+        return trimmed
     }
 
     func renameList(_ list: ItemList, to name: String, now: Date = .now) throws {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { throw ItemRepositoryError.emptyListName }
         let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
-        guard !lists.contains(where: {
-            $0.id != list.id && $0.name.localizedCaseInsensitiveCompare(trimmed) == .orderedSame
-        }) else {
-            throw ItemRepositoryError.duplicateListName
+        let trimmed = try validatedListName(name, parentID: list.parentID, excluding: list.id, in: lists)
+        do {
+            list.name = trimmed
+            list.updatedAt = now
+            list.items.forEach { $0.touch(at: now) }
+            try saveHandler()
+        } catch {
+            modelContext.rollback()
+            throw error
         }
-        list.name = trimmed
-        list.updatedAt = now
-        list.items.forEach { $0.touch(at: now) }
-        try modelContext.save()
     }
 
-    /// Deletes the folder but returns every contained item to Inbox.
+    func moveList(_ list: ItemList, to parentID: UUID?, now: Date = .now) throws {
+        guard list.parentID != parentID else { return }
+        let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        _ = try validatedListName(list.name, parentID: parentID, excluding: list.id, in: lists)
+        let byID = Dictionary(uniqueKeysWithValues: lists.map { ($0.id, $0) })
+        var ancestorID = parentID
+        var visited: Set<UUID> = [list.id]
+        while let id = ancestorID {
+            guard visited.insert(id).inserted else { throw ItemRepositoryError.invalidFolderMove }
+            ancestorID = byID[id]?.parentID
+        }
+        do {
+            list.parentID = parentID
+            list.sortOrder = (lists.filter { $0.id != list.id && $0.parentID == parentID }
+                .map(\.sortOrder).max() ?? -1) + 1
+            list.updatedAt = now
+            try saveHandler()
+        } catch {
+            modelContext.rollback()
+            throw error
+        }
+    }
+
+    /// Dissolves one folder into its parent without removing any captures or subfolders.
     @discardableResult
     func deleteList(_ list: ItemList, now: Date = .now) throws -> Int {
-        let containedItems = list.items
+        let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
+        let destination = list.parentID.flatMap { id in lists.first { $0.id == id } }
+        let containedItems = Array(list.items)
+        let children = lists.filter { $0.parentID == list.id }.sorted {
+            if $0.sortOrder != $1.sortOrder { return $0.sortOrder < $1.sortOrder }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        let siblings = lists.filter { $0.parentID == destination?.id && $0.id != list.id }
+        var siblingNames = siblings.map(\.name)
+        let nextOrder = (siblings.map(\.sortOrder).max() ?? -1) + 1
         do {
             for isPinned in [true, false] {
-                let ordered = containedItems
-                    .filter { $0.isPinned == isPinned }
-                    .sorted(by: migrationComesBefore)
-                let inboxTop = try nextTopSortOrder(isPinned: isPinned, list: nil)
+                let ordered = containedItems.filter { $0.isPinned == isPinned }.sorted(by: migrationComesBefore)
+                let destinationTop = try nextTopSortOrder(isPinned: isPinned, list: destination)
                 for (index, item) in ordered.enumerated() {
-                    item.list = nil
-                    item.sortOrder = inboxTop - ordered.count + index
+                    item.list = destination
+                    item.sortOrder = destinationTop - ordered.count + index
                     item.touch(at: now)
                 }
             }
+            for (index, child) in children.enumerated() {
+                let name = FolderNamePolicy.availableName(child.name, among: siblingNames)
+                if name != child.name { child.items.forEach { $0.touch(at: now) } }
+                child.name = name
+                siblingNames.append(name)
+                child.parentID = destination?.id
+                child.sortOrder = nextOrder + index
+                child.updatedAt = now
+            }
             modelContext.delete(list)
-            try modelContext.save()
+            try saveHandler()
             return containedItems.count
         } catch {
             modelContext.rollback()
@@ -448,14 +501,17 @@ final class ItemRepository {
         }
     }
 
-    /// Persists a flat folder ordering. Item membership is intentionally never
-    /// changed here: folders cannot be nested.
+    /// Reorders siblings without changing folder or item membership.
     func applyFolderOrderAssignments(_ assignments: [FolderOrderAssignment]) throws {
         guard !assignments.isEmpty else { return }
         let lists = try modelContext.fetch(FetchDescriptor<ItemList>())
         let byID = Dictionary(uniqueKeysWithValues: lists.map { ($0.id, $0) })
         if let missing = assignments.first(where: { byID[$0.id] == nil }) {
             throw ItemRepositoryError.listNotFound(missing.id)
+        }
+        let parentID = byID[assignments[0].id]?.parentID
+        guard assignments.allSatisfy({ byID[$0.id]?.parentID == parentID }) else {
+            throw ItemRepositoryError.invalidFolderMove
         }
         do {
             for assignment in assignments {
@@ -703,6 +759,7 @@ enum ItemRepositoryError: LocalizedError {
     case emptyCapture
     case emptyListName
     case duplicateListName
+    case invalidFolderMove
     case notATask
     case attachmentStoreRequired
     case itemNotFound(UUID)
@@ -715,6 +772,7 @@ enum ItemRepositoryError: LocalizedError {
         case .emptyCapture: "A capture must contain text or an attachment."
         case .emptyListName: "A folder name cannot be empty."
         case .duplicateListName: "A folder with that name already exists."
+        case .invalidFolderMove: "A folder cannot be moved into itself or one of its subfolders."
         case .notATask: "Only tasks can be completed."
         case .attachmentStoreRequired: "An attachment store is required for file and image captures."
         case let .itemNotFound(id): "The item \(id.uuidString) no longer exists."
