@@ -261,10 +261,11 @@ final class ModelUsageTests: XCTestCase {
     }
 
     @MainActor
-    func testServiceLoadsSignedInProvidersAndKeepsUnsignedOut() async {
+    func testServiceRefreshesOnlyConnectedProvidersEvenWhenCursorIsSignedIn() async {
         let fetcher = StubUsageFetcher(
             snapshots: [
-                .openAI: ModelUsageViewState.preview.openAI.connection.snapshot!
+                .openAI: ModelUsageViewState.preview.openAI.connection.snapshot!,
+                .cursor: ModelUsageViewState.preview.cursor.connection.snapshot!
             ]
         )
         let credentials = StubCredentials(
@@ -272,8 +273,15 @@ final class ModelUsageTests: XCTestCase {
                 .openAI: ModelUsageAuthResolution(
                     credential: .bearer(token: "tok", accountID: nil),
                     source: "test"
+                ),
+                .cursor: ModelUsageAuthResolution(
+                    credential: .sessionCookie("cursor-cookie"),
+                    source: "test"
                 )
-            ]
+            ],
+            onResolve: { provider in
+                XCTAssertEqual(provider, .openAI, "Disconnected providers must not read credentials")
+            }
         )
         let service = ModelUsageService(
             credentials: credentials,
@@ -299,7 +307,7 @@ final class ModelUsageTests: XCTestCase {
     }
 
     @MainActor
-    func testCompactSummaryJoinsLoadedProviders() {
+    func testCompactSummaryAndUtilityMetersIgnoreDisconnectedProviders() {
         var state = ModelUsageViewState.empty
         state.openAI.connection = .loaded(
             ModelUsageSnapshot(
@@ -321,8 +329,12 @@ final class ModelUsageTests: XCTestCase {
                 fetchedAt: .now
             )
         )
-        XCTAssertEqual(state.compactSummary, "OpenAI 94% · Cursor 38%")
+        XCTAssertEqual(state.compactSummary, "OpenAI 94%")
         XCTAssertTrue(state.showsUtilityMeters)
+
+        state.openAI = .empty
+        XCTAssertNil(state.compactSummary)
+        XCTAssertFalse(state.showsUtilityMeters)
         XCTAssertFalse(ModelUsageViewState.empty.showsUtilityMeters)
     }
 
@@ -399,9 +411,11 @@ final class ModelUsageTests: XCTestCase {
 
 private struct StubCredentials: ModelUsageCredentialReading {
     var resolutions: [ModelUsageProvider: ModelUsageAuthResolution]
+    var onResolve: @Sendable (ModelUsageProvider) -> Void = { _ in }
 
     func resolve(_ provider: ModelUsageProvider) -> ModelUsageAuthResolution? {
-        resolutions[provider]
+        onResolve(provider)
+        return resolutions[provider]
     }
 }
 

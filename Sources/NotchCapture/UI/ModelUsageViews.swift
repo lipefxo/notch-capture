@@ -5,8 +5,8 @@ struct ModelUsageSettingsSection: View {
     @ObservedObject var viewModel: AppViewModel
 
     var body: some View {
-        SettingsGroup(title: "Model Usage", subtitle: "OpenAI and Cursor") {
-            ForEach(Array(ModelUsageProvider.allCases.enumerated()), id: \.element) { index, provider in
+        SettingsGroup(title: "Model Usage", subtitle: "OpenAI") {
+            ForEach(Array(ModelUsageProvider.connectedProviders.enumerated()), id: \.element) { index, provider in
                 ModelUsageProviderRow(
                     provider: provider,
                     state: viewModel.modelUsageState[provider],
@@ -14,14 +14,14 @@ struct ModelUsageSettingsSection: View {
                     onRefresh: { viewModel.refreshModelUsage() }
                 )
 
-                if index < ModelUsageProvider.allCases.count - 1 {
+                if index < ModelUsageProvider.connectedProviders.count - 1 {
                     SettingsDivider(leadingInset: 44)
                 }
             }
 
             SettingsDivider()
             Text(
-                "Remaining usage is read from the ChatGPT and Cursor accounts already signed in on this Mac. Tokens stay in those apps; Notch Capture only asks for the current allowance."
+                "Remaining usage is read from the ChatGPT account already signed in through Codex on this Mac. Tokens stay in Codex; Notch Capture only asks for the current allowance."
             )
             .font(.system(size: 9))
             .foregroundStyle(NotchTheme.tertiaryText)
@@ -105,7 +105,7 @@ struct ModelUsageLogoStrip: View {
 
     var body: some View {
         HStack(spacing: spacing) {
-            ForEach(ModelUsageProvider.allCases) { provider in
+            ForEach(ModelUsageProvider.connectedProviders) { provider in
                 ModelUsageLogoMeter(
                     provider: provider,
                     state: state[provider],

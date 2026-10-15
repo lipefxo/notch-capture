@@ -315,7 +315,7 @@ struct SettingsView: View {
 
             SettingsDivider()
             Text(
-                "Link metadata and music artwork are requested only when needed. Remaining ChatGPT and Cursor usage is requested only when those apps are signed in on this Mac. Update checks contact the app’s update service."
+                "Link metadata and music artwork are requested only when needed. Remaining ChatGPT usage is requested only when Codex is signed in on this Mac. Update checks contact the app’s update service."
             )
             .font(.system(size: 9))
             .foregroundStyle(NotchTheme.tertiaryText)
