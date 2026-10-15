@@ -1126,8 +1126,8 @@ struct LedgerRowView: View, Equatable {
         var items: [NotchMenuItem] = [
             NotchMenuItem(title: "Inbox", icon: "tray", isEnabled: item.folderID != nil, isChecked: item.folderID == nil) { viewModel.move(item, to: nil) }
         ]
-        for folder in viewModel.folders.sorted(by: { $0.sortOrder < $1.sortOrder }) {
-            items.append(NotchMenuItem(title: viewModel.displayName(for: folder), icon: "folder", isEnabled: item.folderID != folder.id, isChecked: item.folderID == folder.id) { viewModel.move(item, to: folder.id) })
+        for folder in viewModel.folderDestinations {
+            items.append(NotchMenuItem(title: viewModel.folderPath(for: folder), icon: "folder", isEnabled: item.folderID != folder.id, isChecked: item.folderID == folder.id) { viewModel.move(item, to: folder.id) })
         }
         return items
     }

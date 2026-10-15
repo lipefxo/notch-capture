@@ -16,7 +16,7 @@ The composer bar is a single field for both search and capture: typing filters t
 - **Images** — paste images directly into the composer.
 - **Drops** — files, images, URLs, and text dragged onto the surface become captures with attachments.
 - **`@` tags** — write `@tag` anywhere in a capture; tags autocomplete while typing and get their own color.
-- **Slash commands** — `/folder <name>` creates a folder, `/clear` moves all completed tasks to Trash. Suggestions appear as soon as the text starts with `/`.
+- **Slash commands** — `/folder <name>` creates a folder in the current location, `/clear` moves all completed tasks to Trash. Suggestions appear as soon as the text starts with `/`.
 
 The composer shows the current search scope and the available Return actions. At the root it searches across every folder; inside a folder it searches that folder by default, and the scope control can broaden the query to all items while keeping the folder as the capture destination. When matches exist, the visible hints explain that Return opens the first result and `⌘Return` adds a new item anyway. With no matches, Return adds the thought to the current destination. `Shift–Return` inserts a line break in the composer and in inline item editing.
 
@@ -27,6 +27,8 @@ Drops keep the providers that succeed and report partial failures with the items
 ## Organizing
 
 Items are notes or tasks. Tasks can be completed (with a short completion hold before they leave the main page), pinned to the top, and given due dates. The Inbox title opens a view selector with Inbox, Tasks, Due, Completed, Archive, and Trash. The filtered views include matching items from every folder, so archived and trashed captures remain reachable for recovery. Rows in Archive and Trash offer Restore, while permanent deletion requires confirmation and cannot be undone. After archiving, moving an item to Trash, or clearing completed tasks, an Undo banner appears for the latest ledger change.
+
+Folders can contain subfolders at any depth. New Folder and `/folder <name>` create inside the open folder; Back and Escape move up one level. Folder menus offer Move to… with full destination paths. Names must be unique within the same parent. Deleting a folder moves its direct items and subfolders into its parent (or Inbox), preserving deeper contents and numbering any conflicting folder names. Library import/export preserves the hierarchy; companion apps continue to show capture folder names without hierarchy navigation.
 
 The Utilities shelf and Folders section start collapsed so the ledger has more room. Click Utilities to reveal audio and playback controls, or click Folders to reveal folder rows and their drop targets. Their expanded or collapsed state is remembered.
 
@@ -90,6 +92,8 @@ Open `Package.swift` in Xcode for development. Run tests with:
 ```sh
 swift test
 ```
+
+For an in-memory nested-folder UI preview, run the debug app with `--design-preview --preview-nested-folders -NotchCapture.expandedInbox.folderSectionExpanded YES`. Add `--preview-reduced-motion` to check navigation with reduced motion without changing macOS settings.
 
 ## iPhone and Apple Watch companion
 

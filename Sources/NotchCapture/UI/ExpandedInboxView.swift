@@ -39,12 +39,11 @@ struct FolderNavigationMotionPlan: Equatable {
 
     static func resolve(
         for location: AppViewModel.BrowseLocation,
-        reduceMotion: Bool
+        reduceMotion: Bool,
+        navigatingToParent: Bool = false
     ) -> Self {
-        let directionalOffset: CGFloat = switch location {
-        case .root: -NotchMotion.navigationOffset
-        case .folder: NotchMotion.navigationOffset
-        }
+        let directionalOffset: CGFloat = location == .root || navigatingToParent
+            ? -NotchMotion.navigationOffset : NotchMotion.navigationOffset
         return Self(offset: reduceMotion ? 0 : directionalOffset, reduceMotion: reduceMotion)
     }
 
@@ -100,7 +99,9 @@ struct ExpandedInboxView: View {
     @ObservedObject var viewModel: AppViewModel
     @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @EnvironmentObject private var morphCoordinator: PanelMorphCoordinator
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceMotion) private var systemReduceMotion
+
+    private var reduceMotion: Bool { systemReduceMotion || NotchMotion.previewReducesMotion }
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @Environment(\.colorSchemeContrast) private var colorSchemeContrast
     @FocusState private var focusedField: Field?
@@ -231,7 +232,7 @@ struct ExpandedInboxView: View {
     }
 
     private var navigationPlan: FolderNavigationMotionPlan {
-        .resolve(for: viewModel.browseLocation, reduceMotion: reduceMotion)
+        .resolve(for: viewModel.browseLocation, reduceMotion: reduceMotion, navigatingToParent: viewModel.isNavigatingToParent)
     }
 
     var body: some View {
@@ -284,7 +285,7 @@ struct ExpandedInboxView: View {
             if viewModel.isAtRoot {
                 viewModel.dismiss()
             } else {
-                navigate { viewModel.openRoot() }
+                navigate { viewModel.openParent() }
             }
         }
         .onAppear {
@@ -501,21 +502,22 @@ struct ExpandedInboxView: View {
             HStack(spacing: 2) {
                 if !viewModel.isAtRoot {
                     Button {
-                        navigate { viewModel.openRoot() }
+                        navigate { viewModel.openParent() }
                     } label: {
                         Image(systemName: "chevron.left")
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(PressableIconButtonStyle(width: 20))
                     .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .help("Back to Inbox")
-                    .accessibilityLabel("Back to Inbox")
+                    .help("Back to \(viewModel.parentDestinationName)")
+                    .accessibilityLabel("Back to \(viewModel.parentDestinationName)")
                 }
 
                 if viewModel.isAtRoot {
                     rootViewSelector
                 } else {
                     Text(viewModel.navigationTitle)
+                        .help(viewModel.currentFolder.map { viewModel.folderPath(for: $0) } ?? "Inbox")
                         .font(.system(size: 18, weight: .medium))
                         .foregroundStyle(NotchTheme.primaryText)
                         .lineLimit(1)
@@ -575,26 +577,18 @@ struct ExpandedInboxView: View {
     }
 
     private var routeHeaderTrailingAction: some View {
-        ZStack {
-            if viewModel.isAtRoot {
-                Button {
-                    viewModel.newFolderName = ""
-                    presentCreateFolder()
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                        .font(.system(size: 13, weight: .regular))
-                }
-                .buttonStyle(PressableIconButtonStyle())
-                .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
-                .help("New folder")
-                .accessibilityLabel("Create a new folder")
-                .transition(navigationPlan.transition)
-            }
+        Button {
+            viewModel.newFolderName = ""
+            presentCreateFolder()
+        } label: {
+            Image(systemName: "folder.badge.plus")
+                .font(.system(size: 13, weight: .regular))
         }
-        // This fixed slot prevents the utility controls from shifting when the
-        // root-only action comes and goes.
+        .buttonStyle(PressableIconButtonStyle())
+        .notchHitTarget(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .help(viewModel.isAtRoot ? "New folder" : "New subfolder")
+        .accessibilityLabel("Create a folder in \(viewModel.captureDestinationName)")
         .frame(width: 28, height: 28)
-        .clipped()
     }
 
     private func presentViewSelector() {
@@ -656,28 +650,46 @@ struct ExpandedInboxView: View {
     private func beginRenaming(_ folder: AppViewModel.FolderSummary) {
         let hidesCurrentName = viewModel.isScreenSharePrivacyEnabled
         presentation.present(NotchModal(kind: .standard, title: "Rename Folder", message: hidesCurrentName ? "The current name stays hidden while screen-share privacy is on." : nil, textFieldLabel: "Folder name", draft: hidesCurrentName ? "" : folder.name, primaryTitle: "Rename", cancelTitle: "Cancel", onSubmit: { name in
-            viewModel.renameFolder(folder, to: name) ? nil : "Enter a folder name."
+            viewModel.renameFolder(folder, to: name) ? nil : viewModel.errorMessage
         }, onCancel: {}))
     }
 
     private func presentCreateFolder() {
-        presentation.present(NotchModal(kind: .standard, title: "New Folder", message: "Create a folder to group related captures.", textFieldLabel: "Folder name", draft: "", primaryTitle: "Create", cancelTitle: "Cancel", onSubmit: { name in
-            viewModel.createFolder(named: name) ? nil : "Enter a unique folder name."
+        presentation.present(NotchModal(kind: .standard, title: "New Folder", message: "Create a folder in \(viewModel.captureDestinationName).", textFieldLabel: "Folder name", draft: "", primaryTitle: "Create", cancelTitle: "Cancel", onSubmit: { name in
+            guard viewModel.createFolder(named: name) else { return viewModel.errorMessage ?? "Enter a unique folder name." }
+            isFolderSectionExpanded = true
+            return nil
         }, onCancel: {}))
     }
 
     private func presentFolderActions(_ folder: AppViewModel.FolderSummary) {
         presentation.present(NotchMenu(title: viewModel.displayName(for: folder), anchor: folderHeaderMenuAnchor, items: [
             NotchMenuItem(title: "Rename Folder", icon: "pencil") { beginRenaming(folder) },
+            NotchMenuItem(title: "Move to…", icon: "folder") { presentMoveFolder(folder, anchor: folderHeaderMenuAnchor) },
             NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { presentDeleteFolder(folder) },
         ]))
     }
 
+    private func presentMoveFolder(_ folder: AppViewModel.FolderSummary, anchor: CGRect) {
+        var items = [NotchMenuItem(title: "Inbox", icon: "tray", isEnabled: folder.parentID != nil, isChecked: folder.parentID == nil) {
+            viewModel.moveFolder(folder, to: nil)
+        }]
+        items += viewModel.moveDestinations(for: folder).map { destination in
+            NotchMenuItem(title: viewModel.folderPath(for: destination), icon: "folder", isEnabled: folder.parentID != destination.id, isChecked: folder.parentID == destination.id) {
+                viewModel.moveFolder(folder, to: destination.id)
+            }
+        }
+        presentation.present(NotchMenu(title: "Move folder to", anchor: anchor, items: items))
+    }
+
     private func presentDeleteFolder(_ folder: AppViewModel.FolderSummary) {
         let count = viewModel.totalItemCount(in: folder.id)
-        presentation.present(NotchModal(kind: .destructive, title: "Delete \(viewModel.displayName(for: folder))?", message: "\(count) \(count == 1 ? "item" : "items") will return to Inbox. Nothing will be deleted.", textFieldLabel: nil, draft: "", primaryTitle: "Delete Folder", cancelTitle: "Cancel", onSubmit: { _ in
-            viewModel.deleteFolder(folder)
-            return nil
+        let children = viewModel.folders.count { $0.parentID == folder.id }
+        let parent = viewModel.folders.first { $0.id == folder.parentID }
+        let destination = parent.map(viewModel.displayName(for:)) ?? "Inbox"
+        let message = "\(count) \(count == 1 ? "item" : "items") and \(children) \(children == 1 ? "subfolder" : "subfolders") will move to \(destination). Their contents will be preserved."
+        presentation.present(NotchModal(kind: .destructive, title: "Delete \(viewModel.displayName(for: folder))?", message: message, textFieldLabel: nil, draft: "", primaryTitle: "Delete Folder", cancelTitle: "Cancel", onSubmit: { _ in
+            viewModel.deleteFolder(folder) ? nil : viewModel.errorMessage
         }, onCancel: {}))
     }
 
@@ -1679,13 +1691,15 @@ struct ExpandedInboxView: View {
     private func folderRow(_ folder: AppViewModel.FolderSummary) -> some View {
         FolderLedgerRow(
             folder: folder,
-            displayName: viewModel.displayName(for: folder),
+            displayName: viewModel.isShowingGlobalSearchResults ? viewModel.folderPath(for: folder) : viewModel.displayName(for: folder),
             itemCount: viewModel.matchingItemCount(in: folder.id),
+            subfolderCount: viewModel.folders.count { $0.parentID == folder.id },
             isSelected: viewModel.selectedFolderID == folder.id,
             isDropTarget: targetedFolderID == folder.id,
             reduceMotion: reduceMotion,
             onOpen: { navigate { viewModel.openFolder(folder) } },
             onRename: { beginRenaming(folder) },
+            onMove: { anchor in presentMoveFolder(folder, anchor: anchor) },
             onDelete: { presentDeleteFolder(folder) }
         )
         .overlay {
@@ -1708,7 +1722,7 @@ struct ExpandedInboxView: View {
         return LedgerRowView(
             item: item,
             displayTitle: viewModel.displayTitle(for: item),
-            displayFolderName: viewModel.displayFolderName(
+            displayFolderName: viewModel.displayFolderPath(
                 id: item.folderID,
                 fallback: item.folderName
             ),

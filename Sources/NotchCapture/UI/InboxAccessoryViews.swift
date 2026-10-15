@@ -123,11 +123,13 @@ struct FolderLedgerRow: View {
     let folder: AppViewModel.FolderSummary
     let displayName: String
     let itemCount: Int
+    let subfolderCount: Int
     let isSelected: Bool
     let isDropTarget: Bool
     let reduceMotion: Bool
     let onOpen: () -> Void
     let onRename: () -> Void
+    let onMove: (CGRect) -> Void
     let onDelete: () -> Void
     @EnvironmentObject private var presentation: NotchPresentationCoordinator
     @State private var isHovered = false
@@ -135,6 +137,12 @@ struct FolderLedgerRow: View {
     @State private var actionsAnchor: CGRect = .zero
 
     private var showsActions: Bool { isHovered || isSelected }
+
+    private var countLabel: String {
+        let items = "\(itemCount) \(itemCount == 1 ? "item" : "items")"
+        guard subfolderCount > 0 else { return items }
+        return "\(subfolderCount) \(subfolderCount == 1 ? "folder" : "folders") · \(items)"
+    }
 
     var body: some View {
         Button(action: onOpen) {
@@ -153,7 +161,7 @@ struct FolderLedgerRow: View {
                         .font(.system(size: 12.5, weight: .medium))
                         .foregroundStyle(NotchTheme.primaryText)
                         .lineLimit(1)
-                    Text("\(itemCount) \(itemCount == 1 ? "item" : "items")")
+                    Text(countLabel)
                         .font(.system(size: 10, weight: .regular))
                         .foregroundStyle(NotchTheme.tertiaryText)
                         .lineLimit(1)
@@ -196,6 +204,7 @@ struct FolderLedgerRow: View {
                 presentation.present(NotchMenu(title: displayName, anchor: actionsAnchor, items: [
                     NotchMenuItem(title: "Open Folder", icon: "folder") { onOpen() },
                     NotchMenuItem(title: "Rename Folder", icon: "pencil") { onRename() },
+                    NotchMenuItem(title: "Move to…", icon: "folder") { onMove(actionsAnchor) },
                     NotchMenuItem(title: "Delete", icon: "xmark", role: .destructive) { onDelete() },
                 ]))
             } label: {
@@ -236,10 +245,11 @@ struct FolderLedgerRow: View {
         .animation(reduceMotion ? nil : NotchMotion.hover, value: isHovered)
         .animation(reduceMotion ? nil : NotchMotion.filter, value: isDropTarget)
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Folder \(displayName), \(itemCount) \(itemCount == 1 ? "item" : "items")")
+        .accessibilityLabel("Folder \(displayName), \(countLabel)")
         .accessibilityAddTraits(isSelected ? .isSelected : [])
         .accessibilityHint("Opens this folder")
         .accessibilityAction(named: "Rename Folder", onRename)
+        .accessibilityAction(named: "Move Folder") { onMove(actionsAnchor) }
         .accessibilityAction(named: "Delete Folder", onDelete)
     }
 }

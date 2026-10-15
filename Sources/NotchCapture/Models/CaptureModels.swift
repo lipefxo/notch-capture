@@ -53,6 +53,18 @@ struct FolderOrderAssignment: Equatable, Sendable {
     let sortOrder: Int
 }
 
+enum FolderNamePolicy {
+    static func availableName(_ name: String, among names: [String]) -> String {
+        var candidate = name
+        var suffix = 2
+        while names.contains(where: { $0.localizedCaseInsensitiveCompare(candidate) == .orderedSame }) {
+            candidate = "\(name) (\(suffix))"
+            suffix += 1
+        }
+        return candidate
+    }
+}
+
 enum CapturePayload: Sendable, Equatable {
     case text(String)
     case url(URL)
@@ -247,6 +259,8 @@ final class ItemList {
     @Attribute(.unique) var id: UUID
     var name: String
     var sortOrder: Int
+    /// Nil denotes a top-level folder. Existing stores migrate with nil parents.
+    var parentID: UUID?
     var createdAt: Date
     var updatedAt: Date
     @Relationship(deleteRule: .nullify, inverse: \CaptureItem.list)
@@ -256,6 +270,7 @@ final class ItemList {
         id: UUID = UUID(),
         name: String,
         sortOrder: Int = 0,
+        parentID: UUID? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
         items: [CaptureItem] = []
@@ -263,6 +278,7 @@ final class ItemList {
         self.id = id
         self.name = name
         self.sortOrder = sortOrder
+        self.parentID = parentID
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.items = items

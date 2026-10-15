@@ -214,7 +214,7 @@ final class RecoveryPersistenceTests: XCTestCase {
     }
 
     private func makeContainer() throws -> ModelContainer {
-        let schema = Schema(NotchCaptureSchemaV2.models)
+        let schema = Schema(NotchCaptureSchemaV3.models)
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         return try ModelContainer(
             for: schema,
